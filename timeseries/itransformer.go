@@ -170,26 +170,19 @@ func newITransformerLayer(dModel, dFF int) iTransformerLayer {
 // forward runs the iTransformer forward pass on a single sample.
 // Input: [channels][inputLen], returns: [channels][outputLen].
 func (m *ITransformer) forward(input [][]float64) [][]float64 {
-	channels := m.config.Channels
+	ctx := context.Background()
 
-	// Step 1: Variate embedding. Each channel's full time series -> dModel vector.
-	// tokens[c] is the embedding for channel c: [dModel].
-	tokens := make([][]float64, channels)
-	for c := 0; c < channels; c++ {
-		tokens[c] = linearForwardVec(input[c], m.embedW, m.embedB)
-	}
+	// Step 1: Variate embedding via engine MatMul.
+	// [channels, inputLen] @ [inputLen, dModel] + embedB -> [channels, dModel].
+	tokens := linearBatchF64(ctx, input, m.embedW, m.embedB)
 
 	// Step 2: Encoder layers.
 	for _, layer := range m.layers {
 		tokens = m.encoderLayerForward(tokens, layer)
 	}
 
-	// Step 3: Output projection per variate.
-	output := make([][]float64, channels)
-	for c := 0; c < channels; c++ {
-		output[c] = linearForwardVec(tokens[c], m.projW, m.projB)
-	}
-	return output
+	// Step 3: Output projection via engine MatMul.
+	return linearBatchF64(ctx, tokens, m.projW, m.projB)
 }
 
 // linearForwardVec computes y = x @ W + b.
@@ -206,37 +199,114 @@ func linearForwardVec(x []float64, w [][]float64, b []float64) []float64 {
 	return y
 }
 
+// linearBatchF64 computes Y = X @ W + b using cpuEngine64.MatMul and Add.
+// X: [rows][inDim], W: [inDim][outDim], b: [outDim] -> Y: [rows][outDim].
+func linearBatchF64(ctx context.Context, xRows [][]float64, w [][]float64, b []float64) [][]float64 {
+	rows := len(xRows)
+	inDim := len(w)
+	outDim := len(b)
+
+	xFlat := make([]float64, rows*inDim)
+	for r := 0; r < rows; r++ {
+		copy(xFlat[r*inDim:], xRows[r])
+	}
+	wFlat := make([]float64, inDim*outDim)
+	for i := 0; i < inDim; i++ {
+		copy(wFlat[i*outDim:], w[i])
+	}
+
+	xT, _ := tensor.New[float64]([]int{rows, inDim}, xFlat)
+	wT, _ := tensor.New[float64]([]int{inDim, outDim}, wFlat)
+	bT, _ := tensor.New[float64]([]int{1, outDim}, b)
+
+	yT, err := cpuEngine64.MatMul(ctx, xT, wT)
+	if err != nil {
+		result := make([][]float64, rows)
+		for r := range xRows {
+			result[r] = linearForwardVec(xRows[r], w, b)
+		}
+		return result
+	}
+	yT, err = cpuEngine64.Add(ctx, yT, bT)
+	if err != nil {
+		result := make([][]float64, rows)
+		for r := range xRows {
+			result[r] = linearForwardVec(xRows[r], w, b)
+		}
+		return result
+	}
+
+	yData := yT.Data()
+	result := make([][]float64, rows)
+	for r := 0; r < rows; r++ {
+		result[r] = make([]float64, outDim)
+		copy(result[r], yData[r*outDim:(r+1)*outDim])
+	}
+	return result
+}
+
+// addMatricesF64 computes A + B element-wise for [rows][cols] matrices
+// using cpuEngine64.Add.
+func addMatricesF64(ctx context.Context, a, b [][]float64, rows, cols int) [][]float64 {
+	aFlat := make([]float64, rows*cols)
+	bFlat := make([]float64, rows*cols)
+	for r := 0; r < rows; r++ {
+		copy(aFlat[r*cols:], a[r])
+		copy(bFlat[r*cols:], b[r])
+	}
+	aT, _ := tensor.New[float64]([]int{rows, cols}, aFlat)
+	bT, _ := tensor.New[float64]([]int{rows, cols}, bFlat)
+	cT, err := cpuEngine64.Add(ctx, aT, bT)
+	if err != nil {
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				a[r][c] += b[r][c]
+			}
+		}
+		return a
+	}
+	cData := cT.Data()
+	result := make([][]float64, rows)
+	for r := 0; r < rows; r++ {
+		result[r] = make([]float64, cols)
+		copy(result[r], cData[r*cols:(r+1)*cols])
+	}
+	return result
+}
+
 // encoderLayerForward runs one transformer encoder layer.
 // tokens: [channels][dModel] -> [channels][dModel].
 func (m *ITransformer) encoderLayerForward(tokens [][]float64, layer iTransformerLayer) [][]float64 {
 	channels := len(tokens)
 	dModel := m.config.DModel
+	ctx := context.Background()
 
 	// Multi-head self-attention over variates.
 	attnOut := m.multiHeadAttention(tokens, layer)
 
-	// Residual + LayerNorm.
+	// Residual addition via engine.
+	tokens = addMatricesF64(ctx, tokens, attnOut, channels, dModel)
+
+	// LayerNorm per channel.
 	for c := 0; c < channels; c++ {
-		for d := 0; d < dModel; d++ {
-			tokens[c][d] += attnOut[c][d]
-		}
 		tokens[c] = layerNorm1D(tokens[c], layer.ln1Scale, layer.ln1Bias)
 	}
 
-	// Feed-forward network per variate.
+	// Feed-forward: fc1 + GELU + fc2, all via engine MatMul.
+	fc1Out := linearBatchF64(ctx, tokens, layer.fc1W, layer.fc1B)
 	for c := 0; c < channels; c++ {
-		ffnOut := linearForwardVec(tokens[c], layer.fc1W, layer.fc1B)
-		// GELU activation.
-		for i, v := range ffnOut {
+		for i, v := range fc1Out[c] {
 			inner := math.Sqrt(2/math.Pi) * (v + 0.044715*v*v*v)
-			ffnOut[i] = 0.5 * v * (1 + math.Tanh(inner))
+			fc1Out[c][i] = 0.5 * v * (1 + math.Tanh(inner))
 		}
-		ffnOut = linearForwardVec(ffnOut, layer.fc2W, layer.fc2B)
+	}
+	fc2Out := linearBatchF64(ctx, fc1Out, layer.fc2W, layer.fc2B)
 
-		// Residual + LayerNorm.
-		for d := 0; d < dModel; d++ {
-			tokens[c][d] += ffnOut[d]
-		}
+	// Residual addition via engine.
+	tokens = addMatricesF64(ctx, tokens, fc2Out, channels, dModel)
+
+	// LayerNorm per channel.
+	for c := 0; c < channels; c++ {
 		tokens[c] = layerNorm1D(tokens[c], layer.ln2Scale, layer.ln2Bias)
 	}
 
@@ -250,26 +320,18 @@ func (m *ITransformer) multiHeadAttention(tokens [][]float64, layer iTransformer
 	channels := len(tokens)
 	dModel := m.config.DModel
 	nHeads := m.config.NHeads
+	ctx := context.Background()
 
-	// Project Q, K, V for all channels.
-	Q := make([][]float64, channels)
-	K := make([][]float64, channels)
-	V := make([][]float64, channels)
-	for c := 0; c < channels; c++ {
-		Q[c] = linearForwardVec(tokens[c], layer.qW, layer.qB)
-		K[c] = linearForwardVec(tokens[c], layer.kW, layer.kB)
-		V[c] = linearForwardVec(tokens[c], layer.vW, layer.vB)
-	}
+	// Project Q, K, V for all channels via engine MatMul.
+	Q := linearBatchF64(ctx, tokens, layer.qW, layer.qB)
+	K := linearBatchF64(ctx, tokens, layer.kW, layer.kB)
+	V := linearBatchF64(ctx, tokens, layer.vW, layer.vB)
 
 	// Use functional.MultiHeadAttention for scaled dot-product attention.
 	attnConcat := mhaF64(Q, K, V, channels, dModel, nHeads)
 
-	// Output projection.
-	out := make([][]float64, channels)
-	for c := 0; c < channels; c++ {
-		out[c] = linearForwardVec(attnConcat[c], layer.oW, layer.oB)
-	}
-	return out
+	// Output projection via engine MatMul.
+	return linearBatchF64(ctx, attnConcat, layer.oW, layer.oB)
 }
 
 // mhaF64 wraps functional.MultiHeadAttention for float64 slice data.
@@ -389,8 +451,8 @@ func (m *ITransformer) PredictWindowed(modelPath string, windows [][][]float64) 
 	return out, nil
 }
 
-// flatParams returns pointers to all trainable parameters.
-func (m *ITransformer) flatParams() []*float64 {
+// FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
+func (m *ITransformer) FlatParams() []*float64 {
 	var params []*float64
 
 	// Embedding weights and bias.
@@ -468,9 +530,9 @@ func (m *ITransformer) flatParams() []*float64 {
 	return params
 }
 
-// paramCount returns the total number of trainable parameters.
-func (m *ITransformer) paramCount() int {
-	return len(m.flatParams())
+// ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
+func (m *ITransformer) ParamCount() int {
+	return len(m.FlatParams())
 }
 
 // ForwardSample runs the iTransformer forward pass on a single sample and returns
@@ -493,7 +555,7 @@ func (m *ITransformer) BackwardSample(dOutput []float64, cacheIface interface{})
 	}
 
 	if m.grads == nil {
-		m.grads = make([]float64, m.paramCount())
+		m.grads = make([]float64, m.ParamCount())
 	}
 
 	// Reshape flat dOutput [channels*outputLen] -> [channels][outputLen].
@@ -517,7 +579,7 @@ func (m *ITransformer) BackwardSample(dOutput []float64, cacheIface interface{})
 // FlatGrads returns the internal gradient accumulator.
 func (m *ITransformer) FlatGrads() []float64 {
 	if m.grads == nil {
-		m.grads = make([]float64, m.paramCount())
+		m.grads = make([]float64, m.ParamCount())
 	}
 	return m.grads
 }
@@ -525,7 +587,7 @@ func (m *ITransformer) FlatGrads() []float64 {
 // ZeroGrads resets all accumulated gradients to zero.
 func (m *ITransformer) ZeroGrads() {
 	if m.grads == nil {
-		m.grads = make([]float64, m.paramCount())
+		m.grads = make([]float64, m.ParamCount())
 		return
 	}
 	for i := range m.grads {
@@ -533,14 +595,63 @@ func (m *ITransformer) ZeroGrads() {
 	}
 }
 
-// FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
-func (m *ITransformer) FlatParams() []*float64 {
-	return m.flatParams()
+// Parameters returns all trainable parameters as float64 tensors.
+// Order: embedding (W, b), per-layer (Q/K/V/O W+b, LN1, FFN, LN2), output projection (W, b).
+func (m *ITransformer) Parameters() []*tensor.TensorNumeric[float64] {
+	var params []*tensor.TensorNumeric[float64]
+
+	params = append(params, matrixToTensor(m.embedW))
+	embedBT, _ := tensor.New[float64]([]int{len(m.embedB)}, m.embedB)
+	params = append(params, embedBT)
+
+	for li := range m.layers {
+		l := &m.layers[li]
+		for _, w := range [][][]float64{l.qW, l.kW, l.vW, l.oW} {
+			params = append(params, matrixToTensor(w))
+		}
+		for _, b := range [][]float64{l.qB, l.kB, l.vB, l.oB} {
+			t, _ := tensor.New[float64]([]int{len(b)}, b)
+			params = append(params, t)
+		}
+		t, _ := tensor.New[float64]([]int{len(l.ln1Scale)}, l.ln1Scale)
+		params = append(params, t)
+		t, _ = tensor.New[float64]([]int{len(l.ln1Bias)}, l.ln1Bias)
+		params = append(params, t)
+
+		params = append(params, matrixToTensor(l.fc1W))
+		t, _ = tensor.New[float64]([]int{len(l.fc1B)}, l.fc1B)
+		params = append(params, t)
+		params = append(params, matrixToTensor(l.fc2W))
+		t, _ = tensor.New[float64]([]int{len(l.fc2B)}, l.fc2B)
+		params = append(params, t)
+
+		t, _ = tensor.New[float64]([]int{len(l.ln2Scale)}, l.ln2Scale)
+		params = append(params, t)
+		t, _ = tensor.New[float64]([]int{len(l.ln2Bias)}, l.ln2Bias)
+		params = append(params, t)
+	}
+
+	params = append(params, matrixToTensor(m.projW))
+	projBT, _ := tensor.New[float64]([]int{len(m.projB)}, m.projB)
+	params = append(params, projBT)
+
+	return params
 }
 
-// ParamCount returns the total number of trainable parameters (exported for TrainableBackend).
-func (m *ITransformer) ParamCount() int {
-	return m.paramCount()
+// matrixToTensor converts a [][]float64 matrix to a 2D tensor.
+func matrixToTensor(m [][]float64) *tensor.TensorNumeric[float64] {
+	rows := len(m)
+	if rows == 0 {
+		t, _ := tensor.New[float64]([]int{0, 0}, nil)
+		return t
+	}
+	cols := len(m[0])
+	flat := make([]float64, rows*cols)
+	for i := range m {
+		copy(flat[i*cols:], m[i])
+	}
+	t, _ := tensor.New[float64]([]int{rows, cols}, flat)
+	return t
 }
 
 // Compile-time check that ITransformer implements TrainableBackend.

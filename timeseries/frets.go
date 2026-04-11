@@ -1,6 +1,7 @@
 package timeseries
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -10,7 +11,9 @@ import (
 	"sort"
 
 	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
 )
 
 // FreTSConfig holds the configuration for a FreTS model.
@@ -255,7 +258,8 @@ func (f *FreTS) forwardWithCache(input [][]float64) ([][]float64, *fretsCache) {
 		}
 	}
 
-	// Step 2: Channel mixing.
+	// Step 2: Channel mixing via Engine MatMul.
+	ctx := context.Background()
 	cache.chanHiddenReal = make([][]float64, topK)
 	cache.chanHiddenImag = make([][]float64, topK)
 	cache.chanPreActReal = make([][]float64, topK)
@@ -275,27 +279,21 @@ func (f *FreTS) forwardWithCache(input [][]float64) ([][]float64, *fretsCache) {
 		copy(cache.chanInputReal[k], realIn)
 		copy(cache.chanInputImag[k], imagIn)
 
-		// Channel MLP forward with cache.
+		// Channel MLP layer 1 via Engine: input @ chanW1 + chanB1, then ReLU.
+		rawReal := fretsMatVecF64(ctx, realIn, f.chanW1, channels, hidden)
+		rawImag := fretsMatVecF64(ctx, imagIn, f.chanW1, channels, hidden)
 		hReal := make([]float64, hidden)
 		hImag := make([]float64, hidden)
 		preActReal := make([]float64, hidden)
 		preActImag := make([]float64, hidden)
 		for j := 0; j < hidden; j++ {
-			val := f.chanB1[j]
-			for i := 0; i < channels; i++ {
-				val += f.chanW1[i*hidden+j] * realIn[i]
+			preActReal[j] = rawReal[j] + f.chanB1[j]
+			if preActReal[j] > 0 {
+				hReal[j] = preActReal[j]
 			}
-			preActReal[j] = val
-			if val > 0 {
-				hReal[j] = val
-			}
-			val = f.chanB1[j]
-			for i := 0; i < channels; i++ {
-				val += f.chanW1[i*hidden+j] * imagIn[i]
-			}
-			preActImag[j] = val
-			if val > 0 {
-				hImag[j] = val
+			preActImag[j] = rawImag[j] + f.chanB1[j]
+			if preActImag[j] > 0 {
+				hImag[j] = preActImag[j]
 			}
 		}
 		cache.chanHiddenReal[k] = hReal
@@ -303,25 +301,14 @@ func (f *FreTS) forwardWithCache(input [][]float64) ([][]float64, *fretsCache) {
 		cache.chanPreActReal[k] = preActReal
 		cache.chanPreActImag[k] = preActImag
 
-		realOut := make([]float64, channels)
-		imagOut := make([]float64, channels)
-		for j := 0; j < channels; j++ {
-			val := f.chanB2[j]
-			for i := 0; i < hidden; i++ {
-				val += f.chanW2[i*channels+j] * hReal[i]
-			}
-			realOut[j] = val
-			val = f.chanB2[j]
-			for i := 0; i < hidden; i++ {
-				val += f.chanW2[i*channels+j] * hImag[i]
-			}
-			imagOut[j] = val
-		}
+		// Channel MLP layer 2 via Engine: h @ chanW2 + chanB2.
+		rawRealOut := fretsMatVecF64(ctx, hReal, f.chanW2, hidden, channels)
+		rawImagOut := fretsMatVecF64(ctx, hImag, f.chanW2, hidden, channels)
 
 		// Residual connection.
 		for c := 0; c < channels; c++ {
-			freqReal[c][k] = realIn[c] + realOut[c]
-			freqImag[c][k] = imagIn[c] + imagOut[c]
+			freqReal[c][k] = realIn[c] + rawRealOut[c] + f.chanB2[c]
+			freqImag[c][k] = imagIn[c] + rawImagOut[c] + f.chanB2[c]
 		}
 	}
 
@@ -335,7 +322,7 @@ func (f *FreTS) forwardWithCache(input [][]float64) ([][]float64, *fretsCache) {
 		copy(cache.freqImagPreTemp[c], freqImag[c])
 	}
 
-	// Step 3: Temporal mixing.
+	// Step 3: Temporal mixing via Engine MatMul.
 	cache.tempHiddenReal = make([][]float64, channels)
 	cache.tempHiddenImag = make([][]float64, channels)
 	cache.tempPreActReal = make([][]float64, channels)
@@ -349,27 +336,21 @@ func (f *FreTS) forwardWithCache(input [][]float64) ([][]float64, *fretsCache) {
 		copy(cache.tempInputReal[c], freqReal[c])
 		copy(cache.tempInputImag[c], freqImag[c])
 
-		// Temporal MLP forward with cache.
+		// Temporal MLP layer 1 via Engine: input @ tempW1 + tempB1, then ReLU.
+		rawReal := fretsMatVecF64(ctx, freqReal[c], f.tempW1, topK, hidden)
+		rawImag := fretsMatVecF64(ctx, freqImag[c], f.tempW1, topK, hidden)
 		hReal := make([]float64, hidden)
 		hImag := make([]float64, hidden)
 		preActReal := make([]float64, hidden)
 		preActImag := make([]float64, hidden)
 		for j := 0; j < hidden; j++ {
-			val := f.tempB1[j]
-			for i := 0; i < topK; i++ {
-				val += f.tempW1[i*hidden+j] * freqReal[c][i]
+			preActReal[j] = rawReal[j] + f.tempB1[j]
+			if preActReal[j] > 0 {
+				hReal[j] = preActReal[j]
 			}
-			preActReal[j] = val
-			if val > 0 {
-				hReal[j] = val
-			}
-			val = f.tempB1[j]
-			for i := 0; i < topK; i++ {
-				val += f.tempW1[i*hidden+j] * freqImag[c][i]
-			}
-			preActImag[j] = val
-			if val > 0 {
-				hImag[j] = val
+			preActImag[j] = rawImag[j] + f.tempB1[j]
+			if preActImag[j] > 0 {
+				hImag[j] = preActImag[j]
 			}
 		}
 		cache.tempHiddenReal[c] = hReal
@@ -377,25 +358,14 @@ func (f *FreTS) forwardWithCache(input [][]float64) ([][]float64, *fretsCache) {
 		cache.tempPreActReal[c] = preActReal
 		cache.tempPreActImag[c] = preActImag
 
-		realOut := make([]float64, topK)
-		imagOut := make([]float64, topK)
-		for j := 0; j < topK; j++ {
-			val := f.tempB2[j]
-			for i := 0; i < hidden; i++ {
-				val += f.tempW2[i*topK+j] * hReal[i]
-			}
-			realOut[j] = val
-			val = f.tempB2[j]
-			for i := 0; i < hidden; i++ {
-				val += f.tempW2[i*topK+j] * hImag[i]
-			}
-			imagOut[j] = val
-		}
+		// Temporal MLP layer 2 via Engine: h @ tempW2 + tempB2.
+		rawRealOut := fretsMatVecF64(ctx, hReal, f.tempW2, hidden, topK)
+		rawImagOut := fretsMatVecF64(ctx, hImag, f.tempW2, hidden, topK)
 
 		// Residual connection.
 		for k := 0; k < topK; k++ {
-			freqReal[c][k] += realOut[k]
-			freqImag[c][k] += imagOut[k]
+			freqReal[c][k] += rawRealOut[k] + f.tempB2[k]
+			freqImag[c][k] += rawImagOut[k] + f.tempB2[k]
 		}
 	}
 
@@ -409,18 +379,25 @@ func (f *FreTS) forwardWithCache(input [][]float64) ([][]float64, *fretsCache) {
 		cache.reconstructed[c] = idft(mixed, inputLen)
 	}
 
-	// Step 5: Linear projection to output length.
+	// Step 5: Linear projection to output length via Engine MatMul.
+	// outW[outputLen, inputLen] @ reconstructed[inputLen, 1] + outB -> [outputLen].
+	outputLen := f.config.OutputLen
 	output := make([][]float64, channels)
 	for c := 0; c < channels; c++ {
-		output[c] = make([]float64, f.config.OutputLen)
-		wOff := c * f.config.OutputLen * inputLen
-		bOff := c * f.config.OutputLen
-		for o := 0; o < f.config.OutputLen; o++ {
-			val := f.outB[bOff+o]
+		wOff := c * outputLen * inputLen
+		bOff := c * outputLen
+		// Reshape as reconstructed[1, inputLen] @ outW^T[inputLen, outputLen].
+		// outW is [outputLen, inputLen] row-major, so transpose is [inputLen, outputLen].
+		outWt := make([]float64, inputLen*outputLen)
+		for o := 0; o < outputLen; o++ {
 			for i := 0; i < inputLen; i++ {
-				val += f.outW[wOff+o*inputLen+i] * cache.reconstructed[c][i]
+				outWt[i*outputLen+o] = f.outW[wOff+o*inputLen+i]
 			}
-			output[c][o] = val
+		}
+		proj := fretsMatVecF64(ctx, cache.reconstructed[c], outWt, inputLen, outputLen)
+		output[c] = make([]float64, outputLen)
+		for o := 0; o < outputLen; o++ {
+			output[c][o] = proj[o] + f.outB[bOff+o]
 		}
 	}
 
@@ -613,56 +590,81 @@ func (f *FreTS) backward(dOut [][]float64, cache *fretsCache) []float64 {
 	return grads
 }
 
+// fretsMatVecF64 computes vec[1, rows] @ mat[rows, cols] using cpuEngine64.MatMul.
+// mat is a flat row-major slice of length rows*cols. Returns a slice of length cols.
+func fretsMatVecF64(ctx context.Context, vec []float64, mat []float64, rows, cols int) []float64 {
+	vT, err := tensor.New[float64]([]int{1, rows}, vec)
+	if err != nil {
+		return fretsScalarMatVecF64(vec, mat, rows, cols)
+	}
+	mT, err := tensor.New[float64]([]int{rows, cols}, mat)
+	if err != nil {
+		return fretsScalarMatVecF64(vec, mat, rows, cols)
+	}
+	out, err := cpuEngine64.MatMul(ctx, vT, mT)
+	if err != nil {
+		return fretsScalarMatVecF64(vec, mat, rows, cols)
+	}
+	return out.Data()
+}
+
+// fretsScalarMatVecF64 computes vec @ mat on the CPU as a fallback.
+func fretsScalarMatVecF64(vec []float64, mat []float64, rows, cols int) []float64 {
+	out := make([]float64, cols)
+	for j := 0; j < cols; j++ {
+		for i := 0; i < rows; i++ {
+			out[j] += vec[i] * mat[i*cols+j]
+		}
+	}
+	return out
+}
+
 // channelMLP applies the channel mixing MLP: [channels] -> [hiddenSize] -> [channels].
 func (f *FreTS) channelMLP(input []float64) []float64 {
+	ctx := context.Background()
 	channels := f.config.Channels
 	hidden := f.config.HiddenSize
 
+	// Layer 1: input[1,channels] @ chanW1[channels,hidden] + chanB1.
+	raw := fretsMatVecF64(ctx, input, f.chanW1, channels, hidden)
 	h := make([]float64, hidden)
 	for j := 0; j < hidden; j++ {
-		val := f.chanB1[j]
-		for i := 0; i < channels; i++ {
-			val += f.chanW1[i*hidden+j] * input[i]
-		}
+		val := raw[j] + f.chanB1[j]
 		if val > 0 {
-			h[j] = val
+			h[j] = val // ReLU
 		}
 	}
 
+	// Layer 2: h[1,hidden] @ chanW2[hidden,channels] + chanB2.
+	raw2 := fretsMatVecF64(ctx, h, f.chanW2, hidden, channels)
 	out := make([]float64, channels)
 	for j := 0; j < channels; j++ {
-		val := f.chanB2[j]
-		for i := 0; i < hidden; i++ {
-			val += f.chanW2[i*channels+j] * h[i]
-		}
-		out[j] = val
+		out[j] = raw2[j] + f.chanB2[j]
 	}
 	return out
 }
 
 // temporalMLP applies the temporal mixing MLP: [topK] -> [hiddenSize] -> [topK].
 func (f *FreTS) temporalMLP(input []float64) []float64 {
+	ctx := context.Background()
 	topK := f.config.TopK
 	hidden := f.config.HiddenSize
 
+	// Layer 1: input[1,topK] @ tempW1[topK,hidden] + tempB1.
+	raw := fretsMatVecF64(ctx, input, f.tempW1, topK, hidden)
 	h := make([]float64, hidden)
 	for j := 0; j < hidden; j++ {
-		val := f.tempB1[j]
-		for i := 0; i < topK; i++ {
-			val += f.tempW1[i*hidden+j] * input[i]
-		}
+		val := raw[j] + f.tempB1[j]
 		if val > 0 {
-			h[j] = val
+			h[j] = val // ReLU
 		}
 	}
 
+	// Layer 2: h[1,hidden] @ tempW2[hidden,topK] + tempB2.
+	raw2 := fretsMatVecF64(ctx, h, f.tempW2, hidden, topK)
 	out := make([]float64, topK)
 	for j := 0; j < topK; j++ {
-		val := f.tempB2[j]
-		for i := 0; i < hidden; i++ {
-			val += f.tempW2[i*topK+j] * h[i]
-		}
-		out[j] = val
+		out[j] = raw2[j] + f.tempB2[j]
 	}
 	return out
 }
@@ -749,44 +751,6 @@ func (f *FreTS) paramCount() int {
 	return chanParams + tempParams + outParams
 }
 
-// flatParams returns pointers to all trainable parameters in a flat slice.
-func (f *FreTS) flatParams() []*float64 {
-	n := f.paramCount()
-	params := make([]*float64, 0, n)
-
-	for i := range f.chanW1 {
-		params = append(params, &f.chanW1[i])
-	}
-	for i := range f.chanB1 {
-		params = append(params, &f.chanB1[i])
-	}
-	for i := range f.chanW2 {
-		params = append(params, &f.chanW2[i])
-	}
-	for i := range f.chanB2 {
-		params = append(params, &f.chanB2[i])
-	}
-	for i := range f.tempW1 {
-		params = append(params, &f.tempW1[i])
-	}
-	for i := range f.tempB1 {
-		params = append(params, &f.tempB1[i])
-	}
-	for i := range f.tempW2 {
-		params = append(params, &f.tempW2[i])
-	}
-	for i := range f.tempB2 {
-		params = append(params, &f.tempB2[i])
-	}
-	for i := range f.outW {
-		params = append(params, &f.outW[i])
-	}
-	for i := range f.outB {
-		params = append(params, &f.outB[i])
-	}
-
-	return params
-}
 
 // ForwardSample runs the FreTS forward pass on a single sample and returns
 // a flat output [channels*outputLen] with cached activations for BackwardSample.
@@ -844,7 +808,72 @@ func (f *FreTS) ZeroGrads() {
 
 // FlatParams returns pointers to all trainable parameters (exported for TrainableBackend).
 func (f *FreTS) FlatParams() []*float64 {
-	return f.flatParams()
+	n := f.paramCount()
+	params := make([]*float64, 0, n)
+	for i := range f.chanW1 {
+		params = append(params, &f.chanW1[i])
+	}
+	for i := range f.chanB1 {
+		params = append(params, &f.chanB1[i])
+	}
+	for i := range f.chanW2 {
+		params = append(params, &f.chanW2[i])
+	}
+	for i := range f.chanB2 {
+		params = append(params, &f.chanB2[i])
+	}
+	for i := range f.tempW1 {
+		params = append(params, &f.tempW1[i])
+	}
+	for i := range f.tempB1 {
+		params = append(params, &f.tempB1[i])
+	}
+	for i := range f.tempW2 {
+		params = append(params, &f.tempW2[i])
+	}
+	for i := range f.tempB2 {
+		params = append(params, &f.tempB2[i])
+	}
+	for i := range f.outW {
+		params = append(params, &f.outW[i])
+	}
+	for i := range f.outB {
+		params = append(params, &f.outB[i])
+	}
+	return params
+}
+
+// Parameters returns all trainable parameters as float32 graph parameters.
+func (f *FreTS) Parameters() []*graph.Parameter[float32] {
+	channels := f.config.Channels
+	hidden := f.config.HiddenSize
+	topK := f.config.TopK
+	inputLen := f.config.InputLen
+	outputLen := f.config.OutputLen
+
+	var params []*graph.Parameter[float32]
+	idx := 0
+	addParam := func(name string, data []float64, shape []int) {
+		f32 := make([]float32, len(data))
+		for i, v := range data {
+			f32[i] = float32(v)
+		}
+		t, _ := tensor.New[float32](shape, f32)
+		p, _ := graph.NewParameter(fmt.Sprintf("%s_%d", name, idx), t, tensor.New[float32])
+		params = append(params, p)
+		idx++
+	}
+	addParam("chanW1", f.chanW1, []int{channels, hidden})
+	addParam("chanB1", f.chanB1, []int{hidden})
+	addParam("chanW2", f.chanW2, []int{hidden, channels})
+	addParam("chanB2", f.chanB2, []int{channels})
+	addParam("tempW1", f.tempW1, []int{topK, hidden})
+	addParam("tempB1", f.tempB1, []int{hidden})
+	addParam("tempW2", f.tempW2, []int{hidden, topK})
+	addParam("tempB2", f.tempB2, []int{topK})
+	addParam("outW", f.outW, []int{channels * outputLen, inputLen})
+	addParam("outB", f.outB, []int{channels * outputLen})
+	return params
 }
 
 // ParamCount returns the total number of trainable parameters (exported for TrainableBackend).

@@ -124,7 +124,7 @@ func TestCfC_GradientVerification(t *testing.T) {
 	}
 
 	// Use small weights for numerical stability.
-	params := m.flatParams()
+	params := m.FlatParams()
 	for _, p := range params {
 		*p *= 0.1
 	}
@@ -322,7 +322,7 @@ func TestCfC_ParamCount(t *testing.T) {
 		t.Errorf("paramCount = %d, want %d", got, want)
 	}
 
-	params := m.flatParams()
+	params := m.FlatParams()
 	if len(params) != want {
 		t.Errorf("flatParams length = %d, want %d", len(params), want)
 	}
@@ -410,7 +410,7 @@ func TestCfC_TrainWindowed_Engine(t *testing.T) {
 	}
 
 	// Verify all weights are finite.
-	assertFiniteWeights(t, m.flatParams())
+	assertFiniteWeights(t, m.FlatParams())
 	t.Logf("engine convergence: first_loss=%.6f final_loss=%.6f ratio=%.4f", firstLoss, lastLoss, lastLoss/firstLoss)
 }
 
@@ -450,7 +450,7 @@ func TestCfC_TrainWindowed_MultiScale(t *testing.T) {
 	}
 
 	// Verify all weights are finite.
-	assertFiniteWeights(t, m.flatParams())
+	assertFiniteWeights(t, m.FlatParams())
 	t.Logf("multi-scale training: final_loss=%.6f (20 epochs, 5 channels, 200 samples)", result.FinalLoss)
 }
 

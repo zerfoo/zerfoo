@@ -123,17 +123,13 @@ func zeroMatrix(rows, cols int) [][]float64 {
 
 // forwardWithCache runs forward pass storing all intermediate activations.
 func (m *ITransformer) forwardWithCache(input [][]float64) ([][]float64, iTransformerCache) {
-	channels := m.config.Channels
-	dModel := m.config.DModel
+	ctx := context.Background()
 	cache := iTransformerCache{
 		input: input,
 	}
 
-	// Step 1: Variate embedding.
-	tokens := make([][]float64, channels)
-	for c := 0; c < channels; c++ {
-		tokens[c] = linearForwardVec(input[c], m.embedW, m.embedB)
-	}
+	// Step 1: Variate embedding via engine MatMul.
+	tokens := linearBatchF64(ctx, input, m.embedW, m.embedB)
 	cache.embedOut = copyMatrix(tokens)
 
 	// Step 2: Encoder layers.
@@ -147,13 +143,8 @@ func (m *ITransformer) forwardWithCache(input [][]float64) ([][]float64, iTransf
 	// Store pre-projection tokens.
 	cache.preProj = copyMatrix(tokens)
 
-	// Step 3: Output projection.
-	output := make([][]float64, channels)
-	for c := 0; c < channels; c++ {
-		output[c] = linearForwardVec(tokens[c], m.projW, m.projB)
-	}
-
-	_ = dModel
+	// Step 3: Output projection via engine MatMul.
+	output := linearBatchF64(ctx, tokens, m.projW, m.projB)
 	return output, cache
 }
 
@@ -163,6 +154,7 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 	dModel := m.config.DModel
 	nHeads := m.config.NHeads
 	headDim := dModel / nHeads
+	ctx := context.Background()
 
 	lc := iTransformerLayerCache{
 		inputTokens:   copyMatrix(tokens),
@@ -170,14 +162,10 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 	}
 
 	// --- Multi-head self-attention ---
-	Q := make([][]float64, channels)
-	K := make([][]float64, channels)
-	V := make([][]float64, channels)
-	for c := 0; c < channels; c++ {
-		Q[c] = linearForwardVec(tokens[c], layer.qW, layer.qB)
-		K[c] = linearForwardVec(tokens[c], layer.kW, layer.kB)
-		V[c] = linearForwardVec(tokens[c], layer.vW, layer.vB)
-	}
+	// Q, K, V projections via engine MatMul.
+	Q := linearBatchF64(ctx, tokens, layer.qW, layer.qB)
+	K := linearBatchF64(ctx, tokens, layer.kW, layer.kB)
+	V := linearBatchF64(ctx, tokens, layer.vW, layer.vB)
 	lc.Q = copyMatrix(Q)
 	lc.K = copyMatrix(K)
 	lc.V = copyMatrix(V)
@@ -220,51 +208,42 @@ func (m *ITransformer) encoderLayerForwardCached(tokens [][]float64, layer iTran
 	}
 	lc.attnConcat = copyMatrix(attnConcat)
 
-	// Output projection.
-	attnOut := make([][]float64, channels)
-	for c := 0; c < channels; c++ {
-		attnOut[c] = linearForwardVec(attnConcat[c], layer.oW, layer.oB)
-	}
+	// Output projection via engine MatMul.
+	attnOut := linearBatchF64(ctx, attnConcat, layer.oW, layer.oB)
 	lc.attnOut = copyMatrix(attnOut)
 
-	// Residual + LN1.
-	preLN1 := make([][]float64, channels)
+	// Residual + LN1 via engine Add.
+	preLN1 := addMatricesF64(ctx, tokens, attnOut, channels, dModel)
 	ln1Out := make([][]float64, channels)
 	lc.ln1Mu = make([]float64, channels)
 	lc.ln1Std = make([]float64, channels)
 	for c := 0; c < channels; c++ {
-		preLN1[c] = make([]float64, dModel)
-		for d := 0; d < dModel; d++ {
-			preLN1[c][d] = tokens[c][d] + attnOut[c][d]
-		}
 		ln1Out[c], lc.ln1Mu[c], lc.ln1Std[c] = layerNorm1DCached(preLN1[c], layer.ln1Scale, layer.ln1Bias)
 	}
 	lc.preLN1 = copyMatrix(preLN1)
 	lc.ln1Out = copyMatrix(ln1Out)
 
 	// --- FFN ---
-	fc1Out := make([][]float64, channels)
+	// fc1 via engine MatMul.
+	fc1Out := linearBatchF64(ctx, ln1Out, layer.fc1W, layer.fc1B)
 	geluOut := make([][]float64, channels)
-	fc2Out := make([][]float64, channels)
-	preLN2 := make([][]float64, channels)
-	ln2Out := make([][]float64, channels)
-	lc.ln2Mu = make([]float64, channels)
-	lc.ln2Std = make([]float64, channels)
-
 	for c := 0; c < channels; c++ {
-		fc1Out[c] = linearForwardVec(ln1Out[c], layer.fc1W, layer.fc1B)
 		geluOut[c] = make([]float64, len(fc1Out[c]))
 		for i := range fc1Out[c] {
 			v := fc1Out[c][i]
-				inner := math.Sqrt(2/math.Pi) * (v + 0.044715*v*v*v)
-				geluOut[c][i] = 0.5 * v * (1 + math.Tanh(inner))
+			inner := math.Sqrt(2/math.Pi) * (v + 0.044715*v*v*v)
+			geluOut[c][i] = 0.5 * v * (1 + math.Tanh(inner))
 		}
-		fc2Out[c] = linearForwardVec(geluOut[c], layer.fc2W, layer.fc2B)
+	}
+	// fc2 via engine MatMul.
+	fc2Out := linearBatchF64(ctx, geluOut, layer.fc2W, layer.fc2B)
 
-		preLN2[c] = make([]float64, dModel)
-		for d := 0; d < dModel; d++ {
-			preLN2[c][d] = ln1Out[c][d] + fc2Out[c][d]
-		}
+	// Residual + LN2 via engine Add.
+	preLN2 := addMatricesF64(ctx, ln1Out, fc2Out, channels, dModel)
+	ln2Out := make([][]float64, channels)
+	lc.ln2Mu = make([]float64, channels)
+	lc.ln2Std = make([]float64, channels)
+	for c := 0; c < channels; c++ {
 		ln2Out[c], lc.ln2Mu[c], lc.ln2Std[c] = layerNorm1DCached(preLN2[c], layer.ln2Scale, layer.ln2Bias)
 	}
 	lc.fc1Out = copyMatrix(fc1Out)
@@ -337,12 +316,9 @@ func (m *ITransformer) encoderLayerBackward(
 	accumulateMatrix(lg.dFC2W, dFC2W)
 	accumulateVec(lg.dFC2B, dFC2B)
 
-	// Add FFN path gradient to residual path.
-	for c := 0; c < channels; c++ {
-		for d := 0; d < dModel; d++ {
-			dLN1Out[c][d] += dMLPInput[c][d]
-		}
-	}
+	// Add FFN path gradient to residual path via engine Add.
+	ctx := context.Background()
+	dLN1Out = addMatricesF64(ctx, dLN1Out, dMLPInput, channels, dModel)
 
 	// === Backward through LN1 via functional.LayerNormBackward ===
 	dPreLN1, dLN1Scale, dLN1Bias := layerNormBackwardFunctional(dLN1Out, lc.preLN1, layer.ln1Scale, channels, dModel)
@@ -371,12 +347,10 @@ func (m *ITransformer) encoderLayerBackward(
 		layer.vW, channels, dModel, dModel,
 		lg.dVW, lg.dVB)
 
-	// Accumulate Q/K/V input gradients into residual path.
-	for c := 0; c < channels; c++ {
-		for d := 0; d < dModel; d++ {
-			dInputTokens[c][d] += dInputFromQ[c][d] + dInputFromK[c][d] + dInputFromV[c][d]
-		}
-	}
+	// Accumulate Q/K/V input gradients into residual path via engine Add.
+	dInputTokens = addMatricesF64(ctx, dInputTokens, dInputFromQ, channels, dModel)
+	dInputTokens = addMatricesF64(ctx, dInputTokens, dInputFromK, channels, dModel)
+	dInputTokens = addMatricesF64(ctx, dInputTokens, dInputFromV, channels, dModel)
 
 	return dInputTokens
 }

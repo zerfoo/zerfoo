@@ -196,51 +196,10 @@ func (d *DLinear) trainWindowedEngine(windows [][][]float64, labels []float64, c
 // applied across the full batch using fused loops to minimise allocation overhead.
 func (d *DLinear) forwardBatch(inputs [][][]float64) [][][]float64 {
 	batch := len(inputs)
-	channels := d.config.Channels
-	inputLen := d.config.InputLen
-	outputLen := d.config.OutputLen
-
-	// Decompose all samples.
-	trends := make([][][]float64, batch)
-	seasonals := make([][][]float64, batch)
-	for b := 0; b < batch; b++ {
-		trends[b], seasonals[b] = d.decompose(inputs[b])
-	}
-
-	// Allocate output: [batch][channels][outputLen].
 	out := make([][][]float64, batch)
 	for b := 0; b < batch; b++ {
-		out[b] = make([][]float64, channels)
-		for c := 0; c < channels; c++ {
-			out[b][c] = make([]float64, outputLen)
-		}
+		out[b] = d.forward(inputs[b])
 	}
-
-	// Apply per-channel linear projections across the full batch.
-	for c := 0; c < channels; c++ {
-		tw := d.trendW[c]    // [outputLen * inputLen]
-		tb := d.trendB[c]    // [outputLen]
-		sw := d.seasonalW[c] // [outputLen * inputLen]
-		sb := d.seasonalB[c] // [outputLen]
-
-		for b := 0; b < batch; b++ {
-			trendIn := trends[b][c]
-			seasonIn := seasonals[b][c]
-			dst := out[b][c]
-
-			for o := 0; o < outputLen; o++ {
-				trendVal := tb[o]
-				seasonVal := sb[o]
-				wOff := o * inputLen
-				for i := 0; i < inputLen; i++ {
-					trendVal += tw[wOff+i] * trendIn[i]
-					seasonVal += sw[wOff+i] * seasonIn[i]
-				}
-				dst[o] = trendVal + seasonVal
-			}
-		}
-	}
-
 	return out
 }
 
