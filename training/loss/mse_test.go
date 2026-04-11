@@ -45,9 +45,9 @@ func TestMSE_Backward(t *testing.T) {
 	dOut, _ := tensor.New[float32]([]int{1}, []float32{1.0})
 	grads, _ := mse.Backward(context.Background(), types.FullBackprop, dOut, predictions, targets)
 
-	// Gradient is (predictions - targets)
-	// (1-1), (2-2), (3-3), (5-4) = 0, 0, 0, 1
-	expected := []float32{0.0, 0.0, 0.0, 1.0}
+	// Gradient is 2*(predictions - targets)/N
+	// (1-1), (2-2), (3-3), (5-4) = 0, 0, 0, 1 → *2/4 = 0, 0, 0, 0.5
+	expected := []float32{0.0, 0.0, 0.0, 0.5}
 	for i, v := range grads[0].Data() {
 		if v != expected[i] {
 			t.Errorf("expected %v, got %v", expected, grads[0].Data())
@@ -57,8 +57,8 @@ func TestMSE_Backward(t *testing.T) {
 	predictions2, _ := tensor.New[float32]([]int{1, 3}, []float32{1.0, 2.0, 3.0})
 	targets2, _ := tensor.New[float32]([]int{1, 3}, []float32{4.0, 5.0, 6.0})
 	grads2, _ := mse.Backward(context.Background(), types.FullBackprop, dOut, predictions2, targets2)
-	// (1-4), (2-5), (3-6) = -3, -3, -3
-	expected2 := []float32{-3.0, -3.0, -3.0}
+	// 2*((1-4), (2-5), (3-6))/3 = 2*(-3, -3, -3)/3 = -2, -2, -2
+	expected2 := []float32{-2.0, -2.0, -2.0}
 	for i, v := range grads2[0].Data() {
 		if v != expected2[i] {
 			t.Errorf("expected %v, got %v", expected2, grads2[0].Data())
@@ -104,8 +104,8 @@ func TestMSE_Forward_EdgeCases(t *testing.T) {
 	grads1, err := mse.Backward(ctx, types.FullBackprop, dOut1, pred1, target1)
 	testutils.AssertNoError(t, err, "Backward should not error with single element")
 
-	expected := float32(2.0) // (5-3) = 2
-	testutils.AssertFloatEqual(t, expected, grads1[0].Data()[0], 1e-6, "Gradient should be 2.0 for (5-3)")
+	expected := float32(4.0) // 2*(5-3)/1 = 4
+	testutils.AssertFloatEqual(t, expected, grads1[0].Data()[0], 1e-6, "Gradient should be 4.0 for 2*(5-3)/1")
 
 	// Test with large values
 	predLarge, err := tensor.New[float32]([]int{2}, []float32{1000.0, 2000.0})
@@ -137,8 +137,8 @@ func TestMSE_Forward_DifferentShapes(t *testing.T) {
 	grads1D, err := mse.Backward(ctx, types.FullBackprop, dOut1D, pred1D, target1D)
 	testutils.AssertNoError(t, err, "Backward should not error with 1D tensors")
 
-	expected1D := float32(-1.0) // (1-2) = -1
-	testutils.AssertFloatEqual(t, expected1D, grads1D[0].Data()[0], 1e-6, "Gradient should be -1.0 for 1D case")
+	expected1D := float32(-0.5) // 2*(1-2)/4 = -0.5
+	testutils.AssertFloatEqual(t, expected1D, grads1D[0].Data()[0], 1e-6, "Gradient should be -0.5 for 1D case")
 
 	// Test with 3D tensors
 	pred3D, err := tensor.New[float32]([]int{2, 2, 2}, []float32{1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0})

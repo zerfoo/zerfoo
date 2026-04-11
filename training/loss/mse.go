@@ -86,6 +86,14 @@ func (m *MSE[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tenso
 		return nil, err
 	}
 
+	// Apply 2/N scaling: dL/dPred = 2*(pred-target)/N for mean reduction.
+	n := len(preds.Data())
+	scale := m.ops.FromFloat64(2.0 / float64(n))
+	diff, err = m.engine.MulScalar(ctx, diff, scale)
+	if err != nil {
+		return nil, err
+	}
+
 	// Chain with upstream gradient dOut.
 	gradPred, err := m.engine.Mul(ctx, diff, dOut, nil)
 	if err != nil {
