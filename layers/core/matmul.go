@@ -228,13 +228,21 @@ func (m *MatMul[T]) Backward(ctx context.Context, mode types.BackwardMode, outpu
 	b := inputs[1]
 
 	// Gradient w.r.t. a: outputGradient @ b^T
-	gradA, err := m.engine.MatMul(ctx, outputGradient, b)
+	bT, err := m.engine.Transpose(ctx, b, []int{1, 0})
+	if err != nil {
+		return nil, fmt.Errorf("MatMul backward: transpose b: %w", err)
+	}
+	gradA, err := m.engine.MatMul(ctx, outputGradient, bT)
 	if err != nil {
 		return nil, err
 	}
 
 	// Gradient w.r.t. b: a^T @ outputGradient
-	gradB, err := m.engine.MatMul(ctx, a, outputGradient)
+	aT, err := m.engine.Transpose(ctx, a, []int{1, 0})
+	if err != nil {
+		return nil, fmt.Errorf("MatMul backward: transpose a: %w", err)
+	}
+	gradB, err := m.engine.MatMul(ctx, aT, outputGradient)
 	if err != nil {
 		return nil, err
 	}
