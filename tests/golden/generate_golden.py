@@ -993,6 +993,82 @@ def gen_sgd_step():
 
 
 # ---------------------------------------------------------------------------
+# EMA optimizer
+# ---------------------------------------------------------------------------
+
+def gen_ema():
+    """Verify one EMA shadow update matches PyTorch formula.
+
+    EMA shadow update: shadow = decay * shadow + (1 - decay) * param
+    On the first call to Step, EMA initializes shadow as a copy of param
+    and does NOT update (just copies). So we simulate a second call where
+    the inner optimizer has already modified param, and the shadow update
+    actually fires.
+    """
+    set_seed()
+    decay = 0.999
+
+    # After inner optimizer step, param has some new value.
+    # shadow was initialized as copy of param_before (first Step).
+    param_before = torch.randn(4, 4)
+    shadow_before = param_before.clone()
+
+    # Simulate inner optimizer modifying param (e.g., AdamW step)
+    grad = torch.randn(4, 4)
+    lr = 1e-3
+    param_after_inner = param_before - lr * grad  # simplified SGD-like step
+
+    # EMA update: shadow = decay * shadow + (1-decay) * param_after_inner
+    expected_shadow_after = decay * shadow_before + (1 - decay) * param_after_inner
+
+    save_case("optimizer_ema", {
+        "layer": "ema",
+        "decay": decay,
+        "lr": lr,
+        "param_before": to_list(param_before),
+        "param_shape": list(param_before.shape),
+        "grad": to_list(grad),
+        "shadow_before": to_list(shadow_before),
+        "param_after_inner": to_list(param_after_inner),
+        "expected_shadow_after": to_list(expected_shadow_after),
+        "tolerance": 1e-5,
+    })
+
+
+# ---------------------------------------------------------------------------
+# SWA optimizer
+# ---------------------------------------------------------------------------
+
+def gen_swa():
+    """Verify SWA running average update.
+
+    SWA formula: avg = avg + (param - avg) / (n + 1)
+    First call (n=0): avg is initialized as copy of param (no update).
+    Second call (n=0 still, but avg exists): avg = avg + (param - avg) / 1
+    We simulate two UpdateAverage calls.
+    """
+    set_seed()
+    # First epoch params
+    param0 = torch.randn(4, 4)
+    # After first UpdateAverage: avg = param0, n_averaged = 1
+
+    # Second epoch params (simulate training changing weights)
+    param1 = torch.randn(4, 4)
+    # After second UpdateAverage (n_averaged was 1):
+    # avg = avg + (param1 - avg) / (1 + 1) = (param0 + param1) / 2
+    expected_avg = param0 + (param1 - param0) / 2.0
+
+    save_case("optimizer_swa", {
+        "layer": "swa",
+        "param0": to_list(param0),
+        "param1": to_list(param1),
+        "param_shape": list(param0.shape),
+        "expected_avg_after": to_list(expected_avg),
+        "tolerance": 1e-5,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Composite: Transformer Block
 # ---------------------------------------------------------------------------
 
@@ -1079,6 +1155,346 @@ def gen_transformer_block():
 
 
 # ---------------------------------------------------------------------------
+# FastGelu (T86.1.1)
+# ---------------------------------------------------------------------------
+
+def gen_fast_gelu():
+    set_seed()
+    x = torch.randn(2, 8)
+    # FastGelu uses the same tanh approximation as GELU
+    y = F.gelu(x, approximate="tanh")
+    save_case("activation_fast_gelu", {
+        "layer": "fast_gelu",
+        "input": to_list(x), "input_shape": list(x.shape),
+        "expected_output": to_list(y), "output_shape": list(y.shape),
+        "tolerance": 1e-5,
+    })
+
+
+# ---------------------------------------------------------------------------
+# SimplifiedLayerNorm (T86.1.2) - same as RMSNorm (no mean subtraction)
+# ---------------------------------------------------------------------------
+
+def gen_simplified_layer_norm():
+    set_seed()
+    batch, dim = 2, 8
+    x = torch.randn(batch, dim)
+    gain = torch.randn(dim)
+    eps = 1e-6
+
+    # SimplifiedLayerNorm = RMSNorm: y = gain * x / sqrt(mean(x^2) + eps)
+    rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)
+    y = gain * (x / rms)
+
+    save_case("norm_simplified_layer_norm", {
+        "layer": "simplified_layer_norm",
+        "epsilon": eps,
+        "input": to_list(x), "input_shape": list(x.shape),
+        "gain": to_list(gain), "gain_shape": list(gain.shape),
+        "expected_output": to_list(y), "output_shape": list(y.shape),
+        "tolerance": 1e-5,
+    })
+
+
+# ---------------------------------------------------------------------------
+# SkipSimplifiedLayerNorm (T86.1.3) - RMSNorm + residual
+# ---------------------------------------------------------------------------
+
+def gen_skip_simplified_layer_norm():
+    set_seed()
+    batch, dim = 2, 8
+    x = torch.randn(batch, dim)
+    gain = torch.randn(dim)
+    eps = 1e-6
+
+    # SimplifiedLayerNorm then add residual: y = x + gain * x / sqrt(mean(x^2) + eps)
+    rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)
+    normed = gain * (x / rms)
+    y = x + normed
+
+    save_case("norm_skip_simplified_layer_norm", {
+        "layer": "skip_simplified_layer_norm",
+        "epsilon": eps,
+        "input": to_list(x), "input_shape": list(x.shape),
+        "gain": to_list(gain), "gain_shape": list(gain.shape),
+        "expected_output": to_list(y), "output_shape": list(y.shape),
+        "tolerance": 1e-5,
+    })
+
+
+# ---------------------------------------------------------------------------
+# LMHead (T86.1.7) - linear projection hidden -> vocab
+# ---------------------------------------------------------------------------
+
+def gen_lm_head():
+    set_seed()
+    batch, seq_len, hidden_dim, vocab_size = 1, 4, 8, 16
+    x = torch.randn(batch, seq_len, hidden_dim)
+    # Zerfoo Linear stores weights as [in, out], LMHead uses Linear internally
+    w = torch.randn(hidden_dim, vocab_size)
+
+    # LMHead: reshape [B, S, H] -> [B*S, H], matmul, reshape back
+    x_flat = x.view(batch * seq_len, hidden_dim)
+    y_flat = x_flat @ w
+    y = y_flat.view(batch, seq_len, vocab_size)
+
+    save_case("core_lm_head", {
+        "layer": "lm_head",
+        "hidden_dim": hidden_dim, "vocab_size": vocab_size,
+        "input": to_list(x), "input_shape": list(x.shape),
+        "weight": to_list(w), "weight_shape": list(w.shape),
+        "expected_output": to_list(y), "output_shape": list(y.shape),
+        "tolerance": 1e-4,
+    })
+
+
+# ---------------------------------------------------------------------------
+# PatchEmbed (T86.1.12)
+# ---------------------------------------------------------------------------
+
+def gen_patch_embed():
+    set_seed()
+    batch, seq_len = 2, 16
+    patch_size, embed_dim = 4, 8
+    x = torch.randn(batch, seq_len)
+    # Projection: [patch_size, embed_dim]
+    proj = torch.randn(patch_size, embed_dim)
+
+    num_patches = seq_len // patch_size
+    # Reshape [batch, seq_len] -> [batch*num_patches, patch_size]
+    x_reshaped = x.view(batch * num_patches, patch_size)
+    # Project: [batch*num_patches, patch_size] @ [patch_size, embed_dim]
+    y_flat = x_reshaped @ proj
+    y = y_flat.view(batch, num_patches, embed_dim)
+
+    save_case("timeseries_patch_embed", {
+        "layer": "patch_embed",
+        "patch_size": patch_size, "embed_dim": embed_dim,
+        "input": to_list(x), "input_shape": list(x.shape),
+        "proj": to_list(proj), "proj_shape": list(proj.shape),
+        "expected_output": to_list(y), "output_shape": list(y.shape),
+        "tolerance": 1e-4,
+    })
+
+
+# ---------------------------------------------------------------------------
+# TSMixerBlock (T86.1.14) - channel-independent mode (no feature mixing)
+# ---------------------------------------------------------------------------
+
+def gen_tsmixer_block():
+    set_seed()
+    batch, num_patches, d_model = 1, 4, 8
+
+    x = torch.randn(batch, num_patches, d_model)
+
+    # Time-mixing MLP weights (Linear: [in, out] = [num_patches, num_patches])
+    time_mlp1_w = torch.randn(num_patches, num_patches) * 0.1
+    time_mlp2_w = torch.randn(num_patches, num_patches) * 0.1
+    # LayerNorm params
+    time_ln_gamma = torch.ones(d_model)
+    time_ln_beta = torch.zeros(d_model)
+
+    # Step 1: LayerNorm
+    ln = nn.LayerNorm(d_model, eps=1e-5)
+    ln.weight.data.copy_(time_ln_gamma)
+    ln.bias.data.copy_(time_ln_beta)
+    normed = ln(x)
+
+    # Step 2: Transpose [B, P, D] -> [B, D, P]
+    transposed = normed.transpose(1, 2)
+
+    # Step 3: MLP(GELU): timeMLP2(gelu(timeMLP1(x)))
+    h = transposed @ time_mlp1_w
+    h = F.gelu(h, approximate="tanh")
+    h = h @ time_mlp2_w
+
+    # Step 4: Transpose back [B, D, P] -> [B, P, D]
+    h = h.transpose(1, 2)
+
+    # Step 5: Residual add
+    y = h + x
+
+    save_case("timeseries_tsmixer_block", {
+        "layer": "tsmixer_block",
+        "num_patches": num_patches, "d_model": d_model,
+        "channel_mixing": False,
+        "input": to_list(x), "input_shape": list(x.shape),
+        "time_mlp1_w": to_list(time_mlp1_w), "time_mlp1_w_shape": list(time_mlp1_w.shape),
+        "time_mlp2_w": to_list(time_mlp2_w), "time_mlp2_w_shape": list(time_mlp2_w.shape),
+        "time_ln_gamma": to_list(time_ln_gamma), "time_ln_gamma_shape": list(time_ln_gamma.shape),
+        "time_ln_beta": to_list(time_ln_beta), "time_ln_beta_shape": list(time_ln_beta.shape),
+        "expected_output": to_list(y), "output_shape": list(y.shape),
+        "tolerance": 1e-4,
+    })
+
+
+# ---------------------------------------------------------------------------
+# SSMLayer (T86.1.17)
+# ---------------------------------------------------------------------------
+
+def gen_ssm_layer():
+    set_seed()
+    batch, seq_len = 1, 8
+    d_state, d_input, d_output = 4, 3, 2
+
+    u = torch.randn(batch, seq_len, d_input)
+
+    # Parameters matching Zerfoo SSMLayer
+    A_log = torch.randn(d_state) * 0.5  # [d_state]
+    B = torch.randn(d_state, d_input) * 0.1  # [d_state, d_input]
+    C = torch.randn(d_output, d_state) * 0.1  # [d_output, d_state]
+    D_mat = torch.randn(d_output, d_input) * 0.01  # [d_output, d_input]
+    log_dt = torch.tensor([math.log(0.01)])  # [1]
+
+    # Discretize
+    dt = torch.exp(log_dt)  # scalar
+    A_diag = -torch.exp(A_log)  # [d_state], negative eigenvalues
+    A_bar = torch.exp(A_diag * dt.item())  # [d_state]
+
+    # B_bar = (A_bar - 1) / A_diag * B  (ZOH discretization)
+    # Safe: for small A_diag, B_bar -> dt * B
+    scale = (A_bar - 1) / A_diag
+    # For near-zero A_diag, use dt
+    scale = torch.where(torch.abs(A_diag) < 1e-12, dt.expand_as(A_diag), scale)
+    B_bar = scale.unsqueeze(1) * B  # [d_state, d_input]
+
+    # Sequential scan
+    outputs = []
+    state = torch.zeros(batch, d_state, 1)  # [batch, d_state, 1]
+    A_bar_col = A_bar.unsqueeze(1)  # [d_state, 1]
+
+    for t in range(seq_len):
+        u_t = u[:, t, :].unsqueeze(-1)  # [batch, d_input, 1]
+        Bu = B_bar @ u_t  # [d_state, d_input] @ [batch, d_input, 1] = [batch, d_state, 1]
+        state = A_bar_col * state + Bu  # [batch, d_state, 1]
+        Cx = C @ state  # [d_output, d_state] @ [batch, d_state, 1] = [batch, d_output, 1]
+        Du = D_mat @ u_t  # [d_output, d_input] @ [batch, d_input, 1] = [batch, d_output, 1]
+        y_t = Cx + Du  # [batch, d_output, 1]
+        outputs.append(y_t.squeeze(-1))  # [batch, d_output]
+
+    y = torch.stack(outputs, dim=1)  # [batch, seq_len, d_output]
+
+    save_case("timeseries_ssm_layer", {
+        "layer": "ssm_layer",
+        "d_state": d_state, "d_input": d_input, "d_output": d_output,
+        "input": to_list(u), "input_shape": list(u.shape),
+        "A_log": to_list(A_log), "A_log_shape": list(A_log.shape),
+        "B": to_list(B), "B_shape": list(B.shape),
+        "C": to_list(C), "C_shape": list(C.shape),
+        "D": to_list(D_mat), "D_shape": list(D_mat.shape),
+        "log_dt": to_list(log_dt), "log_dt_shape": list(log_dt.shape),
+        "expected_output": to_list(y), "output_shape": list(y.shape),
+        "tolerance": 1e-4,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Core arithmetic ops (T86.1.21)
+# ---------------------------------------------------------------------------
+
+def gen_arithmetic_ops():
+    set_seed()
+    a = torch.randn(2, 4)
+    b = torch.randn(2, 4)
+
+    save_case("op_add", {
+        "layer": "add",
+        "input_a": to_list(a), "input_b": to_list(b),
+        "input_shape": list(a.shape),
+        "expected_output": to_list(a + b),
+        "tolerance": 1e-6,
+    })
+    save_case("op_sub", {
+        "layer": "sub",
+        "input_a": to_list(a), "input_b": to_list(b),
+        "input_shape": list(a.shape),
+        "expected_output": to_list(a - b),
+        "tolerance": 1e-6,
+    })
+    save_case("op_mul", {
+        "layer": "mul",
+        "input_a": to_list(a), "input_b": to_list(b),
+        "input_shape": list(a.shape),
+        "expected_output": to_list(a * b),
+        "tolerance": 1e-6,
+    })
+    save_case("op_div", {
+        "layer": "div",
+        "input_a": to_list(a), "input_b": to_list(b),
+        "input_shape": list(a.shape),
+        "expected_output": to_list(a / b),
+        "tolerance": 1e-5,
+    })
+
+    # Pow: use abs(a) to avoid NaN for fractional exponents
+    a_pos = torch.abs(a) + 0.1
+    exp = torch.tensor([[2.0]])  # broadcast scalar exponent
+    save_case("op_pow", {
+        "layer": "pow",
+        "input_a": to_list(a_pos), "input_b": to_list(exp.expand_as(a_pos)),
+        "input_shape": list(a_pos.shape),
+        "expected_output": to_list(torch.pow(a_pos, exp.expand_as(a_pos))),
+        "tolerance": 1e-5,
+    })
+
+    save_case("op_sqrt", {
+        "layer": "sqrt",
+        "input": to_list(a_pos),
+        "input_shape": list(a_pos.shape),
+        "expected_output": to_list(torch.sqrt(a_pos)),
+        "tolerance": 1e-6,
+    })
+
+    save_case("op_sin", {
+        "layer": "sin",
+        "input": to_list(a),
+        "input_shape": list(a.shape),
+        "expected_output": to_list(torch.sin(a)),
+        "tolerance": 1e-6,
+    })
+
+    save_case("op_cos", {
+        "layer": "cos",
+        "input": to_list(a),
+        "input_shape": list(a.shape),
+        "expected_output": to_list(torch.cos(a)),
+        "tolerance": 1e-6,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Core shape ops (T86.1.22)
+# ---------------------------------------------------------------------------
+
+def gen_shape_ops():
+    set_seed()
+    x = torch.randn(2, 3, 4)
+
+    # Reshape
+    y_reshape = x.reshape(6, 4)
+    save_case("op_reshape", {
+        "layer": "reshape",
+        "input": to_list(x), "input_shape": list(x.shape),
+        "target_shape": list(y_reshape.shape),
+        "expected_output": to_list(y_reshape),
+        "tolerance": 1e-7,
+    })
+
+    # Concat along axis 1
+    a = torch.randn(2, 3, 4)
+    b = torch.randn(2, 5, 4)
+    y_concat = torch.cat([a, b], dim=1)
+    save_case("op_concat", {
+        "layer": "concat",
+        "input_a": to_list(a), "input_a_shape": list(a.shape),
+        "input_b": to_list(b), "input_b_shape": list(b.shape),
+        "axis": 1,
+        "expected_output": to_list(y_concat), "output_shape": list(y_concat.shape),
+        "tolerance": 1e-7,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1130,8 +1546,20 @@ def main():
         # Optimizers
         ("AdamW", gen_adamw_step),
         ("SGD", gen_sgd_step),
+        ("EMA", gen_ema),
+        ("SWA", gen_swa),
         # Composite
         ("TransformerBlock", gen_transformer_block),
+        # New layers (E86)
+        ("FastGelu", gen_fast_gelu),
+        ("SimplifiedLayerNorm", gen_simplified_layer_norm),
+        ("SkipSimplifiedLayerNorm", gen_skip_simplified_layer_norm),
+        ("LMHead", gen_lm_head),
+        ("PatchEmbed", gen_patch_embed),
+        ("TSMixerBlock", gen_tsmixer_block),
+        ("SSMLayer", gen_ssm_layer),
+        ("ArithmeticOps", gen_arithmetic_ops),
+        ("ShapeOps", gen_shape_ops),
     ]
 
     passed, failed = 0, 0
