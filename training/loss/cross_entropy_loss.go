@@ -145,6 +145,18 @@ func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, _ types.BackwardMo
 		return nil, err
 	}
 
+	// Divide by batch size (mean reduction normalization).
+	// batch_size = total number of target samples (product of target dims).
+	batchSize := 1
+	for _, d := range cel.targets.Shape() {
+		batchSize *= d
+	}
+	invN := cel.engine.Ops().FromFloat64(1.0 / float64(batchSize))
+	gradPredictions, err = cel.engine.MulScalar(ctx, gradPredictions, invN)
+	if err != nil {
+		return nil, err
+	}
+
 	// Multiply by dOut (which is usually 1.0 for loss)
 	// If dOut is a scalar, it will broadcast.
 	finalGradPredictions, err := cel.engine.Mul(ctx, gradPredictions, dOut, nil)
