@@ -278,6 +278,39 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 // Backward computes the gradients for ScaledDotProductAttention.
 // dOut is the gradient from the subsequent layer.
 func (sdpa *ScaledDotProductAttention[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut, _, _, _ *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	// When the forward pass used the fused flash attention kernel, it computed
+	// the output directly without materializing intermediate attention weights.
+	// Recompute them here from cached Q, K so the backward math is correct.
+	if sdpa.attentionWeights == nil {
+		var scores *tensor.TensorNumeric[T]
+		var recomputeErr error
+		if tb, ok := sdpa.engine.(compute.TransposeBMatMuler[T]); ok {
+			scores, recomputeErr = tb.MatMulTransposeB(ctx, sdpa.q, sdpa.k)
+		} else {
+			var kt *tensor.TensorNumeric[T]
+			kt, recomputeErr = sdpa.engine.Transpose(ctx, sdpa.k, []int{0, 2, 1})
+			if recomputeErr == nil {
+				scores, recomputeErr = sdpa.engine.MatMul(ctx, sdpa.q, kt, nil)
+			}
+		}
+		if recomputeErr != nil {
+			return nil, fmt.Errorf("SDPA backward: recompute attention scores: %w", recomputeErr)
+		}
+		d := sdpa.headDim
+		if d <= 0 && sdpa.q != nil && len(sdpa.q.Shape()) >= 3 {
+			d = float64(sdpa.q.Shape()[2])
+		}
+		scaleFactor := sdpa.engine.Ops().FromFloat64(1.0 / math.Sqrt(d))
+		scaled, scaleErr := sdpa.engine.MulScalar(ctx, scores, scaleFactor, nil)
+		if scaleErr != nil {
+			return nil, fmt.Errorf("SDPA backward: scale scores: %w", scaleErr)
+		}
+		sdpa.attentionWeights, recomputeErr = sdpa.engine.Softmax(ctx, scaled, -1, nil)
+		if recomputeErr != nil {
+			return nil, fmt.Errorf("SDPA backward: softmax recompute: %w", recomputeErr)
+		}
+	}
+
 	// 1. Gradient w.r.t. V
 	attentionWeightsTransposed, err := sdpa.engine.Transpose(ctx, sdpa.attentionWeights, []int{0, 2, 1})
 	if err != nil {
