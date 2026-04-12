@@ -420,16 +420,21 @@ func loadJambaSSMWeights(
 	}{
 		{0, prefix + "ssm_in_proj.weight", true},
 		{1, prefix + "ssm_conv1d.weight", false},
-		{2, prefix + "ssm_x_proj.weight", true},
-		{3, prefix + "ssm_dt_proj.weight", true},
-		{4, prefix + "ssm_A_log", false},
-		{5, prefix + "ssm_D", false},
-		{6, prefix + "ssm_out_proj.weight", true},
+		{2, prefix + "ssm_conv1d.bias", false},
+		{3, prefix + "ssm_x_proj.weight", true},
+		{4, prefix + "ssm_dt_proj.weight", true},
+		{5, prefix + "ssm_A_log", false},
+		{6, prefix + "ssm_D", false},
+		{7, prefix + "ssm_out_proj.weight", true},
 	}
 
 	for _, wn := range weightNames {
 		t, ok := tensors[wn.name]
 		if !ok {
+			// conv1d.bias may not be present in all models; skip gracefully
+			if wn.idx == 2 {
+				continue
+			}
 			return fmt.Errorf("missing tensor %q", wn.name)
 		}
 		if wn.idx < len(params) {

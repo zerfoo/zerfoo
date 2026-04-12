@@ -249,11 +249,12 @@ func loadMambaBlockWeights(
 	// MambaBlock.Parameters() returns:
 	//   [0] inProj weight
 	//   [1] conv1d weight
-	//   [2] xProj weight
-	//   [3] dtProj weight
-	//   [4] A_log
-	//   [5] D
-	//   [6] outProj weight
+	//   [2] conv1d bias
+	//   [3] xProj weight
+	//   [4] dtProj weight
+	//   [5] A_log
+	//   [6] D
+	//   [7] outProj weight
 
 	weightNames := []struct {
 		idx       int
@@ -262,16 +263,21 @@ func loadMambaBlockWeights(
 	}{
 		{0, prefix + "in_proj.weight", true},
 		{1, prefix + "conv1d.weight", false},
-		{2, prefix + "x_proj.weight", true},
-		{3, prefix + "dt_proj.weight", true},
-		{4, prefix + "A_log", false},
-		{5, prefix + "D", false},
-		{6, prefix + "out_proj.weight", true},
+		{2, prefix + "conv1d.bias", false},
+		{3, prefix + "x_proj.weight", true},
+		{4, prefix + "dt_proj.weight", true},
+		{5, prefix + "A_log", false},
+		{6, prefix + "D", false},
+		{7, prefix + "out_proj.weight", true},
 	}
 
 	for _, wn := range weightNames {
 		t, ok := tensors[wn.name]
 		if !ok {
+			// conv1d.bias may not be present in all models; skip gracefully
+			if wn.idx == 2 {
+				continue
+			}
 			return fmt.Errorf("missing tensor %q", wn.name)
 		}
 		if wn.idx < len(params) {
