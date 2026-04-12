@@ -11,11 +11,12 @@ memory, and research-driven inference optimizations).
 Task statuses updated 2026-04-10 based on merged PRs and git history.
 
 **Status summary:**
-- 380+ tasks completed across all plans
-- E86: PyTorch parity testing (66/72 -- 105 tests, 100 pass, 5 skip, 0 fail; GPU parity E86.5 pending DGX)
+- 390+ tasks completed across all plans
+- E86: PyTorch parity testing (73/72 -- 105 tests, 100 pass, 5 skip, 0 fail; E86.5 GPU parity 7/8 done, T86.5.8 DGX submission blocked)
 - E88: Upgrade timeseries model tests from structural to golden-file parity (6/6 DONE -- PatchTST, N-BEATS, ITransformer, DLinear, CfC, FreTS, TimeMixer)
-- E89: Timeseries Engine[T] compliance -- eliminate raw slice math (0/27 -- 6 models, 155+ violations)
+- E89: Timeseries Engine[T] compliance -- eliminate raw slice math (27/27 COMPLETE -- all 6 models migrated)
 - E87: Fix backward pass bugs found by PyTorch parity (8/8 COMPLETE -- all 4 bugs fixed, 92/92 parity tests pass)
+- E90: CrossAsset GPU training acceleration (0/14 -- resolves GitHub #381, #384)
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
@@ -670,6 +671,125 @@ Deps: Wave E89-1
 
 ---
 
+## E90: CrossAsset GPU Training Acceleration (GitHub #381, #384)
+
+### Context
+
+CrossAsset training is 10-100x slower than PyTorch on equivalent workloads. The
+`TrainGPU` function accepts a `compute.Engine[float32]` parameter but ignores it
+entirely, delegating to the CPU `Train()` path. The backward pass uses
+`compute.NewCPUEngine[float64]()` for all tensor operations. No GPU kernels are
+dispatched -- `nvidia-smi` shows 0% GPU utilization during training.
+
+Root causes:
+1. `gpu_train.go` ignores the GPU engine parameter and calls CPU `Train()`.
+2. `backward.go` uses `cpuEngine` (package-level `compute.NewCPUEngine[float64]`)
+   for all MatMul, Add, ReduceSum, and LayerNorm operations.
+3. Forward path in `crossasset.go` uses pure `[][]float64` slice math (matVecMul,
+   vecAdd, softmax) -- not Engine operations at all.
+4. Manual head-reshape loops (copy elements between [ns,dm] and [nHeads,ns,headDim])
+   instead of Engine.Reshape.
+5. float64 throughout prevents GPU half-precision acceleration.
+
+Prior work: E60 (CrossAsset GPU Training, 12/12 COMPLETE) added the GPU API surface.
+E68 (CrossAsset Full Layers Migration, 4/4 COMPLETE) moved backward.go from raw
+loops to layers/ composition but kept the CPU engine. This epic completes the GPU
+path that E60 started.
+
+Benchmark target: CrossAsset walk-forward validation (5 folds x 50 epochs, 14K
+samples, 12 sources x 193 features, DModel=256) should complete in under 30 minutes
+on DGX GB10 (currently 37+ hours).
+
+### Work Breakdown
+
+#### E90.1: Float32 Migration
+
+- [ ] T90.1.1 Convert Model struct fields from float64 to float32  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  AC: All weight arrays (headW, headB, layer weights) are float32. Model compiles.
+  Deps: none.
+- [ ] T90.1.2 Convert Forward() inputs/outputs from [][]float64 to [][]float32  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  AC: Forward() accepts and returns float32. Public API updated.
+  Deps: T90.1.1.
+- [ ] T90.1.3 Convert backward.go cpuLayerNodes from float64 to float32  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  AC: All layer nodes (qProj, kProj, vProj, etc.) use float32. cpuEngine is float32.
+  Deps: T90.1.1.
+- [ ] T90.1.4 Convert TrainConfig, TrainResult, and Train() to float32  Owner: TBD  Est: 45m  verifies: [infrastructure]
+  AC: Train() operates on float32 data. AdamW updates in float32. Tests pass.
+  Deps: T90.1.2, T90.1.3.
+- [ ] T90.1.5 Run go vet + go test ./crossasset/...  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  AC: Zero errors, all existing tests pass (values may shift within float32 tolerance).
+  Deps: T90.1.4.
+
+#### E90.2: Engine[T] Forward Path
+
+- [ ] T90.2.1 Replace matVecMul/vecAdd/softmax with Engine ops  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  AC: Forward() uses engine.MatMul, engine.Add, functional.Softmax. No raw slice math.
+  Deps: T90.1.5.
+- [ ] T90.2.2 Accept Engine[float32] parameter in Forward()  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: Forward(engine, data) dispatches to provided engine. CPU engine for backward compat.
+  Deps: T90.2.1.
+- [ ] T90.2.3 Forward parity test: Engine vs old slice math  Owner: TBD  Est: 30m  verifies: [UC-L01]
+  AC: Engine forward output matches old forward output within 1e-4 on 100 random inputs.
+  Deps: T90.2.2.
+
+#### E90.3: GPU TrainGPU Implementation
+
+- [ ] T90.3.1 Wire TrainGPU to use the GPU engine for forward and backward  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  AC: TrainGPU passes GPU engine to Forward(), backward uses GPU engine for all ops.
+  GPU utilization visible in nvidia-smi during training.
+  Deps: T90.2.3.
+- [ ] T90.3.2 Upload model weights to GPU at training start  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: All weight tensors uploaded via UploadWeights before first epoch. No per-op H2D copies.
+  Deps: T90.3.1.
+- [ ] T90.3.3 Replace manual head-reshape loops with Engine.Reshape  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: No element-copy loops in backward.go. All reshapes via Engine.
+  Deps: T90.3.1.
+
+#### E90.4: Validation and Benchmarking
+
+- [ ] T90.4.1 GPU vs CPU training parity test  Owner: TBD  Est: 1h  verifies: [UC-L01]
+  AC: GPU training loss matches CPU training loss within 1e-3 after 10 epochs.
+  Final accuracy within 2% on same dataset. Test skips on CPU-only machines.
+  Deps: T90.3.3.
+- [ ] T90.4.2 Benchmark on DGX via Spark  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  AC: Submit benchmark pod. Record time for 3 folds x 10 epochs. Compare against
+  CPU baseline. Target: 5x+ speedup. Results in docs/devlog.md.
+  Deps: T90.4.1.
+- [ ] T90.4.3 Close GitHub issues #381 and #384  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  AC: Both issues closed with references to the merged PR and benchmark results.
+  Deps: T90.4.2.
+
+### E90 Parallel Tracks
+
+| Track | Tasks | Description | Dependencies |
+|-------|-------|-------------|-------------|
+| A: Float32 Migration | T90.1.1-T90.1.5 | Convert from float64 to float32 | None |
+| B: Engine Forward | T90.2.1-T90.2.3 | Replace slice math with Engine ops | A |
+| C: GPU Training | T90.3.1-T90.3.3 | Wire GPU engine into TrainGPU | B |
+| D: Validation | T90.4.1-T90.4.3 | Parity tests and benchmarks | C |
+
+### E90 Waves
+
+#### Wave E90-1: Float32 Migration (3 agents)
+All float32 conversion tasks can partially parallelize (T90.1.1 first, then T90.1.2+T90.1.3 in parallel).
+
+- [ ] Agent 1: T90.1.1 + T90.1.4 + T90.1.5 (struct fields, train config, verification)
+- [ ] Agent 2: T90.1.2 (forward API conversion)
+- [ ] Agent 3: T90.1.3 (backward layer conversion)
+
+#### Wave E90-2: Engine Forward + GPU Training (2 agents)
+Deps: Wave E90-1.
+
+- [ ] Agent 1: T90.2.1 + T90.2.2 + T90.2.3 (engine forward path)
+- [ ] Agent 2: T90.3.1 + T90.3.2 + T90.3.3 (GPU wiring -- starts after Agent 1 delivers T90.2.2)
+
+#### Wave E90-3: Validation (1 agent)
+Deps: Wave E90-2.
+
+- [ ] Agent 1: T90.4.1 + T90.4.2 + T90.4.3 (parity test, DGX benchmark, close issues)
+
+---
+
 ## Backlog
 
 ### Community and DevRel
@@ -939,6 +1059,9 @@ Task details removed during /tidy --apply. See git history for full lists.
 | R69 | ModeLDSL composition changes DSL compilation behavior (E84) | Medium | Medium | Run full modeldsl test suite; compare compiled model structure before/after; validate layer-type registration |
 | R70 | PyTorch golden files may not match Zerfoo's intended semantics for some ops (E86) | Medium | Medium | When PyTorch and Zerfoo disagree, investigate which is correct rather than blindly matching PyTorch. Document intentional differences in the golden file description field. |
 | R71 | GPU parity tests may show larger tolerance than CPU due to non-deterministic kernel execution order (E86) | Low | High | Use 1e-3 tolerance for GPU tests (vs 1e-5 for CPU). If larger divergence, investigate specific kernel. |
+| R72 | Float32 conversion in crossasset changes training accuracy (E90) | Medium | Medium | Run 10-epoch training before/after; compare loss curves within 1e-3; final accuracy within 2%. Float32 has sufficient precision for DModel=256. |
+| R73 | GPU engine stability on Grace Hopper unified memory (E90) | Medium | High | E60 noted CUDA launch timeouts and illegal memory access. Test with ZERFOO_DISABLE_CUDA_GRAPH=1. If issues persist, use fused kernels only for matmul (largest speedup). |
+| R74 | CrossAsset public API break from float64-to-float32 migration (E90) | High | High | This is a breaking change. Update all callers (wolf integration). Document in CHANGELOG.md. |
 
 ---
 
@@ -1032,6 +1155,20 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-11: E86.5 GPU parity complete + E90 added
+
+- E86.5 GPU kernel parity tests (T86.5.1-T86.5.7) completed and merged (PR #387).
+  34 GPU vs CPU parity tests: 9 activations, 3 normalizations, 4 core ops, 3 attention,
+  1 RoPE, 14 backward gradients. Containerfile and Spark manifest created.
+  T86.5.8 (DGX submission) blocked by purego cross-compilation limitation.
+- E89 Engine[T] compliance completed (27/27 tasks, PR #386). All 6 timeseries models
+  migrated: CfC, FreTS, DLinear, TimeMixer, ITransformer, PatchTST.
+- E90 added (14 tasks, 3 waves) to resolve GitHub #381 and #384: CrossAsset GPU
+  training 10-100x slower than PyTorch. Root cause: TrainGPU ignores GPU engine,
+  all ops on CPU with float64. Fix: float32 migration, Engine[T] forward path,
+  GPU TrainGPU implementation, DGX benchmarking.
+- v1.46.0 released with parity tests and Engine[T] migrations.
 
 ### 2026-04-11: E89 added -- timeseries Engine[T] compliance
 
