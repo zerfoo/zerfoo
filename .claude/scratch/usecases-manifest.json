@@ -1,0 +1,50 @@
+[
+  {
+    "id": "UC-EXT-01",
+    "domain": "crossasset-extraction",
+    "name": "Import crossasset model from wolf",
+    "description": "Wolf imports crossasset as a first-party package instead of reaching into zerfoo/crossasset.",
+    "actor": "wolf_developer",
+    "preconditions": ["crossasset package exists in wolf repo", "wolf go.mod imports it"],
+    "interfaces": [
+      {"type": "library", "path": "github.com/feza-ai/wolf/crossasset"}
+    ],
+    "expected_outcome": "Wolf's train-crossasset CLI and internal/model/crossasset.go import from wolf's own crossasset package.",
+    "priority": "P0",
+    "tags": ["extraction", "module-boundary"],
+    "wiring_status": "PLANNED",
+    "coverage": {"interfaces_found": ["library"], "has_tests": false}
+  },
+  {
+    "id": "UC-EXT-02",
+    "domain": "crossasset-extraction",
+    "name": "Train crossasset model via wolf CLI",
+    "description": "Wolf's train-crossasset command trains a crossasset model using the extracted package.",
+    "actor": "wolf_developer",
+    "preconditions": ["crossasset package in wolf", "training data available"],
+    "interfaces": [
+      {"type": "cli", "command": "go run ./cmd/train-crossasset ..."}
+    ],
+    "expected_outcome": "Training completes, model saved, loss decreases.",
+    "priority": "P0",
+    "tags": ["training", "cli"],
+    "wiring_status": "PLANNED",
+    "coverage": {"interfaces_found": ["cli"], "has_tests": true}
+  },
+  {
+    "id": "UC-EXT-03",
+    "domain": "crossasset-extraction",
+    "name": "Zerfoo builds without crossasset",
+    "description": "After extraction, zerfoo compiles and all non-crossasset tests pass.",
+    "actor": "zerfoo_developer",
+    "preconditions": ["crossasset/ removed from zerfoo"],
+    "interfaces": [
+      {"type": "library", "path": "github.com/zerfoo/zerfoo"}
+    ],
+    "expected_outcome": "go build ./... and go test ./... pass with no crossasset references.",
+    "priority": "P0",
+    "tags": ["extraction", "build"],
+    "wiring_status": "PLANNED",
+    "coverage": {"interfaces_found": ["library"], "has_tests": true}
+  }
+]
