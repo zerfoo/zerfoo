@@ -165,6 +165,7 @@ const (
 var kernelLibPaths = []string{
 	"libkernels.so",
 	"./libkernels.so",
+	"/opt/zerfoo/lib/libkernels.so",
 }
 
 // DlopenKernels loads the custom kernels shared library (libkernels.so)
