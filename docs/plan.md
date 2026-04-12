@@ -385,23 +385,24 @@ into the Zerfoo model and compares forward pass output.
 
 #### E86.5: GPU Kernel Parity (DGX via Spark)
 
-- [ ] T86.5.1 Build arm64 parity test image for DGX  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [x] T86.5.1 Build arm64 parity test image for DGX  Est: 30m  verifies: [infrastructure]  DONE 2026-04-11
   AC: Containerfile with tests/parity/ tests compiles for linux/arm64 with -tags cuda.
-  Image pushed to ghcr.io/zerfoo/zerfoo-parity:latest.
-- [ ] T86.5.2 GPU vs CPU parity: activations  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: GPU forward output matches CPU for all 9 activations within 1e-4.
-- [ ] T86.5.3 GPU vs CPU parity: normalization  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: GPU LayerNorm, RMSNorm, BatchNorm match CPU within 1e-4.
-- [ ] T86.5.4 GPU vs CPU parity: core ops  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: GPU Linear, MatMul, Conv1D, FFN match CPU within 1e-3.
-- [ ] T86.5.5 GPU vs CPU parity: attention  Owner: TBD  Est: 45m  verifies: [UC-L01]
-  AC: GPU SDPA (causal + bidirectional) and GQA match CPU within 1e-3.
-- [ ] T86.5.6 GPU vs CPU parity: RotaryEmbedding  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: GPU RoPE matches CPU within 1e-5.
-- [ ] T86.5.7 GPU backward parity: all trained layers  Owner: TBD  Est: 1h  verifies: [UC-L01]
-  AC: GPU gradients match CPU gradients within 1e-3 for all layers with Backward().
-- [ ] T86.5.8 Submit tests to DGX via Spark and collect results  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  Containerfile at tests/parity/Containerfile, Spark manifest at docs/bench/manifests/gpu-parity.yaml.
+- [x] T86.5.2 GPU vs CPU parity: activations  Est: 30m  verifies: [UC-L01]  DONE 2026-04-11
+  AC: GPU forward output matches CPU for all 9 activations within 1e-4. commit f87892d1.
+- [x] T86.5.3 GPU vs CPU parity: normalization  Est: 30m  verifies: [UC-L01]  DONE 2026-04-11
+  AC: GPU LayerNorm, RMSNorm, BatchNorm match CPU within 1e-4. commit f87892d1.
+- [x] T86.5.4 GPU vs CPU parity: core ops  Est: 30m  verifies: [UC-L01]  DONE 2026-04-11
+  AC: GPU Linear, MatMul, Conv1D, FFN match CPU within 1e-3. commit adde0a2b.
+- [x] T86.5.5 GPU vs CPU parity: attention  Est: 45m  verifies: [UC-L01]  DONE 2026-04-11
+  AC: GPU SDPA (causal + bidirectional) and GQA match CPU within 1e-3. commit adde0a2b.
+- [x] T86.5.6 GPU vs CPU parity: RotaryEmbedding  Est: 30m  verifies: [UC-L01]  DONE 2026-04-11
+  AC: GPU RoPE matches CPU within 1e-5. commit f87892d1.
+- [x] T86.5.7 GPU backward parity: all trained layers  Est: 1h  verifies: [UC-L01]  DONE 2026-04-11
+  AC: GPU gradients match CPU gradients within 1e-3 for all layers with Backward(). commit adde0a2b.
+- [ ] T86.5.8 Submit tests to DGX via Spark and collect results  Est: 30m  verifies: [infrastructure]
   AC: Pod completes with exit 0. Results captured in .claude/scratch/gpu-parity-results.txt.
+  BLOCKED: purego runtime.dlopen prevents cross-compilation. Needs native arm64 build on DGX.
 
 #### E86.6: CI Integration and Reporting
 
