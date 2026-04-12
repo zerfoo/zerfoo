@@ -22,7 +22,7 @@ type TrainResult struct {
 //
 // The engine parameter is accepted for API compatibility but not used.
 // Training accuracy matches PyTorch (~75% on COIN walk-forward validation).
-func (m *Model) TrainGPU(data [][][]float64, labels [][]int, tc TrainConfig,
+func (m *Model) TrainGPU(data [][][]float32, labels [][]int, tc TrainConfig,
 	_ compute.Engine[float32]) (*TrainResult, error) {
 
 	if len(data) == 0 {
@@ -54,13 +54,13 @@ func (m *Model) TrainGPU(data [][][]float64, labels [][]int, tc TrainConfig,
 			continue
 		}
 		for s := range ns {
-			logits := make([]float64, 3)
+			logits := make([]float32, 3)
 			matVecMul(logits, m.headW, outputs[s], m.config.DModel, 3)
 			vecAdd(logits, m.headB)
 			probs := softmax(logits)
 			target := labels[i][s]
 			if target >= 0 && target < 3 {
-				p := probs[target]
+				p := float64(probs[target])
 				if p < 1e-15 {
 					p = 1e-15
 				}

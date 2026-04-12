@@ -9,36 +9,35 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 )
 
-// cpuAdamState wraps the canonical AdamW[float64] optimizer and the
+// cpuAdamState wraps the canonical AdamW[float32] optimizer and the
 // graph.Parameter list that maps 1-to-1 with the model's weight slices.
 type cpuAdamState struct {
-	opt    *optimizer.AdamW[float64]
-	params []*graph.Parameter[float64]
+	opt    *optimizer.AdamW[float32]
+	params []*graph.Parameter[float32]
 }
 
 // newAdamState creates a canonical AdamW optimizer and registers every model
 // parameter as a graph.Parameter whose Value tensor aliases the model's
-// []float64 slice (zero-copy).
+// []float32 slice (zero-copy).
 func newAdamState(model *Model, lr float64) (*cpuAdamState, error) {
 	const (
-		beta1       = 0.9
-		beta2       = 0.999
-		eps         = 1e-8
-		weightDecay = 0.01
-		maxGradNorm = 1.0
+		beta1       float32 = 0.9
+		beta2       float32 = 0.999
+		eps         float32 = 1e-8
+		weightDecay float32 = 0.01
 	)
 
-	opt := optimizer.NewAdamW[float64](cpuEngine, lr, beta1, beta2, eps, weightDecay)
-	opt.SetMaxGradNorm(maxGradNorm)
+	opt := optimizer.NewAdamW[float32](cpuEngine, float32(lr), beta1, beta2, eps, weightDecay)
+	opt.SetMaxGradNorm(1.0)
 
-	var params []*graph.Parameter[float64]
+	var params []*graph.Parameter[float32]
 
-	wrap := func(name string, data []float64) error {
-		t, err := tensor.New[float64]([]int{len(data)}, data)
+	wrap := func(name string, data []float32) error {
+		t, err := tensor.New[float32]([]int{len(data)}, data)
 		if err != nil {
 			return fmt.Errorf("crossasset: wrap param %s: %w", name, err)
 		}
-		p, err := graph.NewParameter[float64](name, t, tensor.New[float64])
+		p, err := graph.NewParameter[float32](name, t, tensor.New[float32])
 		if err != nil {
 			return fmt.Errorf("crossasset: new param %s: %w", name, err)
 		}
@@ -60,7 +59,7 @@ func newAdamState(model *Model, lr float64) (*cpuAdamState, error) {
 		prefix := fmt.Sprintf("layer%d.", li)
 		for _, kv := range []struct {
 			name string
-			data []float64
+			data []float32
 		}{
 			{"qW", l.qW}, {"kW", l.kW}, {"vW", l.vW}, {"outW", l.outW},
 			{"lnGamma", l.lnGamma}, {"lnBeta", l.lnBeta},
@@ -89,16 +88,16 @@ func newAdamState(model *Model, lr float64) (*cpuAdamState, error) {
 }
 
 // adamWUpdateAll sets gradients on each registered parameter and delegates
-// the weight update to the canonical AdamW[float64] optimizer.
+// the weight update to the canonical AdamW[float32] optimizer.
 func adamWUpdateAll(
 	model *Model,
-	dHeadW, dHeadB []float64,
+	dHeadW, dHeadB []float32,
 	dLayers []layer,
-	dInputW, dInputB [][]float64,
+	dInputW, dInputB [][]float32,
 	state *cpuAdamState,
 ) error {
 	// Collect gradient slices in the same order as params were registered.
-	var grads [][]float64
+	var grads [][]float32
 
 	// Head.
 	grads = append(grads, dHeadW, dHeadB)
@@ -126,7 +125,7 @@ func adamWUpdateAll(
 
 	// Set gradient tensors on each parameter (zero-copy alias).
 	for i, p := range state.params {
-		g, err := tensor.New[float64]([]int{len(grads[i])}, grads[i])
+		g, err := tensor.New[float32]([]int{len(grads[i])}, grads[i])
 		if err != nil {
 			return fmt.Errorf("crossasset: adamw: wrap gradient %s: %w", p.Name, err)
 		}

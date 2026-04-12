@@ -16,39 +16,39 @@ import (
 // caches forward-pass intermediates and provides a Backward method that
 // computes gradients via the Engine.
 type cpuLayerNodes struct {
-	qProj   *core.Linear[float64]
-	kProj   *core.Linear[float64]
-	vProj   *core.Linear[float64]
-	outProj *core.Linear[float64]
-	ffn1    *core.Linear[float64]
-	gelu    *activations.Gelu[float64]
-	ffn2    *core.Linear[float64]
-	sdpa    *attention.ScaledDotProductAttention[float64]
+	qProj   *core.Linear[float32]
+	kProj   *core.Linear[float32]
+	vProj   *core.Linear[float32]
+	outProj *core.Linear[float32]
+	ffn1    *core.Linear[float32]
+	gelu    *activations.Gelu[float32]
+	ffn2    *core.Linear[float32]
+	sdpa    *attention.ScaledDotProductAttention[float32]
 }
 
 // cpuLayerCache stores forward-pass intermediates produced by the node-based
 // forward pass. All fields are tensors.
 type cpuLayerCache struct {
-	xIn    *tensor.TensorNumeric[float64] // [ns, dm]
-	q, k, v *tensor.TensorNumeric[float64] // [ns, dm]
+	xIn    *tensor.TensorNumeric[float32] // [ns, dm]
+	q, k, v *tensor.TensorNumeric[float32] // [ns, dm]
 	// Q/K/V reshaped for SDPA: [nHeads, ns, headDim]
-	qHeads, kHeads, vHeads *tensor.TensorNumeric[float64]
-	attnOut *tensor.TensorNumeric[float64] // [nHeads, ns, headDim]
-	concat  *tensor.TensorNumeric[float64] // [ns, dm]
-	projOut *tensor.TensorNumeric[float64] // [ns, dm]
-	res1    *tensor.TensorNumeric[float64] // [ns, dm]
-	normed  *tensor.TensorNumeric[float64] // [ns, dm]
+	qHeads, kHeads, vHeads *tensor.TensorNumeric[float32]
+	attnOut *tensor.TensorNumeric[float32] // [nHeads, ns, headDim]
+	concat  *tensor.TensorNumeric[float32] // [ns, dm]
+	projOut *tensor.TensorNumeric[float32] // [ns, dm]
+	res1    *tensor.TensorNumeric[float32] // [ns, dm]
+	normed  *tensor.TensorNumeric[float32] // [ns, dm]
 	// LN1 intermediates for manual backward.
-	ln1NormedInput *tensor.TensorNumeric[float64] // (res1 - mean) / std
-	ln1Std         *tensor.TensorNumeric[float64] // sqrt(var + eps) [ns, 1]
+	ln1NormedInput *tensor.TensorNumeric[float32] // (res1 - mean) / std
+	ln1Std         *tensor.TensorNumeric[float32] // sqrt(var + eps) [ns, 1]
 	// FFN intermediates.
-	ffnPre  *tensor.TensorNumeric[float64] // [ns, ffnDim] after linear + bias
-	ffnAct  *tensor.TensorNumeric[float64] // [ns, ffnDim] after GELU
-	ffnOutT *tensor.TensorNumeric[float64] // [ns, dm] after linear + bias
-	res2    *tensor.TensorNumeric[float64] // [ns, dm]
+	ffnPre  *tensor.TensorNumeric[float32] // [ns, ffnDim] after linear + bias
+	ffnAct  *tensor.TensorNumeric[float32] // [ns, ffnDim] after GELU
+	ffnOutT *tensor.TensorNumeric[float32] // [ns, dm] after linear + bias
+	res2    *tensor.TensorNumeric[float32] // [ns, dm]
 	// LN2 intermediates for manual backward.
-	ln2NormedInput *tensor.TensorNumeric[float64]
-	ln2Std         *tensor.TensorNumeric[float64] // [ns, 1]
+	ln2NormedInput *tensor.TensorNumeric[float32]
+	ln2Std         *tensor.TensorNumeric[float32] // [ns, 1]
 }
 
 // buildLayerNodes creates layer node objects from a layer's weight slices.
@@ -57,12 +57,12 @@ func buildLayerNodes(l *layer, dm, nHeads int) (*cpuLayerNodes, error) {
 	headDim := dm / nHeads
 	ffnDim := dm * 4
 
-	mkParam := func(name string, shape []int, data []float64) (*graph.Parameter[float64], error) {
-		t, err := tensor.New[float64](shape, data)
+	mkParam := func(name string, shape []int, data []float32) (*graph.Parameter[float32], error) {
+		t, err := tensor.New[float32](shape, data)
 		if err != nil {
 			return nil, fmt.Errorf("buildLayerNodes: %s: %w", name, err)
 		}
-		return graph.NewParameter[float64](name, t, tensor.New[float64])
+		return graph.NewParameter[float32](name, t, tensor.New[float32])
 	}
 
 	qP, err := mkParam("q_w", []int{dm, dm}, l.qW)
@@ -98,13 +98,13 @@ func buildLayerNodes(l *layer, dm, nHeads int) (*cpuLayerNodes, error) {
 		ffn1:    core.NewLinearFromParam(cpuEngine, ffn1P),
 		ffn2:    core.NewLinearFromParam(cpuEngine, ffn2P),
 		gelu:    activations.NewGelu(cpuEngine, cpuOps),
-		sdpa:    attention.NewBidirectionalSDPA[float64](cpuEngine, headDim),
+		sdpa:    attention.NewBidirectionalSDPA[float32](cpuEngine, headDim),
 	}, nil
 }
 
 // forwardLayerCached runs one transformer layer forward through layer nodes,
 // caching all intermediates needed by backwardLayer.
-func (m *Model) forwardLayerCached(x [][]float64, l layer) ([][]float64, *cpuLayerCache) {
+func (m *Model) forwardLayerCached(x [][]float32, l layer) ([][]float32, *cpuLayerCache) {
 	ns := m.config.NSources
 	dm := m.config.DModel
 	nHeads := m.config.NHeads
@@ -154,7 +154,7 @@ func (m *Model) forwardLayerCached(x [][]float64, l layer) ([][]float64, *cpuLay
 	// FFN: Linear1 + bias1.
 	ffnLinOut, err := nodes.ffn1.Forward(ctx, cache.normed)
 	panicOnErr("FFN1 forward", err)
-	b1, err := tensor.New[float64]([]int{1, ffnDim}, l.ffnB1)
+	b1, err := tensor.New[float32]([]int{1, ffnDim}, l.ffnB1)
 	panicOnErr("ffnB1 tensor", err)
 	cache.ffnPre, err = cpuEngine.Add(ctx, ffnLinOut, b1)
 	panicOnErr("ffnB1 add", err)
@@ -166,7 +166,7 @@ func (m *Model) forwardLayerCached(x [][]float64, l layer) ([][]float64, *cpuLay
 	// Linear2 + bias2.
 	ffn2LinOut, err := nodes.ffn2.Forward(ctx, cache.ffnAct)
 	panicOnErr("FFN2 forward", err)
-	b2, err := tensor.New[float64]([]int{1, dm}, l.ffnB2)
+	b2, err := tensor.New[float32]([]int{1, dm}, l.ffnB2)
 	panicOnErr("ffnB2 tensor", err)
 	cache.ffnOutT, err = cpuEngine.Add(ctx, ffn2LinOut, b2)
 	panicOnErr("ffnB2 add", err)
@@ -176,7 +176,7 @@ func (m *Model) forwardLayerCached(x [][]float64, l layer) ([][]float64, *cpuLay
 	panicOnErr("res2", err)
 
 	// LayerNorm 2 (manual).
-	var outT *tensor.TensorNumeric[float64]
+	var outT *tensor.TensorNumeric[float32]
 	outT, cache.ln2NormedInput, cache.ln2Std = layerNormCached(ctx, cache.res2, l.ffnGamma, l.ffnBeta, ns, dm)
 
 	return tensorToSlices(outT, ns, dm), cache
@@ -185,7 +185,7 @@ func (m *Model) forwardLayerCached(x [][]float64, l layer) ([][]float64, *cpuLay
 // backwardLayer computes gradients for one transformer layer using Backward
 // methods of Linear, Gelu, and SDPA nodes, plus manual LayerNorm backward.
 // dx is [ns][dm]. Returns gradient w.r.t. input and accumulates into dl.
-func (m *Model) backwardLayer(dx [][]float64, cache *cpuLayerCache, l *layer, dl *layer) [][]float64 {
+func (m *Model) backwardLayer(dx [][]float32, cache *cpuLayerCache, l *layer, dl *layer) [][]float32 {
 	ns := m.config.NSources
 	dm := m.config.DModel
 	nHeads := m.config.NHeads
@@ -318,16 +318,16 @@ func replayForward(
 // (output, normedInput, std) for use in manual backward.
 func layerNormCached(
 	ctx context.Context,
-	x *tensor.TensorNumeric[float64],
-	gamma, beta []float64,
+	x *tensor.TensorNumeric[float32],
+	gamma, beta []float32,
 	ns, dm int,
-) (*tensor.TensorNumeric[float64], *tensor.TensorNumeric[float64], *tensor.TensorNumeric[float64]) {
+) (*tensor.TensorNumeric[float32], *tensor.TensorNumeric[float32], *tensor.TensorNumeric[float32]) {
 	const eps = 1e-5
 
 	// mean = ReduceSum(x, axis=1, keepDims=true) / dm
 	sum, err := cpuEngine.ReduceSum(ctx, x, 1, true)
 	panicOnErr("LN sum", err)
-	mean, err := cpuEngine.DivScalar(ctx, sum, float64(dm))
+	mean, err := cpuEngine.DivScalar(ctx, sum, float32(dm))
 	panicOnErr("LN mean", err)
 
 	// xMinusMean = x - mean
@@ -339,7 +339,7 @@ func layerNormCached(
 	panicOnErr("LN sq", err)
 	varSum, err := cpuEngine.ReduceSum(ctx, sq, 1, true)
 	panicOnErr("LN varSum", err)
-	variance, err := cpuEngine.DivScalar(ctx, varSum, float64(dm))
+	variance, err := cpuEngine.DivScalar(ctx, varSum, float32(dm))
 	panicOnErr("LN var", err)
 
 	// std = sqrt(var + eps)
@@ -353,9 +353,9 @@ func layerNormCached(
 	panicOnErr("LN normed", err)
 
 	// output = normed * gamma + beta
-	gT, err := tensor.New[float64]([]int{1, dm}, gamma)
+	gT, err := tensor.New[float32]([]int{1, dm}, gamma)
 	panicOnErr("LN gamma", err)
-	bT, err := tensor.New[float64]([]int{1, dm}, beta)
+	bT, err := tensor.New[float32]([]int{1, dm}, beta)
 	panicOnErr("LN beta", err)
 	scaled, err := cpuEngine.Mul(ctx, normed, gT)
 	panicOnErr("LN scale", err)
@@ -370,14 +370,14 @@ func layerNormCached(
 // Returns dX of shape [ns, dm].
 func layerNormBackward(
 	ctx context.Context,
-	dOut *tensor.TensorNumeric[float64],
-	normedInput *tensor.TensorNumeric[float64], // cached (x-mean)/std
-	std *tensor.TensorNumeric[float64], // cached sqrt(var+eps) [ns, 1]
-	gamma []float64,
-	dGamma, dBeta []float64,
+	dOut *tensor.TensorNumeric[float32],
+	normedInput *tensor.TensorNumeric[float32], // cached (x-mean)/std
+	std *tensor.TensorNumeric[float32], // cached sqrt(var+eps) [ns, 1]
+	gamma []float32,
+	dGamma, dBeta []float32,
 	ns, dm int,
-) *tensor.TensorNumeric[float64] {
-	gT, err := tensor.New[float64]([]int{1, dm}, gamma)
+) *tensor.TensorNumeric[float32] {
+	gT, err := tensor.New[float32]([]int{1, dm}, gamma)
 	panicOnErr("LN bwd gamma", err)
 
 	// dGamma += sum(dOut * normedInput, axis=0)
@@ -396,7 +396,7 @@ func layerNormBackward(
 	dNormed, err := cpuEngine.Mul(ctx, dOut, gT)
 	panicOnErr("LN bwd dNormed", err)
 
-	n := float64(dm)
+	n := float32(dm)
 
 	// Standard LayerNorm backward:
 	// dX = (1/std) * (dNormed - mean(dNormed) - normedInput * mean(dNormed * normedInput))
@@ -435,38 +435,38 @@ func layerNormBackward(
 }
 
 // reshapeForHeads converts [ns, dm] → [nHeads, ns, headDim].
-func reshapeForHeads(t *tensor.TensorNumeric[float64], ns, nHeads, headDim int) *tensor.TensorNumeric[float64] {
+func reshapeForHeads(t *tensor.TensorNumeric[float32], ns, nHeads, headDim int) *tensor.TensorNumeric[float32] {
 	data := t.Data()
 	dm := nHeads * headDim
-	out := make([]float64, nHeads*ns*headDim)
+	out := make([]float32, nHeads*ns*headDim)
 	for s := range ns {
 		for h := range nHeads {
 			copy(out[h*ns*headDim+s*headDim:], data[s*dm+h*headDim:s*dm+h*headDim+headDim])
 		}
 	}
-	r, err := tensor.New[float64]([]int{nHeads, ns, headDim}, out)
+	r, err := tensor.New[float32]([]int{nHeads, ns, headDim}, out)
 	panicOnErr("reshapeForHeads", err)
 	return r
 }
 
 // reshapeFromHeads converts [nHeads, ns, headDim] → [ns, dm].
-func reshapeFromHeads(t *tensor.TensorNumeric[float64], ns, nHeads, headDim int) *tensor.TensorNumeric[float64] {
+func reshapeFromHeads(t *tensor.TensorNumeric[float32], ns, nHeads, headDim int) *tensor.TensorNumeric[float32] {
 	data := t.Data()
 	dm := nHeads * headDim
-	out := make([]float64, ns*dm)
+	out := make([]float32, ns*dm)
 	for s := range ns {
 		for h := range nHeads {
 			copy(out[s*dm+h*headDim:], data[h*ns*headDim+s*headDim:h*ns*headDim+s*headDim+headDim])
 		}
 	}
-	r, err := tensor.New[float64]([]int{ns, dm}, out)
+	r, err := tensor.New[float32]([]int{ns, dm}, out)
 	panicOnErr("reshapeFromHeads", err)
 	return r
 }
 
 // extractLinearGrad accumulates gradient data from a Linear node's weight
 // parameter into the flat gradient slice.
-func extractLinearGrad(lin *core.Linear[float64], dst []float64) {
+func extractLinearGrad(lin *core.Linear[float32], dst []float32) {
 	for _, p := range lin.Parameters() {
 		addToSlice(dst, p.Gradient.Data())
 		p.ClearGradient()
@@ -474,29 +474,29 @@ func extractLinearGrad(lin *core.Linear[float64], dst []float64) {
 }
 
 // addToSlice adds src element-wise into dst.
-func addToSlice(dst, src []float64) {
+func addToSlice(dst, src []float32) {
 	for i := range dst {
 		dst[i] += src[i]
 	}
 }
 
-// slicesToTensor converts [][]float64 [n][m] to a tensor [n, m].
-func slicesToTensor(s [][]float64, n, m int) *tensor.TensorNumeric[float64] {
-	flat := make([]float64, n*m)
+// slicesToTensor converts [][]float32 [n][m] to a tensor [n, m].
+func slicesToTensor(s [][]float32, n, m int) *tensor.TensorNumeric[float32] {
+	flat := make([]float32, n*m)
 	for i := range n {
 		copy(flat[i*m:], s[i])
 	}
-	t, err := tensor.New[float64]([]int{n, m}, flat)
+	t, err := tensor.New[float32]([]int{n, m}, flat)
 	panicOnErr("slicesToTensor", err)
 	return t
 }
 
-// tensorToSlices converts a tensor [n, m] to [][]float64 [n][m].
-func tensorToSlices(t *tensor.TensorNumeric[float64], n, m int) [][]float64 {
+// tensorToSlices converts a tensor [n, m] to [][]float32 [n][m].
+func tensorToSlices(t *tensor.TensorNumeric[float32], n, m int) [][]float32 {
 	data := t.Data()
-	out := make([][]float64, n)
+	out := make([][]float32, n)
 	for i := range n {
-		out[i] = make([]float64, m)
+		out[i] = make([]float32, m)
 		copy(out[i], data[i*m:(i+1)*m])
 	}
 	return out
@@ -512,17 +512,17 @@ func panicOnErr(label string, err error) {
 func zeroLayer(dm int) layer {
 	ffnDim := dm * 4
 	return layer{
-		qW:       make([]float64, dm*dm),
-		kW:       make([]float64, dm*dm),
-		vW:       make([]float64, dm*dm),
-		outW:     make([]float64, dm*dm),
-		lnGamma:  make([]float64, dm),
-		lnBeta:   make([]float64, dm),
-		ffnW1:    make([]float64, dm*ffnDim),
-		ffnB1:    make([]float64, ffnDim),
-		ffnW2:    make([]float64, ffnDim*dm),
-		ffnB2:    make([]float64, dm),
-		ffnGamma: make([]float64, dm),
-		ffnBeta:  make([]float64, dm),
+		qW:       make([]float32, dm*dm),
+		kW:       make([]float32, dm*dm),
+		vW:       make([]float32, dm*dm),
+		outW:     make([]float32, dm*dm),
+		lnGamma:  make([]float32, dm),
+		lnBeta:   make([]float32, dm),
+		ffnW1:    make([]float32, dm*ffnDim),
+		ffnB1:    make([]float32, ffnDim),
+		ffnW2:    make([]float32, ffnDim*dm),
+		ffnB2:    make([]float32, dm),
+		ffnGamma: make([]float32, dm),
+		ffnBeta:  make([]float32, dm),
 	}
 }

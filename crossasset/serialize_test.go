@@ -17,8 +17,8 @@ func TestSaveLoad_RoundTrip(t *testing.T) {
 		t.Run("", func(t *testing.T) {
 			// Train a model.
 			m := NewModel(cfg)
-			data, labels := makeTrainData(cfg, 50)
-			if err := m.Train(data, labels, TrainConfig{Epochs: 2, BatchSize: 10, LearningRate: cfg.LearningRate}); err != nil {
+			data, labels := makeTrainData(cfg, 20)
+			if err := m.Train(data, labels, TrainConfig{Epochs: 2, BatchSize: 10, LearningRate: 1e-4}); err != nil {
 				t.Fatalf("Train: %v", err)
 			}
 
@@ -115,16 +115,16 @@ func TestLoadModel_FileNotFound(t *testing.T) {
 }
 
 // makeTrainData generates synthetic training data for a given config.
-func makeTrainData(cfg Config, nSamples int) ([][][]float64, [][]int) {
-	data := make([][][]float64, nSamples)
+func makeTrainData(cfg Config, nSamples int) ([][][]float32, [][]int) {
+	data := make([][][]float32, nSamples)
 	labels := make([][]int, nSamples)
 	for i := 0; i < nSamples; i++ {
-		data[i] = make([][]float64, cfg.NSources)
+		data[i] = make([][]float32, cfg.NSources)
 		labels[i] = make([]int, cfg.NSources)
 		for s := 0; s < cfg.NSources; s++ {
-			data[i][s] = make([]float64, cfg.FeaturesPerSource)
+			data[i][s] = make([]float32, cfg.FeaturesPerSource)
 			for f := 0; f < cfg.FeaturesPerSource; f++ {
-				data[i][s][f] = float64(i*cfg.NSources*cfg.FeaturesPerSource+s*cfg.FeaturesPerSource+f) * 0.01
+				data[i][s][f] = float32(i*cfg.NSources*cfg.FeaturesPerSource+s*cfg.FeaturesPerSource+f) * 0.01
 			}
 			labels[i][s] = (i + s) % 3 // cycle through Long/Short/Flat
 		}

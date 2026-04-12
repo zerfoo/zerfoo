@@ -105,6 +105,18 @@ func (ca *CrossAsset) TrainWindowed(windows [][][]float64, labels []float64, con
 		}
 	}
 
+	// Convert float64 windows to float32 for the crossasset model.
+	windows32 := make([][][]float32, nSamples)
+	for i, w := range windows {
+		windows32[i] = make([][]float32, ns)
+		for s, feat := range w {
+			windows32[i][s] = make([]float32, len(feat))
+			for f, v := range feat {
+				windows32[i][s][f] = float32(v)
+			}
+		}
+	}
+
 	// Convert flat float64 labels to [nSamples][nSources] int labels.
 	intLabels := make([][]int, nSamples)
 	for i := 0; i < nSamples; i++ {
@@ -147,7 +159,7 @@ func (ca *CrossAsset) TrainWindowed(windows [][][]float64, labels []float64, con
 
 	// Train one epoch at a time to record per-epoch loss.
 	for epoch := 0; epoch < epochs; epoch++ {
-		err := ca.model.Train(windows, intLabels, crossasset.TrainConfig{
+		err := ca.model.Train(windows32, intLabels, crossasset.TrainConfig{
 			Epochs:       1,
 			BatchSize:    batchSize,
 			LearningRate: lr,
@@ -157,7 +169,7 @@ func (ca *CrossAsset) TrainWindowed(windows [][][]float64, labels []float64, con
 		}
 
 		// Compute cross-entropy loss over all samples.
-		epochLoss := ca.computeLoss(windows, intLabels)
+		epochLoss := ca.computeLoss(windows32, intLabels)
 		result.LossHistory[epoch] = epochLoss
 		result.FinalLoss = epochLoss
 
@@ -191,14 +203,23 @@ func (ca *CrossAsset) PredictWindowed(modelPath string, windows [][][]float64) (
 			return nil, fmt.Errorf("crossasset_engine: window %d has %d sources, expected %d", i, len(w), ns)
 		}
 
-		dirs, confs, err := ca.model.Predict(w)
+		// Convert float64 window to float32.
+		w32 := make([][]float32, ns)
+		for s, feat := range w {
+			w32[s] = make([]float32, len(feat))
+			for f, v := range feat {
+				w32[s][f] = float32(v)
+			}
+		}
+
+		dirs, confs, err := ca.model.Predict(w32)
 		if err != nil {
 			return nil, fmt.Errorf("crossasset_engine: predict sample %d: %w", i, err)
 		}
 
 		// Convert direction + confidence to a soft probability vector per source.
 		for s := 0; s < ns; s++ {
-			probs := directionToProbs(dirs[s], confs[s])
+			probs := directionToProbs(dirs[s], float64(confs[s]))
 			out = append(out, probs[:]...)
 		}
 	}
@@ -207,7 +228,7 @@ func (ca *CrossAsset) PredictWindowed(modelPath string, windows [][][]float64) (
 }
 
 // computeLoss calculates the average cross-entropy loss over all samples.
-func (ca *CrossAsset) computeLoss(data [][][]float64, labels [][]int) float64 {
+func (ca *CrossAsset) computeLoss(data [][][]float32, labels [][]int) float64 {
 	ns := ca.config.NSources
 	totalLoss := 0.0
 	count := 0
@@ -218,7 +239,7 @@ func (ca *CrossAsset) computeLoss(data [][][]float64, labels [][]int) float64 {
 			continue
 		}
 		for s := 0; s < ns; s++ {
-			probs := directionToProbs(dirs[s], confs[s])
+			probs := directionToProbs(dirs[s], float64(confs[s]))
 			target := labels[i][s]
 			if target >= 0 && target < 3 {
 				p := probs[target]
