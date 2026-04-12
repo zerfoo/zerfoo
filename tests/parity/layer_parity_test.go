@@ -18,6 +18,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/zerfoo/layers/hrm"
 	"github.com/zerfoo/zerfoo/layers/gather"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/layers/recurrent"
@@ -2385,7 +2386,59 @@ func TestParity_GQA_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_MIMOMambaBlock_Structural(t *testing.T) {
-	t.Skip("MIMOMambaBlock has 7+ projection layers with per-head SSM parameters, cross-head mixing, and causal conv1d — too complex for structural test")
+	engine, ops := setup()
+	dModel := 8
+	dInner := 8  // must be divisible by numHeads
+	dState := 4
+	dtRank := 2
+	convKer := 3
+	numHeads := 2
+	batchSize := 1
+	seqLen := 4
+
+	block, err := ssm.NewMIMOMambaBlock[float32](
+		"test_mimo", engine, ops,
+		dModel, dInner, dState, dtRank, convKer, numHeads,
+	)
+	if err != nil {
+		t.Fatalf("NewMIMOMambaBlock: %v", err)
+	}
+
+	inputData := make([]float32, batchSize*seqLen*dModel)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.01
+	}
+	input := makeTensor(t, inputData, []int{batchSize, seqLen, dModel})
+
+	output, err := block.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Output shape should match input: [batch, seq, dModel]
+	if s := output.Shape(); len(s) != 3 || s[0] != batchSize || s[1] != seqLen || s[2] != dModel {
+		t.Errorf("shape: got %v, want [%d,%d,%d]", s, batchSize, seqLen, dModel)
+	}
+
+	// No NaN/Inf
+	for i, v := range output.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+
+	// Non-constant output
+	data := output.Data()
+	allSame := true
+	for _, v := range data[1:] {
+		if v != data[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		t.Error("output is constant — expected varying values")
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2433,7 +2486,60 @@ func TestParity_AttnRes_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_HModule_Structural(t *testing.T) {
-	t.Skip("HModule requires a transformer.Block with an attention graph.Node — too many interdependent components for a standalone structural test")
+	engine, _ := setup()
+	ops := &numeric.Float32Ops{}
+	modelDim := 8
+	ffnDim := 16
+	batchSize := 1
+	seqLen := 3
+
+	// Use AttentionHead as the graph.Node — same pattern as TransformerBlock test.
+	attnHead, err := attention.NewAttentionHead[float32](engine, modelDim, modelDim)
+	if err != nil {
+		t.Fatalf("NewAttentionHead: %v", err)
+	}
+
+	hmod, err := hrm.NewHModule[float32](engine, ops, modelDim, ffnDim, attnHead)
+	if err != nil {
+		t.Fatalf("NewHModule: %v", err)
+	}
+
+	// HModule.Forward expects lState as input[0]
+	inputData := make([]float32, batchSize*seqLen*modelDim)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.01
+	}
+	input := makeTensor(t, inputData, []int{batchSize, seqLen, modelDim})
+
+	output, err := hmod.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	// Output shape should match input: [batch, seq, modelDim]
+	if s := output.Shape(); len(s) != 3 || s[0] != batchSize || s[1] != seqLen || s[2] != modelDim {
+		t.Errorf("shape: got %v, want [%d,%d,%d]", s, batchSize, seqLen, modelDim)
+	}
+
+	// No NaN/Inf
+	for i, v := range output.Data() {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			t.Fatalf("output[%d] = %v (NaN/Inf)", i, v)
+		}
+	}
+
+	// Non-constant output
+	data := output.Data()
+	allSame := true
+	for _, v := range data[1:] {
+		if v != data[0] {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		t.Error("output is constant — expected varying values")
+	}
 }
 
 // ---------------------------------------------------------------------------
