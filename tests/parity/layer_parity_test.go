@@ -2670,6 +2670,47 @@ func TestParity_TransformerBlock_Structural(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GRN (Gated Residual Network) parity test (T86.1.13)
+// ---------------------------------------------------------------------------
+
+func TestParity_GRN(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "layer_grn")
+	tol := getFloat(g, "tolerance")
+
+	inputDim := int(getFloat(g, "input_dim"))
+	hiddenDim := int(getFloat(g, "hidden_dim"))
+	outputDim := int(getFloat(g, "output_dim"))
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+
+	grn, err := timeseries.NewGRN[float32]("test_grn", engine, ops, inputDim, hiddenDim, outputDim)
+	if err != nil {
+		t.Fatalf("NewGRN: %v", err)
+	}
+
+	// Inject golden weights into parameters.
+	// GRN.Parameters() returns: w1, b1, w2, b2, wOut, ln_gamma, ln_beta
+	params := grn.Parameters()
+	if len(params) < 7 {
+		t.Fatalf("expected at least 7 parameters (w1,b1,w2,b2,wOut,gamma,beta), got %d", len(params))
+	}
+
+	copy(params[0].Value.Data(), getFloat32s(g, "w1"))
+	copy(params[1].Value.Data(), getFloat32s(g, "b1"))
+	copy(params[2].Value.Data(), getFloat32s(g, "w2"))
+	copy(params[3].Value.Data(), getFloat32s(g, "b2"))
+	copy(params[4].Value.Data(), getFloat32s(g, "w_out"))
+	// params[5] = ln gamma (already ones), params[6] = ln beta (already zeros) — no need to set
+
+	output, err := grn.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	assertClose(t, "grn_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+}
+
+// ---------------------------------------------------------------------------
 // Summary test: runs all layer parity tests and prints a report
 // ---------------------------------------------------------------------------
 
@@ -2812,6 +2853,8 @@ func TestParity_Summary(t *testing.T) {
 		{"WhisperEncoder/Structural", TestParity_WhisperEncoder_Structural},
 		{"ComparisonOps", TestParity_ComparisonOps},
 		{"TransformerBlock/Structural", TestParity_TransformerBlock_Structural},
+		// Timeseries components (E89)
+		{"GRN", TestParity_GRN},
 	}
 
 	passed, failed := 0, 0
@@ -2934,6 +2977,8 @@ func TestParity_CoverageReport(t *testing.T) {
 		{"models", "GCN", TestParity_GCN_Structural, nil, false},
 		{"models", "GAT", TestParity_GAT_Structural, nil, false},
 		{"models", "MarketVAE", TestParity_MarketVAE_Structural, nil, false},
+		// Timeseries components (E89)
+		{"timeseries", "GRN", TestParity_GRN, nil, false},
 	}
 
 	// Run each test silently and record pass/fail.
