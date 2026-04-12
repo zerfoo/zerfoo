@@ -2065,6 +2065,79 @@ def gen_moe():
 
 
 # ---------------------------------------------------------------------------
+# BlockAttnRes golden-file forward parity
+# ---------------------------------------------------------------------------
+
+def gen_block_attn_res():
+    """Generate golden data for BlockAttnRes forward pass.
+
+    BlockAttnRes (arXiv:2603.15031) computes inter-block attention:
+      1. Stack completed block representations + partial block into V [n, dim]
+      2. K = RMSNorm(V)                          [n, dim]
+      3. logits = query @ K^T                     [1, n]
+      4. alpha = softmax(logits)                  [1, n]
+      5. h = alpha @ V                            [1, dim]
+    """
+    set_seed()
+    dim = 8
+    n_blocks = 3  # 2 completed blocks + 1 partial block
+    eps = 1e-6
+
+    # query: current layer hidden state [dim]
+    query = torch.randn(dim)
+
+    # Completed block representations [dim] each
+    block0 = torch.randn(dim)
+    block1 = torch.randn(dim)
+
+    # Partial block (current incomplete block sum) [dim]
+    partial_block = torch.randn(dim)
+
+    # RMSNorm gain (initialized to ones, as in the Go implementation)
+    norm_gain = torch.ones(dim)
+
+    def rmsnorm(x, gain):
+        # x: [n, dim], gain: [dim]
+        rms = torch.sqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)
+        return gain * (x / rms)
+
+    # Step 1: Stack all blocks into V [n, dim]
+    v = torch.stack([block0, block1, partial_block], dim=0)  # [3, dim]
+
+    # Step 2: K = RMSNorm(V)
+    k = rmsnorm(v, norm_gain)  # [3, dim]
+
+    # Step 3: logits = query @ K^T -> [1, n]
+    q = query.unsqueeze(0)  # [1, dim]
+    logits = q @ k.t()  # [1, 3]
+
+    # Step 4: alpha = softmax(logits)
+    alpha = F.softmax(logits, dim=-1)  # [1, 3]
+
+    # Step 5: h = alpha @ V -> [1, dim]
+    h = alpha @ v  # [1, dim]
+
+    # Output is squeezed back to [dim] since query was [dim]
+    output = h.squeeze(0)  # [dim]
+
+    save_case("residual_block_attn_res", {
+        "layer": "block_attn_res",
+        "dim": dim,
+        "n_blocks": n_blocks,
+        "block_size": 2,  # arbitrary, just needs to be > 0 for constructor
+        "epsilon": eps,
+        "query": to_list(query), "query_shape": list(query.shape),
+        "block0": to_list(block0), "block0_shape": list(block0.shape),
+        "block1": to_list(block1), "block1_shape": list(block1.shape),
+        "partial_block": to_list(partial_block), "partial_block_shape": list(partial_block.shape),
+        "norm_gain": to_list(norm_gain), "norm_gain_shape": list(norm_gain.shape),
+        "alpha": to_list(alpha), "alpha_shape": list(alpha.shape),
+        "expected_output": to_list(output), "output_shape": list(output.shape),
+        "tolerance": 1e-4,
+    })
+
+
+# ---------------------------------------------------------------------------
 # CfC (Closed-form Continuous-time) golden-file forward parity
 # ---------------------------------------------------------------------------
 
@@ -2351,6 +2424,76 @@ def gen_timemixer():
 
 
 # ---------------------------------------------------------------------------
+# GRN (Gated Residual Network)
+# ---------------------------------------------------------------------------
+
+def gen_grn():
+    """GRN: LayerNorm(x + ELU(W1@x+b1) * sigmoid(W2@x+b2) @ wOut)
+
+    Matches layers/timeseries/vsn.go GRN.Forward exactly.
+    Uses inputDim==outputDim so the residual connection is active.
+    """
+    set_seed()
+    batch, input_dim, hidden_dim, output_dim = 2, 8, 16, 8
+
+    x = np.random.randn(batch, input_dim).astype(np.float32)
+    w1 = np.random.randn(input_dim, hidden_dim).astype(np.float32)
+    b1 = np.random.randn(1, hidden_dim).astype(np.float32)
+    w2 = np.random.randn(input_dim, hidden_dim).astype(np.float32)
+    b2 = np.random.randn(1, hidden_dim).astype(np.float32)
+    w_out = np.random.randn(hidden_dim, output_dim).astype(np.float32)
+
+    # Forward: h1 = x @ W1 + b1, h2 = x @ W2 + b2
+    h1 = x @ w1 + b1
+    h2 = x @ w2 + b2
+
+    # ELU(h1): x if x >= 0, else exp(x) - 1
+    elu_h1 = np.where(h1 >= 0, h1, np.exp(h1) - 1)
+
+    # sigmoid(h2)
+    sig_h2 = 1.0 / (1.0 + np.exp(-h2.astype(np.float64)))
+    sig_h2 = sig_h2.astype(np.float32)
+
+    # gated = ELU(h1) * sigmoid(h2)
+    gated = elu_h1 * sig_h2
+
+    # projected = gated @ wOut
+    projected = gated @ w_out
+
+    # residual (inputDim == outputDim)
+    res = projected + x
+
+    # LayerNorm with gamma=1, beta=0, eps=1e-5
+    eps = 1e-5
+    mean = res.mean(axis=-1, keepdims=True)
+    var = res.var(axis=-1, keepdims=True, ddof=0)
+    normed = (res - mean) / np.sqrt(var + eps)
+    # gamma=1, beta=0 -> output = normed
+
+    save_case("layer_grn", {
+        "layer": "grn",
+        "input": x.flatten().tolist(),
+        "input_shape": list(x.shape),
+        "w1": w1.flatten().tolist(),
+        "w1_shape": list(w1.shape),
+        "b1": b1.flatten().tolist(),
+        "b1_shape": list(b1.shape),
+        "w2": w2.flatten().tolist(),
+        "w2_shape": list(w2.shape),
+        "b2": b2.flatten().tolist(),
+        "b2_shape": list(b2.shape),
+        "w_out": w_out.flatten().tolist(),
+        "w_out_shape": list(w_out.shape),
+        "input_dim": input_dim,
+        "hidden_dim": hidden_dim,
+        "output_dim": output_dim,
+        "expected_output": normed.flatten().tolist(),
+        "output_shape": list(normed.shape),
+        "tolerance": 1e-4,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -2423,9 +2566,13 @@ def main():
         # Complex layers (GQA, MoE)
         ("GQA", gen_gqa),
         ("MoE", gen_moe),
+        # Residual
+        ("BlockAttnRes", gen_block_attn_res),
         # Timeseries models (E88)
         ("CfC", gen_cfc),
         ("TimeMixer", gen_timemixer),
+        # Timeseries components (E89)
+        ("GRN", gen_grn),
     ]
 
     passed, failed = 0, 0

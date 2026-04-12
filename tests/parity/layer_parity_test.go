@@ -1673,6 +1673,59 @@ func TestParity_AttnRes(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// BlockAttnRes golden parity test (T86.1.10)
+// ---------------------------------------------------------------------------
+
+func TestParity_BlockAttnRes(t *testing.T) {
+	engine, ops := setup()
+	g := loadGolden(t, "residual_block_attn_res")
+	tol := getFloat(g, "tolerance")
+
+	dim := int(getFloat(g, "dim"))
+	blockSize := int(getFloat(g, "block_size"))
+	eps := float32(getFloat(g, "epsilon"))
+
+	bar, err := residual.NewBlockAttnRes[float32](engine, ops, blockSize, dim, eps)
+	if err != nil {
+		t.Fatalf("NewBlockAttnRes: %v", err)
+	}
+
+	// RMSNorm gain is ones by default — matches Python golden data.
+	// No need to set weights since the constructor already initializes to ones.
+
+	query := makeTensor(t, getFloat32s(g, "query"), getInts(g, "query_shape"))
+	block0 := makeTensor(t, getFloat32s(g, "block0"), getInts(g, "block0_shape"))
+	block1 := makeTensor(t, getFloat32s(g, "block1"), getInts(g, "block1_shape"))
+	partialBlock := makeTensor(t, getFloat32s(g, "partial_block"), getInts(g, "partial_block_shape"))
+
+	blocks := []*tensor.TensorNumeric[float32]{block0, block1}
+
+	output, err := bar.Forward(context.Background(), query, blocks, partialBlock)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	expectedShape := getInts(g, "output_shape")
+	if s := output.Shape(); len(s) != len(expectedShape) {
+		t.Fatalf("output shape: got %v, want %v", s, expectedShape)
+	}
+	for i, d := range output.Shape() {
+		if d != expectedShape[i] {
+			t.Fatalf("output shape[%d]: got %d, want %d", i, d, expectedShape[i])
+		}
+	}
+
+	assertClose(t, "block_attn_res_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+
+	// Also verify attention weights sum to 1.
+	alpha, err := bar.AttentionWeights(context.Background(), query, blocks, partialBlock)
+	if err != nil {
+		t.Fatalf("AttentionWeights: %v", err)
+	}
+	assertClose(t, "block_attn_res_alpha", alpha.Data(), getFloat32s(g, "alpha"), tol)
+}
+
+// ---------------------------------------------------------------------------
 // Backward / gradient parity tests (T86.2)
 // ---------------------------------------------------------------------------
 
@@ -2699,6 +2752,7 @@ func TestParity_Summary(t *testing.T) {
 		{"TSMixerBlock", TestParity_TSMixerBlock},
 		{"SSMLayer", TestParity_SSMLayer},
 		{"AttnRes", TestParity_AttnRes},
+		{"BlockAttnRes", TestParity_BlockAttnRes},
 		// Core arithmetic ops
 		{"Op/Add", TestParity_Op_Add},
 		{"Op/Sub", TestParity_Op_Sub},
@@ -2824,6 +2878,7 @@ func TestParity_CoverageReport(t *testing.T) {
 		{"attention", "SDPA/Bidirectional", TestParity_SDPA_Bidirectional, nil, false},
 		{"attention", "MultiHeadAttention", TestParity_MultiHeadAttention, nil, false},
 		{"attention", "AttnRes", TestParity_AttnRes, nil, false},
+		{"residual", "BlockAttnRes", TestParity_BlockAttnRes, nil, false},
 		// Embeddings
 		{"embeddings", "TokenEmbedding", TestParity_TokenEmbedding, nil, false},
 		{"embeddings", "RotaryEmbedding", TestParity_RotaryEmbedding, nil, false},
