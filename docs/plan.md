@@ -704,46 +704,29 @@ on DGX GB10 (currently 37+ hours).
 
 #### E90.1: Float32 Migration
 
-- [ ] T90.1.1 Convert Model struct fields from float64 to float32  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  AC: All weight arrays (headW, headB, layer weights) are float32. Model compiles.
-  Deps: none.
-- [ ] T90.1.2 Convert Forward() inputs/outputs from [][]float64 to [][]float32  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  AC: Forward() accepts and returns float32. Public API updated.
-  Deps: T90.1.1.
-- [ ] T90.1.3 Convert backward.go cpuLayerNodes from float64 to float32  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  AC: All layer nodes (qProj, kProj, vProj, etc.) use float32. cpuEngine is float32.
-  Deps: T90.1.1.
-- [ ] T90.1.4 Convert TrainConfig, TrainResult, and Train() to float32  Owner: TBD  Est: 45m  verifies: [infrastructure]
-  AC: Train() operates on float32 data. AdamW updates in float32. Tests pass.
-  Deps: T90.1.2, T90.1.3.
-- [ ] T90.1.5 Run go vet + go test ./crossasset/...  Owner: TBD  Est: 15m  verifies: [infrastructure]
-  AC: Zero errors, all existing tests pass (values may shift within float32 tolerance).
-  Deps: T90.1.4.
+- [x] T90.1.1 Convert Model struct fields from float64 to float32  Est: 1h  verifies: [infrastructure]  DONE 2026-04-11
+- [x] T90.1.2 Convert Forward() inputs/outputs from [][]float64 to [][]float32  Est: 1h  verifies: [infrastructure]  DONE 2026-04-11
+- [x] T90.1.3 Convert backward.go cpuLayerNodes from float64 to float32  Est: 1h  verifies: [infrastructure]  DONE 2026-04-11
+- [x] T90.1.4 Convert TrainConfig, TrainResult, and Train() to float32  Est: 45m  verifies: [infrastructure]  DONE 2026-04-11
+- [x] T90.1.5 Run go vet + go test ./crossasset/...  Est: 15m  verifies: [infrastructure]  DONE 2026-04-11
+  All 15 tests pass. Serialize format v2. commit fda4aeaf.
 
 #### E90.2: Engine[T] Forward Path
 
-- [ ] T90.2.1 Replace matVecMul/vecAdd/softmax with Engine ops  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  AC: Forward() uses engine.MatMul, engine.Add, functional.Softmax. No raw slice math.
-  Deps: T90.1.5.
-- [ ] T90.2.2 Accept Engine[float32] parameter in Forward()  Owner: TBD  Est: 30m  verifies: [infrastructure]
-  AC: Forward(engine, data) dispatches to provided engine. CPU engine for backward compat.
-  Deps: T90.2.1.
-- [ ] T90.2.3 Forward parity test: Engine vs old slice math  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: Engine forward output matches old forward output within 1e-4 on 100 random inputs.
-  Deps: T90.2.2.
+- [x] T90.2.1 Replace matVecMul/vecAdd/softmax with Engine ops  Est: 1h  verifies: [infrastructure]  DONE 2026-04-11
+- [x] T90.2.2 Accept Engine[float32] parameter in Forward()  Est: 30m  verifies: [infrastructure]  DONE 2026-04-11
+  Model.SetEngine() method added. Forward, backward, Train all use model's engine.
+- [x] T90.2.3 Forward parity test: Engine vs old slice math  Est: 30m  verifies: [UC-L01]  DONE 2026-04-11
+  TestCrossAsset_ForwardEngineParity added.
 
 #### E90.3: GPU TrainGPU Implementation
 
-- [ ] T90.3.1 Wire TrainGPU to use the GPU engine for forward and backward  Owner: TBD  Est: 2h  verifies: [infrastructure]
-  AC: TrainGPU passes GPU engine to Forward(), backward uses GPU engine for all ops.
-  GPU utilization visible in nvidia-smi during training.
-  Deps: T90.2.3.
-- [ ] T90.3.2 Upload model weights to GPU at training start  Owner: TBD  Est: 30m  verifies: [infrastructure]
-  AC: All weight tensors uploaded via UploadWeights before first epoch. No per-op H2D copies.
-  Deps: T90.3.1.
-- [ ] T90.3.3 Replace manual head-reshape loops with Engine.Reshape  Owner: TBD  Est: 30m  verifies: [infrastructure]
-  AC: No element-copy loops in backward.go. All reshapes via Engine.
-  Deps: T90.3.1.
+- [x] T90.3.1 Wire TrainGPU to use the GPU engine for forward and backward  Est: 2h  verifies: [infrastructure]  DONE 2026-04-11
+  TrainGPU calls SetEngine(engine) before training. All ops route through provided engine.
+- [x] T90.3.2 Upload model weights to GPU at training start  Est: 30m  verifies: [infrastructure]  DONE 2026-04-11
+  collectWeightTensors() + WeightUploader type assertion. commit 28216f6b.
+- [x] T90.3.3 Replace manual head-reshape loops with Engine.Reshape  Est: 30m  verifies: [infrastructure]  DONE 2026-04-11
+  reshapeForHeadsEngine/reshapeFromHeadsEngine use eng.Reshape + eng.Transpose.
 
 #### E90.4: Validation and Benchmarking
 
