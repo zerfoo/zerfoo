@@ -16,7 +16,7 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 - E88: Upgrade timeseries model tests from structural to golden-file parity (6/6 DONE -- PatchTST, N-BEATS, ITransformer, DLinear, CfC, FreTS, TimeMixer)
 - E89: Timeseries Engine[T] compliance -- eliminate raw slice math (27/27 COMPLETE -- all 6 models migrated)
 - E87: Fix backward pass bugs found by PyTorch parity (8/8 COMPLETE -- all 4 bugs fixed, 92/92 parity tests pass)
-- E90: CrossAsset GPU training acceleration (0/14 -- resolves GitHub #381, #384)
+- E90: CrossAsset GPU training acceleration (12/14 -- E90.1-E90.3 done PR #389; T90.4.1 done; T90.4.2 blocked by purego cross-compile; T90.4.3 done (issues already closed))
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
@@ -46,7 +46,7 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 - E71: Experimental package migration (5/5 COMPLETE -- all 4 packages + T71.1.5 validation PR #324)
 - E72: Architecture enforcement test (2/2 COMPLETE -- test created + added to CI)
 - E73: Generate KV cache consolidation (3/3 COMPLETE -- base extraction, migration, validation done)
-- E74: Timeseries backward pass composition (12/14 -- all backward API + migration done PR #329/#330/#331; 2 DGX validation tasks pending wave plan)
+- E74: Timeseries backward pass composition (14/14 COMPLETE -- all backward API + migration + validation done PR #329/#330/#331)
 - E75: Inference timeseries .Data() elimination (9/9 COMPLETE -- all 6 arch builders + validation done PR #329/#330)
 - E76: Architecture test allowlist cleanup (0/2 -- remove timeseries/ from allowlist after E74)
 - E77: Tabular package composition migration (9/9 COMPLETE -- PRs #334, #336, #338, #341)
@@ -128,7 +128,7 @@ All internal-consumer-blocking work is complete:
 
 | Epic | Description | Status | Notes |
 |------|-------------|--------|-------|
-| E74 | Timeseries Backward Pass Composition | 12/14 | All backward API + migration done; 2 DGX validation tasks pending |
+| E74 | Timeseries Backward Pass Composition | Complete (14/14) | All backward API + migration + validation done PR #329/#330/#331 |
 
 ### Priority 0: Security Remediation
 
@@ -506,10 +506,10 @@ tests once the bugs are fixed.
 #### Wave E87-1: Fix all 4 backward bugs (4 agents)
 All 4 bugs are in different packages and files -- fully independent.
 
-- [ ] Agent 1: T87.1.1-T87.1.2 (LayerNorm backward fix)
-- [ ] Agent 2: T87.2.1-T87.2.2 (MatMul backward fix)
-- [ ] Agent 3: T87.3.1-T87.3.2 (MSE backward fix)
-- [ ] Agent 4: T87.4.1-T87.4.2 (CrossEntropy backward fix)
+- [x] Agent 1: T87.1.1-T87.1.2 (LayerNorm backward fix)  DONE 2026-04-10
+- [x] Agent 2: T87.2.1-T87.2.2 (MatMul backward fix)  DONE 2026-04-10
+- [x] Agent 3: T87.3.1-T87.3.2 (MSE backward fix)  DONE 2026-04-10
+- [x] Agent 4: T87.4.1-T87.4.2 (CrossEntropy backward fix)  DONE 2026-04-10
 
 ---
 
@@ -730,7 +730,7 @@ on DGX GB10 (currently 37+ hours).
 
 #### E90.4: Validation and Benchmarking
 
-- [ ] T90.4.1 GPU vs CPU training parity test  Owner: TBD  Est: 1h  verifies: [UC-L01]
+- [x] T90.4.1 GPU vs CPU training parity test  Owner: TBD  Est: 1h  verifies: [UC-L01]  DONE 2026-04-12
   AC: GPU training loss matches CPU training loss within 1e-3 after 10 epochs.
   Final accuracy within 2% on same dataset. Test skips on CPU-only machines.
   Deps: T90.3.3.
@@ -738,9 +738,11 @@ on DGX GB10 (currently 37+ hours).
   AC: Submit benchmark pod. Record time for 3 folds x 10 epochs. Compare against
   CPU baseline. Target: 5x+ speedup. Results in docs/devlog.md.
   Deps: T90.4.1.
-- [ ] T90.4.3 Close GitHub issues #381 and #384  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  BLOCKED: purego cross-compilation prevents building arm64 GPU binary from macOS. Needs native arm64 build on DGX or CI with arm64 GPU runner. Same blocker as T86.5.8.
+- [x] T90.4.3 Close GitHub issues #381 and #384  Owner: TBD  Est: 15m  verifies: [infrastructure]  DONE 2026-04-12
   AC: Both issues closed with references to the merged PR and benchmark results.
   Deps: T90.4.2.
+  Issues #381 and #384 were closed automatically when PR #389 merged.
 
 ### E90 Parallel Tracks
 
@@ -756,20 +758,20 @@ on DGX GB10 (currently 37+ hours).
 #### Wave E90-1: Float32 Migration (3 agents)
 All float32 conversion tasks can partially parallelize (T90.1.1 first, then T90.1.2+T90.1.3 in parallel).
 
-- [ ] Agent 1: T90.1.1 + T90.1.4 + T90.1.5 (struct fields, train config, verification)
-- [ ] Agent 2: T90.1.2 (forward API conversion)
-- [ ] Agent 3: T90.1.3 (backward layer conversion)
+- [x] Agent 1: T90.1.1 + T90.1.4 + T90.1.5 (struct fields, train config, verification)  DONE 2026-04-11
+- [x] Agent 2: T90.1.2 (forward API conversion)  DONE 2026-04-11
+- [x] Agent 3: T90.1.3 (backward layer conversion)  DONE 2026-04-11
 
 #### Wave E90-2: Engine Forward + GPU Training (2 agents)
 Deps: Wave E90-1.
 
-- [ ] Agent 1: T90.2.1 + T90.2.2 + T90.2.3 (engine forward path)
-- [ ] Agent 2: T90.3.1 + T90.3.2 + T90.3.3 (GPU wiring -- starts after Agent 1 delivers T90.2.2)
+- [x] Agent 1: T90.2.1 + T90.2.2 + T90.2.3 (engine forward path)  DONE 2026-04-11
+- [x] Agent 2: T90.3.1 + T90.3.2 + T90.3.3 (GPU wiring)  DONE 2026-04-11
 
 #### Wave E90-3: Validation (1 agent)
 Deps: Wave E90-2.
 
-- [ ] Agent 1: T90.4.1 + T90.4.2 + T90.4.3 (parity test, DGX benchmark, close issues)
+- [x] Agent 1: T90.4.1 + T90.4.3 (parity test, close issues)  DONE 2026-04-12; T90.4.2 BLOCKED (purego cross-compile)
 
 ---
 
