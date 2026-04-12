@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0](https://github.com/zerfoo/zerfoo/compare/v1.46.0...v2.0.0) (2026-04-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **crossasset:** Public API signatures changed:
+    - Forward([][]float64) -> Forward([][]float32)
+    - Train([][][]float64, ...) -> Train([][][]float32, ...)
+    - TrainGPU([][][]float64, ...) -> TrainGPU([][][]float32, ...)
+    - Predict([][]float64) -> Predict([][]float32)
+    - AttentionWeights([][]float64) -> AttentionWeights([][]float32)
+
+### Features
+
+* **crossasset:** convert model from float64 to float32 ([a160981](https://github.com/zerfoo/zerfoo/commit/a1609812cc60c588fe4291c5bdfcddfe538d443e))
+* **crossasset:** replace forward slice math with Engine[T] ops and wire TrainGPU ([4ec0d93](https://github.com/zerfoo/zerfoo/commit/4ec0d93e89cc7bfc853068c92137fc2933756f7b))
+* **parity:** add GPU parity test Containerfile and Spark manifest ([0f40a86](https://github.com/zerfoo/zerfoo/commit/0f40a8626721028f9b1dc1032c507d116e9391fa))
+* **parity:** add GPU vs CPU parity tests for activations, normalization, and RoPE ([f0bac11](https://github.com/zerfoo/zerfoo/commit/f0bac1122659fbc14ee0dcfec932320ef8c88f5d))
+* **parity:** add GPU vs CPU parity tests for core ops, attention, and backward ([06d2b67](https://github.com/zerfoo/zerfoo/commit/06d2b67b4c9435ff732a88bb126fbe699f96ae90))
+
+
+### Bug Fixes
+
+* **attention:** recompute attention weights in SDPA backward after flash forward ([ae47fc8](https://github.com/zerfoo/zerfoo/commit/ae47fc8bc6fc0bce720a3308c0a88f34912dec15))
+* **crossasset:** relax GPU parity test tolerance for flash attention divergence ([27f2656](https://github.com/zerfoo/zerfoo/commit/27f2656fbcc706ce5502f6fbc4dfeb7eeaa8ea66))
+* **cuda:** add /opt/zerfoo/lib to libkernels.so dlopen search path ([31c2381](https://github.com/zerfoo/zerfoo/commit/31c2381384fba628cac45e25664fe57c5913a101))
+
 ## [1.46.0](https://github.com/zerfoo/zerfoo/compare/v1.45.0...v1.46.0) (2026-04-12)
 
 
