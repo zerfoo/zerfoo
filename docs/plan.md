@@ -294,8 +294,8 @@ optimizer_sgd, recurrent_simple_rnn, ssm_mamba, ssm_s4. Wire these first.
 - [x] T86.0.6 Wire SGD optimizer golden Go test  Est: 15m  verifies: [UC-L02]  DONE 2026-04-10
 - [x] T86.0.7 Wire SimpleRNN golden Go test  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
 - [x] T86.0.8 Wire S4 SSM golden Go test  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
-- [ ] T86.0.9 Wire MambaBlock golden Go test  Owner: TBD  Est: 45m  verifies: [UC-L01]
-  SKIP: complex multi-projection weight wiring (7+ projections with discretization).
+- [x] T86.0.9 Wire MambaBlock golden Go test  Owner: Agent  Est: 45m  verifies: [UC-L01]  Done: 2026-04-11 PR#386
+  Added convBias to MambaBlock, wired full golden parity test.
 - [x] T86.0.10 Wire TransformerBlock structural Go test  Est: 45m  verifies: [UC-L01]  DONE 2026-04-10
   Structural test using AttentionHead as attention node inside transformer.Block.
 - [x] T86.0.11 Run go vet + go test on all wired tests  Est: 15m  verifies: [infrastructure]  DONE 2026-04-10
@@ -306,22 +306,22 @@ optimizer_sgd, recurrent_simple_rnn, ssm_mamba, ssm_s4. Wire these first.
 - [x] T86.1.1 FastGelu activation  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
 - [x] T86.1.2 SimplifiedLayerNorm  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
 - [x] T86.1.3 SkipSimplifiedLayerNorm  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
-- [ ] T86.1.4 GQA (GroupedQueryAttention)  Owner: TBD  Est: 1h  verifies: [UC-L01]
-  SKIP: requires RoPE, KV cache, multi-head weight coordination.
+- [x] T86.1.4 GQA (GroupedQueryAttention)  Owner: auto  Est: 1h  verifies: [UC-L01]  Done: 2026-04-11
+  Full numerical parity test already passing (TestParity_GQA).
 - [x] T86.1.5 AttentionHead structural  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
-- [ ] T86.1.6 MoE (MixtureOfExperts + MoEGate)  Owner: TBD  Est: 1h  verifies: [UC-L01]
-  SKIP: complex expert routing + gating setup.
+- [x] T86.1.6 MoE (MixtureOfExperts + MoEGate)  Owner: auto  Est: 1h  verifies: [UC-L01]  Done: 2026-04-11
+  Full numerical parity test already passing (TestParity_MoE).
 - [x] T86.1.7 LMHead  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
 - [ ] T86.1.8 MIMOMambaBlock  Owner: TBD  Est: 1h  verifies: [UC-L01]
   SKIP: 7+ projection layers with per-head SSM params, cross-head mixing.
 - [x] T86.1.9 AttnRes structural  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
-- [ ] T86.1.10 BlockAttnRes residual  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  SKIP: depends on AttnRes internals.
+- [x] T86.1.10 BlockAttnRes residual  Owner: Agent  Est: 30m  verifies: [UC-L01]  Done: 2026-04-11 PR#386
+  Full golden parity test with RMSNorm keys and softmax attention weights.
 - [ ] T86.1.11 HModule hierarchical residual  Owner: TBD  Est: 45m  verifies: [UC-L01]
   SKIP: needs attention graph.Node construction.
 - [x] T86.1.12 PatchEmbed timeseries  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
-- [ ] T86.1.13 GRN (Gated Residual Network)  Owner: TBD  Est: 30m  verifies: [UC-L01]
-  AC: GRN forward matches manual dense->ELU->dense->dropout->layernorm->gate within 1e-4.
+- [x] T86.1.13 GRN (Gated Residual Network)  Owner: Agent  Est: 30m  verifies: [UC-L01]  Done: 2026-04-11 PR#386
+  GRN forward matches within 1e-4 (TestParity_GRN).
 - [x] T86.1.14 TSMixerBlock  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
 - [x] T86.1.15 MLSTM structural  Est: 45m  verifies: [UC-L01]  DONE 2026-04-10
 - [x] T86.1.16 SLSTM structural  Est: 45m  verifies: [UC-L01]  DONE 2026-04-10
