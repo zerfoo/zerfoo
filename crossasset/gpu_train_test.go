@@ -20,16 +20,16 @@ func testConfig() Config {
 	}
 }
 
-func testData(cfg Config, n int) ([][][]float64, [][]int) {
-	data := make([][][]float64, n)
+func testData(cfg Config, n int) ([][][]float32, [][]int) {
+	data := make([][][]float32, n)
 	labels := make([][]int, n)
 	for i := range n {
-		data[i] = make([][]float64, cfg.NSources)
+		data[i] = make([][]float32, cfg.NSources)
 		labels[i] = make([]int, cfg.NSources)
 		for s := range cfg.NSources {
-			data[i][s] = make([]float64, cfg.FeaturesPerSource)
+			data[i][s] = make([]float32, cfg.FeaturesPerSource)
 			for f := range cfg.FeaturesPerSource {
-				data[i][s][f] = float64(i*cfg.NSources*cfg.FeaturesPerSource+s*cfg.FeaturesPerSource+f) * 0.01
+				data[i][s][f] = float32(i*cfg.NSources*cfg.FeaturesPerSource+s*cfg.FeaturesPerSource+f) * 0.01
 			}
 			labels[i][s] = (i + s) % 3
 		}
