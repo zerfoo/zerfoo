@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.0](https://github.com/zerfoo/zerfoo/compare/v1.45.0...v1.46.0) (2026-04-12)
+
+
+### Features
+
+* **parity:** add BlockAttnRes golden parity test ([11e17fc](https://github.com/zerfoo/zerfoo/commit/11e17fc686d5c2d67d307ea39038e15751b17b5e))
+* **parity:** add CfC golden-file parity test ([3490dac](https://github.com/zerfoo/zerfoo/commit/3490dacf7fee578bc452a5cd5de90471412651e9))
+* **parity:** add FreTS golden-file parity test ([b0c63c8](https://github.com/zerfoo/zerfoo/commit/b0c63c82760eb6492cbc31e2b3b3ff82f3a0f133))
+* **parity:** add GRN golden-file parity test ([18c6964](https://github.com/zerfoo/zerfoo/commit/18c69646a79101570206d5e9b46ed9edc9d4c9ae))
+* **parity:** add TimeMixer golden-file parity test ([d3b5ebe](https://github.com/zerfoo/zerfoo/commit/d3b5ebe261c1d6ecf364860c930362660f01f4af))
+* **parity:** upgrade PatchTST, N-BEATS, ITransformer to golden-file parity ([92249e4](https://github.com/zerfoo/zerfoo/commit/92249e42a0115f3adfb07f3a2b4f9d20f406e8d9))
+* **parity:** wire MambaBlock golden parity test ([fdea55b](https://github.com/zerfoo/zerfoo/commit/fdea55b5d3a53c09bb865fdbecce729d99c1d056))
+* **timeseries:** migrate CfC to Engine[T] compliance ([ff971af](https://github.com/zerfoo/zerfoo/commit/ff971afcb775817e4f755cceb94cb86fe995c922))
+* **timeseries:** migrate DLinear and TimeMixer to Engine[T] compliance ([d37ee31](https://github.com/zerfoo/zerfoo/commit/d37ee319a9658908c3b0212916ddc952c58e8982))
+* **timeseries:** migrate FreTS to Engine[T] compliance ([37ece62](https://github.com/zerfoo/zerfoo/commit/37ece6247ff36533f889e0b35a27897f6a1e3856))
+* **timeseries:** migrate ITransformer to Engine[T] ([e8f4e0a](https://github.com/zerfoo/zerfoo/commit/e8f4e0a133927bac327eda85b4df1f1f3447fda3))
+
 ## [1.45.0](https://github.com/zerfoo/zerfoo/compare/v1.44.0...v1.45.0) (2026-04-11)
 
 
