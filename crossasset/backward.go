@@ -7,6 +7,7 @@ import (
 	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/core"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
@@ -52,8 +53,9 @@ type cpuLayerCache struct {
 }
 
 // buildLayerNodes creates layer node objects from a layer's weight slices.
-// The underlying weight data is shared (not copied).
-func buildLayerNodes(l *layer, dm, nHeads int) (*cpuLayerNodes, error) {
+// The underlying weight data is shared (not copied). The provided engine
+// is used for all forward/backward computations through the nodes.
+func buildLayerNodes(eng compute.Engine[float32], l *layer, dm, nHeads int) (*cpuLayerNodes, error) {
 	headDim := dm / nHeads
 	ffnDim := dm * 4
 
@@ -91,20 +93,21 @@ func buildLayerNodes(l *layer, dm, nHeads int) (*cpuLayerNodes, error) {
 	}
 
 	return &cpuLayerNodes{
-		qProj:   core.NewLinearFromParam(cpuEngine, qP),
-		kProj:   core.NewLinearFromParam(cpuEngine, kP),
-		vProj:   core.NewLinearFromParam(cpuEngine, vP),
-		outProj: core.NewLinearFromParam(cpuEngine, outP),
-		ffn1:    core.NewLinearFromParam(cpuEngine, ffn1P),
-		ffn2:    core.NewLinearFromParam(cpuEngine, ffn2P),
-		gelu:    activations.NewGelu(cpuEngine, cpuOps),
-		sdpa:    attention.NewBidirectionalSDPA[float32](cpuEngine, headDim),
+		qProj:   core.NewLinearFromParam(eng, qP),
+		kProj:   core.NewLinearFromParam(eng, kP),
+		vProj:   core.NewLinearFromParam(eng, vP),
+		outProj: core.NewLinearFromParam(eng, outP),
+		ffn1:    core.NewLinearFromParam(eng, ffn1P),
+		ffn2:    core.NewLinearFromParam(eng, ffn2P),
+		gelu:    activations.NewGelu(eng, cpuOps),
+		sdpa:    attention.NewBidirectionalSDPA[float32](eng, headDim),
 	}, nil
 }
 
 // forwardLayerCached runs one transformer layer forward through layer nodes,
-// caching all intermediates needed by backwardLayer.
-func (m *Model) forwardLayerCached(x [][]float32, l layer) ([][]float32, *cpuLayerCache) {
+// caching all intermediates needed by backwardLayer. The provided engine
+// is used for all computations.
+func (m *Model) forwardLayerCached(eng compute.Engine[float32], x [][]float32, l layer) ([][]float32, *cpuLayerCache) {
 	ns := m.config.NSources
 	dm := m.config.DModel
 	nHeads := m.config.NHeads
@@ -112,7 +115,7 @@ func (m *Model) forwardLayerCached(x [][]float32, l layer) ([][]float32, *cpuLay
 	ffnDim := dm * 4
 	ctx := context.Background()
 
-	nodes, err := buildLayerNodes(&l, dm, nHeads)
+	nodes, err := buildLayerNodes(eng, &l, dm, nHeads)
 	panicOnErr("forwardLayerCached: build nodes", err)
 
 	cache := &cpuLayerCache{}
@@ -128,35 +131,35 @@ func (m *Model) forwardLayerCached(x [][]float32, l layer) ([][]float32, *cpuLay
 	cache.v, err = nodes.vProj.Forward(ctx, cache.xIn)
 	panicOnErr("V forward", err)
 
-	// Reshape Q/K/V [ns, dm] → [nHeads, ns, headDim] for SDPA.
-	cache.qHeads = reshapeForHeads(cache.q, ns, nHeads, headDim)
-	cache.kHeads = reshapeForHeads(cache.k, ns, nHeads, headDim)
-	cache.vHeads = reshapeForHeads(cache.v, ns, nHeads, headDim)
+	// Reshape Q/K/V [ns, dm] → [nHeads, ns, headDim] for SDPA via Engine.
+	cache.qHeads = reshapeForHeadsEngine(eng, cache.q, ns, nHeads, headDim)
+	cache.kHeads = reshapeForHeadsEngine(eng, cache.k, ns, nHeads, headDim)
+	cache.vHeads = reshapeForHeadsEngine(eng, cache.v, ns, nHeads, headDim)
 
 	// Scaled dot-product attention (bidirectional).
 	cache.attnOut, err = nodes.sdpa.Forward(ctx, cache.qHeads, cache.kHeads, cache.vHeads, nil)
 	panicOnErr("SDPA forward", err)
 
-	// Reshape [nHeads, ns, headDim] → [ns, dm].
-	cache.concat = reshapeFromHeads(cache.attnOut, ns, nHeads, headDim)
+	// Reshape [nHeads, ns, headDim] → [ns, dm] via Engine.
+	cache.concat = reshapeFromHeadsEngine(eng, cache.attnOut, ns, nHeads, headDim)
 
 	// Output projection.
 	cache.projOut, err = nodes.outProj.Forward(ctx, cache.concat)
 	panicOnErr("out proj forward", err)
 
 	// Residual: xIn + projOut.
-	cache.res1, err = cpuEngine.Add(ctx, cache.xIn, cache.projOut)
+	cache.res1, err = eng.Add(ctx, cache.xIn, cache.projOut)
 	panicOnErr("res1", err)
 
 	// LayerNorm 1 (manual, caching intermediates for backward).
-	cache.normed, cache.ln1NormedInput, cache.ln1Std = layerNormCached(ctx, cache.res1, l.lnGamma, l.lnBeta, ns, dm)
+	cache.normed, cache.ln1NormedInput, cache.ln1Std = layerNormCached(ctx, eng, cache.res1, l.lnGamma, l.lnBeta, ns, dm)
 
 	// FFN: Linear1 + bias1.
 	ffnLinOut, err := nodes.ffn1.Forward(ctx, cache.normed)
 	panicOnErr("FFN1 forward", err)
 	b1, err := tensor.New[float32]([]int{1, ffnDim}, l.ffnB1)
 	panicOnErr("ffnB1 tensor", err)
-	cache.ffnPre, err = cpuEngine.Add(ctx, ffnLinOut, b1)
+	cache.ffnPre, err = eng.Add(ctx, ffnLinOut, b1)
 	panicOnErr("ffnB1 add", err)
 
 	// GELU.
@@ -168,16 +171,16 @@ func (m *Model) forwardLayerCached(x [][]float32, l layer) ([][]float32, *cpuLay
 	panicOnErr("FFN2 forward", err)
 	b2, err := tensor.New[float32]([]int{1, dm}, l.ffnB2)
 	panicOnErr("ffnB2 tensor", err)
-	cache.ffnOutT, err = cpuEngine.Add(ctx, ffn2LinOut, b2)
+	cache.ffnOutT, err = eng.Add(ctx, ffn2LinOut, b2)
 	panicOnErr("ffnB2 add", err)
 
 	// Residual: normed + ffnOut.
-	cache.res2, err = cpuEngine.Add(ctx, cache.normed, cache.ffnOutT)
+	cache.res2, err = eng.Add(ctx, cache.normed, cache.ffnOutT)
 	panicOnErr("res2", err)
 
 	// LayerNorm 2 (manual).
 	var outT *tensor.TensorNumeric[float32]
-	outT, cache.ln2NormedInput, cache.ln2Std = layerNormCached(ctx, cache.res2, l.ffnGamma, l.ffnBeta, ns, dm)
+	outT, cache.ln2NormedInput, cache.ln2Std = layerNormCached(ctx, eng, cache.res2, l.ffnGamma, l.ffnBeta, ns, dm)
 
 	return tensorToSlices(outT, ns, dm), cache
 }
@@ -185,7 +188,8 @@ func (m *Model) forwardLayerCached(x [][]float32, l layer) ([][]float32, *cpuLay
 // backwardLayer computes gradients for one transformer layer using Backward
 // methods of Linear, Gelu, and SDPA nodes, plus manual LayerNorm backward.
 // dx is [ns][dm]. Returns gradient w.r.t. input and accumulates into dl.
-func (m *Model) backwardLayer(dx [][]float32, cache *cpuLayerCache, l *layer, dl *layer) [][]float32 {
+// The provided engine is used for all computations.
+func (m *Model) backwardLayer(eng compute.Engine[float32], dx [][]float32, cache *cpuLayerCache, l *layer, dl *layer) [][]float32 {
 	ns := m.config.NSources
 	dm := m.config.DModel
 	nHeads := m.config.NHeads
@@ -194,7 +198,7 @@ func (m *Model) backwardLayer(dx [][]float32, cache *cpuLayerCache, l *layer, dl
 	ctx := context.Background()
 	mode := types.FullBackprop
 
-	nodes, err := buildLayerNodes(l, dm, nHeads)
+	nodes, err := buildLayerNodes(eng, l, dm, nHeads)
 	panicOnErr("backwardLayer: build nodes", err)
 
 	// Replay forward through nodes to populate their internal caches.
@@ -203,14 +207,14 @@ func (m *Model) backwardLayer(dx [][]float32, cache *cpuLayerCache, l *layer, dl
 	dxT := slicesToTensor(dx, ns, dm)
 
 	// ---- LN2 backward (manual) ----
-	dRes2 := layerNormBackward(ctx, dxT, cache.ln2NormedInput, cache.ln2Std,
+	dRes2 := layerNormBackward(ctx, eng, dxT, cache.ln2NormedInput, cache.ln2Std,
 		l.ffnGamma, dl.ffnGamma, dl.ffnBeta, ns, dm)
 
 	// Residual: res2 = normed + ffnOutT → both get dRes2.
 	dFFNOutB := dRes2
 
 	// Bias2 backward.
-	dBias2, err := cpuEngine.ReduceSum(ctx, dFFNOutB, 0, false)
+	dBias2, err := eng.ReduceSum(ctx, dFFNOutB, 0, false)
 	panicOnErr("dBias2", err)
 	addToSlice(dl.ffnB2, dBias2.Data())
 
@@ -223,7 +227,7 @@ func (m *Model) backwardLayer(dx [][]float32, cache *cpuLayerCache, l *layer, dl
 	panicOnErr("GELU backward", err)
 
 	// Bias1 backward.
-	dBias1, err := cpuEngine.ReduceSum(ctx, dFFNPre[0], 0, false)
+	dBias1, err := eng.ReduceSum(ctx, dFFNPre[0], 0, false)
 	panicOnErr("dBias1", err)
 	addToSlice(dl.ffnB1, dBias1.Data())
 
@@ -232,11 +236,11 @@ func (m *Model) backwardLayer(dx [][]float32, cache *cpuLayerCache, l *layer, dl
 	panicOnErr("FFN1 backward", err)
 
 	// Combine: dNormed = dNormedFFN + dRes2 (from residual).
-	dNormed, err := cpuEngine.Add(ctx, dNormedFFN[0], dRes2)
+	dNormed, err := eng.Add(ctx, dNormedFFN[0], dRes2)
 	panicOnErr("dNormed combine", err)
 
 	// ---- LN1 backward (manual) ----
-	dRes1 := layerNormBackward(ctx, dNormed, cache.ln1NormedInput, cache.ln1Std,
+	dRes1 := layerNormBackward(ctx, eng, dNormed, cache.ln1NormedInput, cache.ln1Std,
 		l.lnGamma, dl.lnGamma, dl.lnBeta, ns, dm)
 
 	// Residual: res1 = xIn + projOut → both get dRes1.
@@ -246,17 +250,17 @@ func (m *Model) backwardLayer(dx [][]float32, cache *cpuLayerCache, l *layer, dl
 	dConcat, err := nodes.outProj.Backward(ctx, mode, dProjOut, cache.concat)
 	panicOnErr("out proj backward", err)
 
-	// Reshape dConcat [ns, dm] → [nHeads, ns, headDim].
-	dConcatHeads := reshapeForHeads(dConcat[0], ns, nHeads, headDim)
+	// Reshape dConcat [ns, dm] → [nHeads, ns, headDim] via Engine.
+	dConcatHeads := reshapeForHeadsEngine(eng, dConcat[0], ns, nHeads, headDim)
 
 	// SDPA backward → [dQ, dK, dV] in [nHeads, ns, headDim].
 	dQKV, err := nodes.sdpa.Backward(ctx, mode, dConcatHeads, nil, nil, nil)
 	panicOnErr("SDPA backward", err)
 
-	// Reshape back to [ns, dm].
-	dQ := reshapeFromHeads(dQKV[0], ns, nHeads, headDim)
-	dK := reshapeFromHeads(dQKV[1], ns, nHeads, headDim)
-	dV := reshapeFromHeads(dQKV[2], ns, nHeads, headDim)
+	// Reshape back to [ns, dm] via Engine.
+	dQ := reshapeFromHeadsEngine(eng, dQKV[0], ns, nHeads, headDim)
+	dK := reshapeFromHeadsEngine(eng, dQKV[1], ns, nHeads, headDim)
+	dV := reshapeFromHeadsEngine(eng, dQKV[2], ns, nHeads, headDim)
 
 	// Q/K/V projection backward.
 	dXQ, err := nodes.qProj.Backward(ctx, mode, dQ, cache.xIn)
@@ -267,11 +271,11 @@ func (m *Model) backwardLayer(dx [][]float32, cache *cpuLayerCache, l *layer, dl
 	panicOnErr("V backward", err)
 
 	// Combine: dX = dXQ + dXK + dXV + dRes1 (residual).
-	dXTotal, err := cpuEngine.Add(ctx, dXQ[0], dXK[0])
+	dXTotal, err := eng.Add(ctx, dXQ[0], dXK[0])
 	panicOnErr("dX combine", err)
-	dXTotal, err = cpuEngine.Add(ctx, dXTotal, dXV[0])
+	dXTotal, err = eng.Add(ctx, dXTotal, dXV[0])
 	panicOnErr("dX combine", err)
-	dXTotal, err = cpuEngine.Add(ctx, dXTotal, dRes1)
+	dXTotal, err = eng.Add(ctx, dXTotal, dRes1)
 	panicOnErr("dX combine", err)
 
 	// Extract weight gradients from Linear nodes into dl.
@@ -314,10 +318,11 @@ func replayForward(
 	panicOnErr("replay FFN2", err)
 }
 
-// layerNormCached computes layer normalization using the engine and returns
-// (output, normedInput, std) for use in manual backward.
+// layerNormCached computes layer normalization using the provided engine and
+// returns (output, normedInput, std) for use in manual backward.
 func layerNormCached(
 	ctx context.Context,
+	eng compute.Engine[float32],
 	x *tensor.TensorNumeric[float32],
 	gamma, beta []float32,
 	ns, dm int,
@@ -325,31 +330,31 @@ func layerNormCached(
 	const eps = 1e-5
 
 	// mean = ReduceSum(x, axis=1, keepDims=true) / dm
-	sum, err := cpuEngine.ReduceSum(ctx, x, 1, true)
+	sum, err := eng.ReduceSum(ctx, x, 1, true)
 	panicOnErr("LN sum", err)
-	mean, err := cpuEngine.DivScalar(ctx, sum, float32(dm))
+	mean, err := eng.DivScalar(ctx, sum, float32(dm))
 	panicOnErr("LN mean", err)
 
 	// xMinusMean = x - mean
-	xMM, err := cpuEngine.Sub(ctx, x, mean)
+	xMM, err := eng.Sub(ctx, x, mean)
 	panicOnErr("LN sub", err)
 
 	// var = ReduceSum(xMM^2, axis=1, keepDims=true) / dm
-	sq, err := cpuEngine.Mul(ctx, xMM, xMM)
+	sq, err := eng.Mul(ctx, xMM, xMM)
 	panicOnErr("LN sq", err)
-	varSum, err := cpuEngine.ReduceSum(ctx, sq, 1, true)
+	varSum, err := eng.ReduceSum(ctx, sq, 1, true)
 	panicOnErr("LN varSum", err)
-	variance, err := cpuEngine.DivScalar(ctx, varSum, float32(dm))
+	variance, err := eng.DivScalar(ctx, varSum, float32(dm))
 	panicOnErr("LN var", err)
 
 	// std = sqrt(var + eps)
-	varEps, err := cpuEngine.AddScalar(ctx, variance, eps)
+	varEps, err := eng.AddScalar(ctx, variance, eps)
 	panicOnErr("LN varEps", err)
-	std, err := cpuEngine.Sqrt(ctx, varEps)
+	std, err := eng.Sqrt(ctx, varEps)
 	panicOnErr("LN std", err)
 
 	// normedInput = xMM / std
-	normed, err := cpuEngine.Div(ctx, xMM, std)
+	normed, err := eng.Div(ctx, xMM, std)
 	panicOnErr("LN normed", err)
 
 	// output = normed * gamma + beta
@@ -357,9 +362,9 @@ func layerNormCached(
 	panicOnErr("LN gamma", err)
 	bT, err := tensor.New[float32]([]int{1, dm}, beta)
 	panicOnErr("LN beta", err)
-	scaled, err := cpuEngine.Mul(ctx, normed, gT)
+	scaled, err := eng.Mul(ctx, normed, gT)
 	panicOnErr("LN scale", err)
-	out, err := cpuEngine.Add(ctx, scaled, bT)
+	out, err := eng.Add(ctx, scaled, bT)
 	panicOnErr("LN shift", err)
 
 	return out, normed, std
@@ -367,9 +372,10 @@ func layerNormCached(
 
 // layerNormBackward computes the gradient through layer normalization.
 // Accumulates gamma/beta gradients into dGamma/dBeta slices.
-// Returns dX of shape [ns, dm].
+// Returns dX of shape [ns, dm]. The provided engine is used for all ops.
 func layerNormBackward(
 	ctx context.Context,
+	eng compute.Engine[float32],
 	dOut *tensor.TensorNumeric[float32],
 	normedInput *tensor.TensorNumeric[float32], // cached (x-mean)/std
 	std *tensor.TensorNumeric[float32], // cached sqrt(var+eps) [ns, 1]
@@ -381,19 +387,19 @@ func layerNormBackward(
 	panicOnErr("LN bwd gamma", err)
 
 	// dGamma += sum(dOut * normedInput, axis=0)
-	dOutNorm, err := cpuEngine.Mul(ctx, dOut, normedInput)
+	dOutNorm, err := eng.Mul(ctx, dOut, normedInput)
 	panicOnErr("LN bwd dOutNorm", err)
-	dG, err := cpuEngine.ReduceSum(ctx, dOutNorm, 0, false)
+	dG, err := eng.ReduceSum(ctx, dOutNorm, 0, false)
 	panicOnErr("LN bwd dGamma", err)
 	addToSlice(dGamma, dG.Data())
 
 	// dBeta += sum(dOut, axis=0)
-	dB, err := cpuEngine.ReduceSum(ctx, dOut, 0, false)
+	dB, err := eng.ReduceSum(ctx, dOut, 0, false)
 	panicOnErr("LN bwd dBeta", err)
 	addToSlice(dBeta, dB.Data())
 
 	// dNormed = dOut * gamma
-	dNormed, err := cpuEngine.Mul(ctx, dOut, gT)
+	dNormed, err := eng.Mul(ctx, dOut, gT)
 	panicOnErr("LN bwd dNormed", err)
 
 	n := float32(dm)
@@ -404,63 +410,60 @@ func layerNormBackward(
 	// Where mean() is along the feature axis (axis=1).
 
 	// mean(dNormed, axis=1, keepDims=true)
-	sumDN, err := cpuEngine.ReduceSum(ctx, dNormed, 1, true)
+	sumDN, err := eng.ReduceSum(ctx, dNormed, 1, true)
 	panicOnErr("LN bwd sumDN", err)
-	meanDN, err := cpuEngine.DivScalar(ctx, sumDN, n)
+	meanDN, err := eng.DivScalar(ctx, sumDN, n)
 	panicOnErr("LN bwd meanDN", err)
 
 	// mean(dNormed * normedInput, axis=1, keepDims=true)
-	dNorm2, err := cpuEngine.Mul(ctx, dNormed, normedInput)
+	dNorm2, err := eng.Mul(ctx, dNormed, normedInput)
 	panicOnErr("LN bwd dNorm2", err)
-	sumDN2, err := cpuEngine.ReduceSum(ctx, dNorm2, 1, true)
+	sumDN2, err := eng.ReduceSum(ctx, dNorm2, 1, true)
 	panicOnErr("LN bwd sumDN2", err)
-	meanDN2, err := cpuEngine.DivScalar(ctx, sumDN2, n)
+	meanDN2, err := eng.DivScalar(ctx, sumDN2, n)
 	panicOnErr("LN bwd meanDN2", err)
 
 	// normedInput * mean(dNormed * normedInput)
-	termB, err := cpuEngine.Mul(ctx, normedInput, meanDN2)
+	termB, err := eng.Mul(ctx, normedInput, meanDN2)
 	panicOnErr("LN bwd termB", err)
 
 	// dNormed - meanDN - termB
-	sub1, err := cpuEngine.Sub(ctx, dNormed, meanDN)
+	sub1, err := eng.Sub(ctx, dNormed, meanDN)
 	panicOnErr("LN bwd sub1", err)
-	sub2, err := cpuEngine.Sub(ctx, sub1, termB)
+	sub2, err := eng.Sub(ctx, sub1, termB)
 	panicOnErr("LN bwd sub2", err)
 
 	// dX = sub2 / std
-	dX, err := cpuEngine.Div(ctx, sub2, std)
+	dX, err := eng.Div(ctx, sub2, std)
 	panicOnErr("LN bwd dX", err)
 
 	return dX
 }
 
-// reshapeForHeads converts [ns, dm] → [nHeads, ns, headDim].
-func reshapeForHeads(t *tensor.TensorNumeric[float32], ns, nHeads, headDim int) *tensor.TensorNumeric[float32] {
-	data := t.Data()
-	dm := nHeads * headDim
-	out := make([]float32, nHeads*ns*headDim)
-	for s := range ns {
-		for h := range nHeads {
-			copy(out[h*ns*headDim+s*headDim:], data[s*dm+h*headDim:s*dm+h*headDim+headDim])
-		}
-	}
-	r, err := tensor.New[float32]([]int{nHeads, ns, headDim}, out)
-	panicOnErr("reshapeForHeads", err)
+// reshapeForHeadsEngine converts [ns, dm] → [nHeads, ns, headDim] using
+// Engine Reshape and Transpose, eliminating element-copy loops.
+func reshapeForHeadsEngine(eng compute.Engine[float32], t *tensor.TensorNumeric[float32], ns, nHeads, headDim int) *tensor.TensorNumeric[float32] {
+	ctx := context.Background()
+	// [ns, dm] → [ns, nHeads, headDim]
+	r, err := eng.Reshape(ctx, t, []int{ns, nHeads, headDim}, nil)
+	panicOnErr("reshapeForHeadsEngine: reshape", err)
+	// [ns, nHeads, headDim] → [nHeads, ns, headDim]
+	r, err = eng.Transpose(ctx, r, []int{1, 0, 2})
+	panicOnErr("reshapeForHeadsEngine: transpose", err)
 	return r
 }
 
-// reshapeFromHeads converts [nHeads, ns, headDim] → [ns, dm].
-func reshapeFromHeads(t *tensor.TensorNumeric[float32], ns, nHeads, headDim int) *tensor.TensorNumeric[float32] {
-	data := t.Data()
+// reshapeFromHeadsEngine converts [nHeads, ns, headDim] → [ns, dm] using
+// Engine Transpose and Reshape, eliminating element-copy loops.
+func reshapeFromHeadsEngine(eng compute.Engine[float32], t *tensor.TensorNumeric[float32], ns, nHeads, headDim int) *tensor.TensorNumeric[float32] {
+	ctx := context.Background()
 	dm := nHeads * headDim
-	out := make([]float32, ns*dm)
-	for s := range ns {
-		for h := range nHeads {
-			copy(out[s*dm+h*headDim:], data[h*ns*headDim+s*headDim:h*ns*headDim+s*headDim+headDim])
-		}
-	}
-	r, err := tensor.New[float32]([]int{ns, dm}, out)
-	panicOnErr("reshapeFromHeads", err)
+	// [nHeads, ns, headDim] → [ns, nHeads, headDim]
+	r, err := eng.Transpose(ctx, t, []int{1, 0, 2})
+	panicOnErr("reshapeFromHeadsEngine: transpose", err)
+	// [ns, nHeads, headDim] → [ns, dm]
+	r, err = eng.Reshape(ctx, r, []int{ns, dm}, nil)
+	panicOnErr("reshapeFromHeadsEngine: reshape", err)
 	return r
 }
 

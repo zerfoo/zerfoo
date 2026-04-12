@@ -1,8 +1,12 @@
 package crossasset
 
 import (
+	"context"
 	"math"
 	"testing"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
 )
 
 func defaultConfig() Config {
@@ -63,6 +67,60 @@ func TestCrossAsset_Forward(t *testing.T) {
 		for j, v := range o {
 			if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
 				t.Errorf("source %d, dim %d: non-finite value %v", i, j, v)
+			}
+		}
+	}
+}
+
+// TestCrossAsset_ForwardEngineParity verifies that Forward() produces the same
+// output when using a separate CPU engine as when using the default engine,
+// and that outputs are deterministic across two calls with the same engine.
+func TestCrossAsset_ForwardEngineParity(t *testing.T) {
+	cfg := defaultConfig()
+	m := NewModel(cfg)
+
+	features := make([][]float32, cfg.NSources)
+	for i := range features {
+		features[i] = make([]float32, cfg.FeaturesPerSource)
+		for j := range features[i] {
+			features[i][j] = float32(i*cfg.FeaturesPerSource+j) * 0.1
+		}
+	}
+
+	// Run forward with default (package-level) CPU engine.
+	out1, err := m.Forward(features)
+	if err != nil {
+		t.Fatalf("Forward (default engine): %v", err)
+	}
+
+	// Run forward again — should be deterministic.
+	out2, err := m.Forward(features)
+	if err != nil {
+		t.Fatalf("Forward (second call): %v", err)
+	}
+
+	// Switch to a fresh CPU engine and run forward.
+	freshEngine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	m.SetEngine(freshEngine)
+	out3, err := m.Forward(features)
+	if err != nil {
+		t.Fatalf("Forward (fresh engine): %v", err)
+	}
+
+	// Restore default engine.
+	m.SetEngine(cpuEngine)
+
+	const tol = 1e-4
+	for s := 0; s < cfg.NSources; s++ {
+		for d := 0; d < cfg.DModel; d++ {
+			// Determinism check.
+			if diff := math.Abs(float64(out1[s][d] - out2[s][d])); diff > tol {
+				t.Errorf("determinism: source %d dim %d: diff=%.6f", s, d, diff)
+			}
+			// Engine parity check.
+			if diff := math.Abs(float64(out1[s][d] - out3[s][d])); diff > tol {
+				t.Errorf("engine parity: source %d dim %d: default=%.6f fresh=%.6f diff=%.6f",
+					s, d, out1[s][d], out3[s][d], diff)
 			}
 		}
 	}
@@ -327,16 +385,16 @@ func TestCrossAsset_GradientParity(t *testing.T) {
 	ns := cfg.NSources
 	dm := cfg.DModel
 
-	// Forward: input projection.
+	// Forward: input projection via engine.
 	x := make([][]float32, ns)
 	for s := range ns {
 		x[s] = make([]float32, dm)
-		matVecMul(x[s], m.inputW[s], features[s], cfg.FeaturesPerSource, dm)
-		vecAdd(x[s], m.inputB[s])
+		matVecMulEngine(m.engine, x[s], m.inputW[s], features[s], cfg.FeaturesPerSource, dm)
+		vecAddEngine(m.engine, x[s], m.inputB[s])
 	}
 
 	// Forward through layer with cache.
-	xOut, cache := m.forwardLayerCached(x, m.layers[0])
+	xOut, cache := m.forwardLayerCached(m.engine, x, m.layers[0])
 
 	// Head forward + cross-entropy loss.
 	lossAndGrad := func(xOut [][]float32, label []int) (float64, [][]float32) {
@@ -344,9 +402,9 @@ func TestCrossAsset_GradientParity(t *testing.T) {
 		dx := make([][]float32, ns)
 		for s := range ns {
 			logits := make([]float32, 3)
-			matVecMul(logits, m.headW, xOut[s], dm, 3)
-			vecAdd(logits, m.headB)
-			probs := softmax(logits)
+			matVecMulEngine(m.engine, logits, m.headW, xOut[s], dm, 3)
+			vecAddEngine(m.engine, logits, m.headB)
+			probs := softmaxEngine(m.engine, logits)
 			totalLoss -= math.Log(float64(probs[label[s]]) + 1e-12)
 			dLogits := make([]float32, 3)
 			copy(dLogits, probs)
@@ -368,23 +426,26 @@ func TestCrossAsset_GradientParity(t *testing.T) {
 
 	// Backward through layer.
 	dl := zeroLayer(dm)
-	_ = m.backwardLayer(dxHead, cache, &m.layers[0], &dl)
+	_ = m.backwardLayer(m.engine, dxHead, cache, &m.layers[0], &dl)
 
 	// Helper: compute loss for a perturbed weight.
 	computeLoss := func() float64 {
 		xFwd := make([][]float32, ns)
 		for s := range ns {
 			xFwd[s] = make([]float32, dm)
-			matVecMul(xFwd[s], m.inputW[s], features[s], cfg.FeaturesPerSource, dm)
-			vecAdd(xFwd[s], m.inputB[s])
+			matVecMulEngine(m.engine, xFwd[s], m.inputW[s], features[s], cfg.FeaturesPerSource, dm)
+			vecAddEngine(m.engine, xFwd[s], m.inputB[s])
 		}
-		var err error
+		ctx := context.Background()
+		xT := slicesToTensor(xFwd, ns, dm)
 		for _, l := range m.layers {
-			xFwd, err = m.forwardLayer(xFwd, l)
+			var err error
+			xT, err = m.forwardLayerEngine(ctx, m.engine, xT, l)
 			if err != nil {
-				t.Fatalf("forwardLayer: %v", err)
+				t.Fatalf("forwardLayerEngine: %v", err)
 			}
 		}
+		xFwd = tensorToSlices(xT, ns, dm)
 		loss, _ := lossAndGrad(xFwd, label)
 		return loss
 	}

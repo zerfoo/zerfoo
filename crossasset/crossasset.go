@@ -71,6 +71,10 @@ type Model struct {
 	config Config
 	layers []layer
 
+	// engine is the compute engine used for forward/backward passes.
+	// Defaults to the package-level cpuEngine.
+	engine compute.Engine[float32]
+
 	// Input projection: features_per_source -> d_model, per source.
 	inputW [][]float32 // [NSources][FeaturesPerSource * DModel]
 	inputB [][]float32 // [NSources][DModel]
@@ -82,7 +86,7 @@ type Model struct {
 
 // NewModel creates a new cross-asset attention model with the given configuration.
 func NewModel(config Config) *Model {
-	m := &Model{config: config}
+	m := &Model{config: config, engine: cpuEngine}
 
 	// Input projections per source.
 	m.inputW = make([][]float32, config.NSources)
@@ -105,6 +109,12 @@ func NewModel(config Config) *Model {
 	return m
 }
 
+// SetEngine sets the compute engine used for forward and backward passes.
+// When a GPU engine is provided, all computation happens on the GPU.
+func (m *Model) SetEngine(engine compute.Engine[float32]) {
+	m.engine = engine
+}
+
 // Forward processes features through the cross-attention model.
 // features shape: [n_sources][features_per_source].
 // Returns: [n_sources][d_model].
@@ -120,25 +130,40 @@ func (m *Model) Forward(features [][]float32) ([][]float32, error) {
 
 	ns := m.config.NSources
 	dm := m.config.DModel
+	fps := m.config.FeaturesPerSource
+	ctx := context.Background()
+	eng := m.engine
 
-	// Project each source's features to d_model.
-	x := make([][]float32, ns)
+	// Project each source: [1, fps] @ [fps, dm] + bias → [1, dm].
+	// Each source has its own weight matrix.
+	projected := make([][]float32, ns)
 	for s := 0; s < ns; s++ {
-		x[s] = make([]float32, dm)
-		matVecMul(x[s], m.inputW[s], features[s], m.config.FeaturesPerSource, dm)
-		vecAdd(x[s], m.inputB[s])
+		srcT, err := tensor.New[float32]([]int{1, fps}, features[s])
+		panicOnErr("Forward: src tensor", err)
+		wT, err := tensor.New[float32]([]int{fps, dm}, m.inputW[s])
+		panicOnErr("Forward: input weight tensor", err)
+		bT, err := tensor.New[float32]([]int{1, dm}, m.inputB[s])
+		panicOnErr("Forward: input bias tensor", err)
+
+		result, err := eng.MatMul(ctx, srcT, wT)
+		panicOnErr("Forward: input matmul", err)
+		result, err = eng.Add(ctx, result, bT)
+		panicOnErr("Forward: input add bias", err)
+		projected[s] = make([]float32, dm)
+		copy(projected[s], result.Data())
 	}
 
 	// Apply cross-attention layers.
+	x := slicesToTensor(projected, ns, dm)
 	for _, l := range m.layers {
 		var err error
-		x, err = m.forwardLayer(x, l)
+		x, err = m.forwardLayerEngine(ctx, eng, x, l)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return x, nil
+	return tensorToSlices(x, ns, dm), nil
 }
 
 // AttentionWeights computes the attention weight matrix showing how much each
@@ -157,59 +182,76 @@ func (m *Model) AttentionWeights(features [][]float32) ([][]float32, error) {
 
 	ns := m.config.NSources
 	dm := m.config.DModel
+	fps := m.config.FeaturesPerSource
 	nHeads := m.config.NHeads
 	headDim := dm / nHeads
+	ctx := context.Background()
+	eng := m.engine
 
-	// Project inputs.
-	x := make([][]float32, ns)
+	// Project inputs via engine.
+	projected := make([][]float32, ns)
 	for s := 0; s < ns; s++ {
-		x[s] = make([]float32, dm)
-		matVecMul(x[s], m.inputW[s], features[s], m.config.FeaturesPerSource, dm)
-		vecAdd(x[s], m.inputB[s])
+		srcT, err := tensor.New[float32]([]int{1, fps}, features[s])
+		panicOnErr("AttentionWeights: src tensor", err)
+		wT, err := tensor.New[float32]([]int{fps, dm}, m.inputW[s])
+		panicOnErr("AttentionWeights: weight tensor", err)
+		bT, err := tensor.New[float32]([]int{1, dm}, m.inputB[s])
+		panicOnErr("AttentionWeights: bias tensor", err)
+		result, err := eng.MatMul(ctx, srcT, wT)
+		panicOnErr("AttentionWeights: matmul", err)
+		result, err = eng.Add(ctx, result, bT)
+		panicOnErr("AttentionWeights: add bias", err)
+		projected[s] = make([]float32, dm)
+		copy(projected[s], result.Data())
 	}
+
+	x := slicesToTensor(projected, ns, dm)
 
 	// Use only the first layer for attention weights.
 	l := m.layers[0]
 
-	// Compute Q, K for all sources.
-	qs := make([][]float32, ns)
-	ks := make([][]float32, ns)
-	for s := 0; s < ns; s++ {
-		qs[s] = make([]float32, dm)
-		ks[s] = make([]float32, dm)
-		matVecMul(qs[s], l.qW, x[s], dm, dm)
-		matVecMul(ks[s], l.kW, x[s], dm, dm)
-	}
+	qW, err := tensor.New[float32]([]int{dm, dm}, l.qW)
+	panicOnErr("AttentionWeights: qW tensor", err)
+	kW, err := tensor.New[float32]([]int{dm, dm}, l.kW)
+	panicOnErr("AttentionWeights: kW tensor", err)
 
-	// Average attention weights across all heads.
-	attn := make([][]float32, ns)
-	for i := 0; i < ns; i++ {
-		attn[i] = make([]float32, ns)
-	}
+	// Q, K projections: [ns, dm] @ [dm, dm] = [ns, dm].
+	q, err := eng.MatMul(ctx, x, qW)
+	panicOnErr("AttentionWeights: Q matmul", err)
+	k, err := eng.MatMul(ctx, x, kW)
+	panicOnErr("AttentionWeights: K matmul", err)
 
+	// Reshape and transpose for multi-head: [ns, dm] → [nHeads, ns, headDim].
+	q, err = eng.Reshape(ctx, q, []int{ns, nHeads, headDim}, nil)
+	panicOnErr("AttentionWeights: Q reshape", err)
+	q, err = eng.Transpose(ctx, q, []int{1, 0, 2})
+	panicOnErr("AttentionWeights: Q transpose", err)
+	k, err = eng.Reshape(ctx, k, []int{ns, nHeads, headDim}, nil)
+	panicOnErr("AttentionWeights: K reshape", err)
+	k, err = eng.Transpose(ctx, k, []int{1, 0, 2})
+	panicOnErr("AttentionWeights: K transpose", err)
+
+	// scores = Q @ K^T / sqrt(headDim), shape [nHeads, ns, ns].
+	kT, err := eng.Transpose(ctx, k, []int{0, 2, 1})
+	panicOnErr("AttentionWeights: K^T", err)
+	scores, err := eng.MatMul(ctx, q, kT)
+	panicOnErr("AttentionWeights: scores matmul", err)
 	scale := float32(1.0 / math.Sqrt(float64(headDim)))
+	scores, err = eng.MulScalar(ctx, scores, scale)
+	panicOnErr("AttentionWeights: scale", err)
 
-	for h := 0; h < nHeads; h++ {
-		hStart := h * headDim
-		hEnd := hStart + headDim
+	// Softmax over last dim → [nHeads, ns, ns].
+	weights, err := functional.Softmax(ctx, eng, scores, -1)
+	panicOnErr("AttentionWeights: softmax", err)
 
-		for i := 0; i < ns; i++ {
-			scores := make([]float32, ns)
-			for j := 0; j < ns; j++ {
-				dot := float32(0)
-				for d := hStart; d < hEnd; d++ {
-					dot += qs[i][d] * ks[j][d]
-				}
-				scores[j] = dot * scale
-			}
-			probs := softmax(scores)
-			for j := 0; j < ns; j++ {
-				attn[i][j] += probs[j] / float32(nHeads)
-			}
-		}
-	}
+	// Average over heads.
+	// ReduceSum over axis 0 → [ns, ns], then divide by nHeads.
+	sumW, err := eng.ReduceSum(ctx, weights, 0, false)
+	panicOnErr("AttentionWeights: reduce sum", err)
+	avgW, err := eng.DivScalar(ctx, sumW, float32(nHeads))
+	panicOnErr("AttentionWeights: div scalar", err)
 
-	return attn, nil
+	return tensorToSlices(avgW, ns, ns), nil
 }
 
 // Train trains the model on the given data.
@@ -271,18 +313,19 @@ func (m *Model) Train(data [][][]float32, labels [][]int, tc TrainConfig) error 
 				sample := data[idx]
 				sampleLabels := labels[idx]
 
-				// Forward with caching: input projection.
+				// Forward with caching: input projection via engine.
+				fps := m.config.FeaturesPerSource
 				x := make([][]float32, ns)
 				for s := range ns {
 					x[s] = make([]float32, dm)
-					matVecMul(x[s], m.inputW[s], sample[s], m.config.FeaturesPerSource, dm)
-					vecAdd(x[s], m.inputB[s])
+					matVecMulEngine(m.engine, x[s], m.inputW[s], sample[s], fps, dm)
+					vecAddEngine(m.engine, x[s], m.inputB[s])
 				}
 				// Forward through layers with caches.
 				layerCaches := make([]*cpuLayerCache, len(m.layers))
 				for li := range m.layers {
 					var cache *cpuLayerCache
-					x, cache = m.forwardLayerCached(x, m.layers[li])
+					x, cache = m.forwardLayerCached(m.engine, x, m.layers[li])
 					layerCaches[li] = cache
 				}
 
@@ -291,10 +334,10 @@ func (m *Model) Train(data [][][]float32, labels [][]int, tc TrainConfig) error 
 				dx := make([][]float32, ns)
 				for s := range ns {
 					logits := make([]float32, 3)
-					matVecMul(logits, m.headW, x[s], dm, 3)
-					vecAdd(logits, m.headB)
+					matVecMulEngine(m.engine, logits, m.headW, x[s], dm, 3)
+					vecAddEngine(m.engine, logits, m.headB)
 
-					probs := softmax(logits)
+					probs := softmaxEngine(m.engine, logits)
 
 					dLogits := make([]float32, 3)
 					copy(dLogits, probs)
@@ -326,11 +369,10 @@ func (m *Model) Train(data [][][]float32, labels [][]int, tc TrainConfig) error 
 
 				// Backward through layers in reverse.
 				for li := len(m.layers) - 1; li >= 0; li-- {
-					dx = m.backwardLayer(dx, layerCaches[li], &m.layers[li], &dLayers[li])
+					dx = m.backwardLayer(m.engine, dx, layerCaches[li], &m.layers[li], &dLayers[li])
 				}
 
 				// Input projection backward.
-				fps := m.config.FeaturesPerSource
 				for s := range ns {
 					for d := range fps {
 						for c := range dm {
@@ -368,10 +410,10 @@ func (m *Model) Predict(features [][]float32) ([]int, []float32, error) {
 
 	for s := 0; s < ns; s++ {
 		logits := make([]float32, 3)
-		matVecMul(logits, m.headW, outputs[s], m.config.DModel, 3)
-		vecAdd(logits, m.headB)
+		matVecMulEngine(m.engine, logits, m.headW, outputs[s], m.config.DModel, 3)
+		vecAddEngine(m.engine, logits, m.headB)
 
-		probs := softmax(logits)
+		probs := softmaxEngine(m.engine, logits)
 		bestIdx := 0
 		bestProb := probs[0]
 		for j := 1; j < 3; j++ {
@@ -387,98 +429,199 @@ func (m *Model) Predict(features [][]float32) ([]int, []float32, error) {
 	return dirs, confs, nil
 }
 
-// forwardLayer applies one cross-attention layer.
-func (m *Model) forwardLayer(x [][]float32, l layer) ([][]float32, error) {
+// forwardLayerEngine applies one cross-attention layer using Engine[T] ops.
+// x is a tensor [ns, dm].
+func (m *Model) forwardLayerEngine(
+	ctx context.Context,
+	eng compute.Engine[float32],
+	x *tensor.TensorNumeric[float32],
+	l layer,
+) (*tensor.TensorNumeric[float32], error) {
 	ns := m.config.NSources
 	dm := m.config.DModel
 	nHeads := m.config.NHeads
 	headDim := dm / nHeads
+	ffnDim := dm * 4
 
-	// Compute Q, K, V for all sources.
-	qs := make([][]float32, ns)
-	ks := make([][]float32, ns)
-	vs := make([][]float32, ns)
-	for s := 0; s < ns; s++ {
-		qs[s] = make([]float32, dm)
-		ks[s] = make([]float32, dm)
-		vs[s] = make([]float32, dm)
-		matVecMul(qs[s], l.qW, x[s], dm, dm)
-		matVecMul(ks[s], l.kW, x[s], dm, dm)
-		matVecMul(vs[s], l.vW, x[s], dm, dm)
+	// Weight tensors.
+	qW, err := tensor.New[float32]([]int{dm, dm}, l.qW)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: qW tensor: %w", err)
+	}
+	kW, err := tensor.New[float32]([]int{dm, dm}, l.kW)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: kW tensor: %w", err)
+	}
+	vW, err := tensor.New[float32]([]int{dm, dm}, l.vW)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: vW tensor: %w", err)
 	}
 
-	// Cross-attention: each source attends to ALL sources.
-	attnOut := make([][]float32, ns)
+	// Q, K, V projections: [ns, dm] @ [dm, dm] = [ns, dm].
+	q, err := eng.MatMul(ctx, x, qW)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: Q matmul: %w", err)
+	}
+	k, err := eng.MatMul(ctx, x, kW)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: K matmul: %w", err)
+	}
+	v, err := eng.MatMul(ctx, x, vW)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: V matmul: %w", err)
+	}
+
+	// Reshape for multi-head attention: [ns, dm] → [ns, nHeads, headDim].
+	q, err = eng.Reshape(ctx, q, []int{ns, nHeads, headDim}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: Q reshape: %w", err)
+	}
+	k, err = eng.Reshape(ctx, k, []int{ns, nHeads, headDim}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: K reshape: %w", err)
+	}
+	v, err = eng.Reshape(ctx, v, []int{ns, nHeads, headDim}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: V reshape: %w", err)
+	}
+
+	// Transpose to [nHeads, ns, headDim] for batched attention.
+	q, err = eng.Transpose(ctx, q, []int{1, 0, 2})
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: Q transpose: %w", err)
+	}
+	k, err = eng.Transpose(ctx, k, []int{1, 0, 2})
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: K transpose: %w", err)
+	}
+	v, err = eng.Transpose(ctx, v, []int{1, 0, 2})
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: V transpose: %w", err)
+	}
+
+	// Scaled dot-product attention: scores = Q @ K^T / sqrt(headDim).
+	kT, err := eng.Transpose(ctx, k, []int{0, 2, 1})
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: K^T transpose: %w", err)
+	}
+	scores, err := eng.MatMul(ctx, q, kT)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: attention scores: %w", err)
+	}
 	scale := float32(1.0 / math.Sqrt(float64(headDim)))
+	scores, err = eng.MulScalar(ctx, scores, scale)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: scale scores: %w", err)
+	}
 
-	for i := 0; i < ns; i++ {
-		// Concatenated head outputs.
-		concat := make([]float32, dm)
+	// Softmax over last dimension.
+	weights, err := functional.Softmax(ctx, eng, scores, -1)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: attention softmax: %w", err)
+	}
 
-		for h := 0; h < nHeads; h++ {
-			hStart := h * headDim
-			hEnd := hStart + headDim
+	// Weighted sum: attn = weights @ V, shape [nHeads, ns, headDim].
+	attnOut, err := eng.MatMul(ctx, weights, v)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: attention matmul: %w", err)
+	}
 
-			// Compute attention scores for source i attending to all sources.
-			scores := make([]float32, ns)
-			for j := 0; j < ns; j++ {
-				dot := float32(0)
-				for d := hStart; d < hEnd; d++ {
-					dot += qs[i][d] * ks[j][d]
-				}
-				scores[j] = dot * scale
-			}
+	// Transpose back: [nHeads, ns, headDim] → [ns, nHeads, headDim].
+	attnOut, err = eng.Transpose(ctx, attnOut, []int{1, 0, 2})
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: attn transpose back: %w", err)
+	}
 
-			weights := softmax(scores)
+	// Reshape to [ns, dm].
+	attnOut, err = eng.Reshape(ctx, attnOut, []int{ns, dm}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: attn reshape: %w", err)
+	}
 
-			// Weighted sum of values.
-			for d := hStart; d < hEnd; d++ {
-				val := float32(0)
-				for j := 0; j < ns; j++ {
-					val += weights[j] * vs[j][d]
-				}
-				concat[d] = val
-			}
-		}
-
-		// Output projection.
-		attnOut[i] = make([]float32, dm)
-		matVecMul(attnOut[i], l.outW, concat, dm, dm)
+	// Output projection: [ns, dm] @ [dm, dm] = [ns, dm].
+	outW, err := tensor.New[float32]([]int{dm, dm}, l.outW)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: outW tensor: %w", err)
+	}
+	projOut, err := eng.MatMul(ctx, attnOut, outW)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: output projection: %w", err)
 	}
 
 	// Residual + LayerNorm.
-	normed := make([][]float32, ns)
-	for i := 0; i < ns; i++ {
-		res := make([]float32, dm)
-		for d := 0; d < dm; d++ {
-			res[d] = x[i][d] + attnOut[i][d]
-		}
-		normed[i] = layerNorm(res, l.lnGamma, l.lnBeta)
+	res1, err := eng.Add(ctx, x, projOut)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: residual1: %w", err)
+	}
+	gT1, err := tensor.New[float32]([]int{1, dm}, l.lnGamma)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ln gamma tensor: %w", err)
+	}
+	bT1, err := tensor.New[float32]([]int{1, dm}, l.lnBeta)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ln beta tensor: %w", err)
+	}
+	normed, err := functional.LayerNorm(ctx, eng, res1, gT1, bT1, 1e-5)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: layernorm1: %w", err)
 	}
 
-	// FFN + residual + LayerNorm.
-	out := make([][]float32, ns)
-	ffnHidden := dm * 4
-	for i := 0; i < ns; i++ {
-		// First linear + GELU.
-		hidden := make([]float32, ffnHidden)
-		matVecMul(hidden, l.ffnW1, normed[i], dm, ffnHidden)
-		vecAdd(hidden, l.ffnB1)
-		for d := range hidden {
-			hidden[d] = gelu(hidden[d])
-		}
+	// FFN: Linear1 + bias + GELU.
+	ffnW1, err := tensor.New[float32]([]int{dm, ffnDim}, l.ffnW1)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffnW1 tensor: %w", err)
+	}
+	ffnB1, err := tensor.New[float32]([]int{1, ffnDim}, l.ffnB1)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffnB1 tensor: %w", err)
+	}
+	hidden, err := eng.MatMul(ctx, normed, ffnW1)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffn1 matmul: %w", err)
+	}
+	hidden, err = eng.Add(ctx, hidden, ffnB1)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffn1 add bias: %w", err)
+	}
+	hidden, err = functional.GELU(ctx, eng, cpuOps, hidden)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: gelu: %w", err)
+	}
 
-		// Second linear.
-		ffnOut := make([]float32, dm)
-		matVecMul(ffnOut, l.ffnW2, hidden, ffnHidden, dm)
-		vecAdd(ffnOut, l.ffnB2)
+	// FFN: Linear2 + bias.
+	ffnW2, err := tensor.New[float32]([]int{ffnDim, dm}, l.ffnW2)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffnW2 tensor: %w", err)
+	}
+	ffnB2, err := tensor.New[float32]([]int{1, dm}, l.ffnB2)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffnB2 tensor: %w", err)
+	}
+	ffnOut, err := eng.MatMul(ctx, hidden, ffnW2)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffn2 matmul: %w", err)
+	}
+	ffnOut, err = eng.Add(ctx, ffnOut, ffnB2)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffn2 add bias: %w", err)
+	}
 
-		// Residual + LayerNorm.
-		res := make([]float32, dm)
-		for d := 0; d < dm; d++ {
-			res[d] = normed[i][d] + ffnOut[d]
-		}
-		out[i] = layerNorm(res, l.ffnGamma, l.ffnBeta)
+	// Residual + LayerNorm.
+	res2, err := eng.Add(ctx, normed, ffnOut)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: residual2: %w", err)
+	}
+	gT2, err := tensor.New[float32]([]int{1, dm}, l.ffnGamma)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffn gamma tensor: %w", err)
+	}
+	bT2, err := tensor.New[float32]([]int{1, dm}, l.ffnBeta)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: ffn beta tensor: %w", err)
+	}
+	out, err := functional.LayerNorm(ctx, eng, res2, gT2, bT2, 1e-5)
+	if err != nil {
+		return nil, fmt.Errorf("crossasset: layernorm2: %w", err)
 	}
 
 	return out, nil
@@ -522,105 +665,50 @@ func ones(n int) []float32 {
 	return s
 }
 
-// matVecMul computes dst = W @ src where W is [in, out] stored row-major.
+// matVecMulEngine computes dst = W @ src where W is [in, out] stored row-major.
 // dst must have length out, src must have length in.
-// Arithmetic is routed through the CPU Engine[float32] via MatMul.
-func matVecMul(dst, w, src []float32, in, out int) {
+// Arithmetic is routed through the provided Engine[float32] via MatMul.
+func matVecMulEngine(eng compute.Engine[float32], dst, w, src []float32, in, out int) {
 	ctx := context.Background()
 
-	// src as [1, in] row vector.
 	srcT, err := tensor.New[float32]([]int{1, in}, src)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.matVecMul: src tensor: %v", err))
-	}
+	panicOnErr("matVecMulEngine: src tensor", err)
 
-	// w as [in, out] matrix.
 	wT, err := tensor.New[float32]([]int{in, out}, w)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.matVecMul: weight tensor: %v", err))
-	}
+	panicOnErr("matVecMulEngine: weight tensor", err)
 
-	// result = src @ W, shape [1, out].
-	result, err := cpuEngine.MatMul(ctx, srcT, wT)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.matVecMul: matmul: %v", err))
-	}
+	result, err := eng.MatMul(ctx, srcT, wT)
+	panicOnErr("matVecMulEngine: matmul", err)
 
 	copy(dst, result.Data())
 }
 
-// vecAdd computes dst[i] += src[i].
-func vecAdd(dst, src []float32) {
-	for i := range dst {
-		dst[i] += src[i]
-	}
+// vecAddEngine computes dst[i] += src[i] via the provided engine.
+func vecAddEngine(eng compute.Engine[float32], dst, src []float32) {
+	ctx := context.Background()
+
+	dstT, err := tensor.New[float32]([]int{len(dst)}, dst)
+	panicOnErr("vecAddEngine: dst tensor", err)
+	srcT, err := tensor.New[float32]([]int{len(src)}, src)
+	panicOnErr("vecAddEngine: src tensor", err)
+
+	result, err := eng.Add(ctx, dstT, srcT)
+	panicOnErr("vecAddEngine: add", err)
+
+	copy(dst, result.Data())
 }
 
-// softmax computes softmax over a slice.
-// Arithmetic is routed through the CPU Engine[float32] via functional.Softmax.
-func softmax(x []float32) []float32 {
+// softmaxEngine computes softmax over a slice via the provided engine.
+func softmaxEngine(eng compute.Engine[float32], x []float32) []float32 {
 	ctx := context.Background()
 
 	t, err := tensor.New[float32]([]int{len(x)}, x)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.softmax: tensor: %v", err))
-	}
+	panicOnErr("softmaxEngine: tensor", err)
 
-	result, err := functional.Softmax(ctx, cpuEngine, t, 0)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.softmax: softmax: %v", err))
-	}
+	result, err := functional.Softmax(ctx, eng, t, 0)
+	panicOnErr("softmaxEngine: softmax", err)
 
 	out := make([]float32, len(x))
 	copy(out, result.Data())
 	return out
-}
-
-// layerNorm applies layer normalization.
-// Arithmetic is routed through the CPU Engine[float32] via functional.LayerNorm.
-func layerNorm(x, gamma, beta []float32) []float32 {
-	ctx := context.Background()
-	n := len(x)
-
-	xT, err := tensor.New[float32]([]int{1, n}, x)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.layerNorm: x tensor: %v", err))
-	}
-
-	gT, err := tensor.New[float32]([]int{1, n}, gamma)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.layerNorm: gamma tensor: %v", err))
-	}
-
-	bT, err := tensor.New[float32]([]int{1, n}, beta)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.layerNorm: beta tensor: %v", err))
-	}
-
-	result, err := functional.LayerNorm(ctx, cpuEngine, xT, gT, bT, 1e-5)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.layerNorm: layernorm: %v", err))
-	}
-
-	out := make([]float32, n)
-	copy(out, result.Data())
-	return out
-}
-
-// gelu computes the GELU activation function.
-// Arithmetic is routed through the CPU Engine[float32] via functional.GELU.
-func gelu(x float32) float32 {
-	ctx := context.Background()
-
-	t, err := tensor.New[float32]([]int{1}, []float32{x})
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.gelu: tensor: %v", err))
-	}
-
-	result, err := functional.GELU(ctx, cpuEngine, cpuOps, t)
-	if err != nil {
-		panic(fmt.Sprintf("crossasset.gelu: gelu: %v", err))
-	}
-
-	return result.Data()[0]
 }
