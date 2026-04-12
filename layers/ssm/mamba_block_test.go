@@ -333,6 +333,7 @@ func TestMambaBlock_Parameters(t *testing.T) {
 	expectedNames := map[string]bool{
 		"test_in_proj_weights":  true,
 		"test_conv_weight":      true,
+		"test_conv_bias":        true,
 		"test_x_proj_weights":   true,
 		"test_dt_proj_weights":  true,
 		"test_A":                true,

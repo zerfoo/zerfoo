@@ -1300,7 +1300,67 @@ func TestParity_S4(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_MambaBlock(t *testing.T) {
-	t.Skip("TODO: complex weight wiring needed - MambaBlock has 6+ projection layers (in_proj, x_proj, dt_proj, out_proj, conv_weight, A, D) with intricate dimensions and discretization logic that requires careful mapping from PyTorch's parameter layout")
+	engine, ops := setup()
+	g := loadGolden(t, "ssm_mamba")
+	tol := getFloat(g, "tolerance")
+
+	inputDim := int(getFloat(g, "input_dim"))
+	hiddenDim := int(getFloat(g, "hidden_dim"))
+	stateSize := int(getFloat(g, "state_size"))
+	convKernel := int(getFloat(g, "conv_kernel"))
+	dtRank := 1 // golden file uses rank-1 dt projection
+
+	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+
+	block, err := ssm.NewMambaBlock[float32](
+		"test_mamba", engine, ops,
+		inputDim, hiddenDim, stateSize, dtRank, convKernel,
+	)
+	if err != nil {
+		t.Fatalf("NewMambaBlock: %v", err)
+	}
+
+	// Parameters order:
+	// [0] inProj weights [dModel, 2*dInner]
+	// [1] convWeight [dInner, 1, convKer]
+	// [2] convBias [dInner]
+	// [3] xProj weights [dInner, dtRank+2*dState]
+	// [4] dtProj weights [dtRank, dInner]
+	// [5] A [dInner, dState]
+	// [6] D [dInner]
+	// [7] outProj weights [dInner, dModel]
+	params := block.Parameters()
+	if len(params) != 8 {
+		t.Fatalf("expected 8 params, got %d", len(params))
+	}
+
+	copy(params[0].Value.Data(), getFloat32s(g, "w_in"))
+	copy(params[1].Value.Data(), getFloat32s(g, "conv_weight"))
+	copy(params[2].Value.Data(), getFloat32s(g, "conv_bias"))
+	copy(params[3].Value.Data(), getFloat32s(g, "w_dt"))
+
+	// dtProj: set to all-ones to replicate PyTorch's broadcasting behavior
+	// (golden file uses rank-1 dt without a separate dt->dInner projection)
+	dtProjData := params[4].Value.Data()
+	for i := range dtProjData {
+		dtProjData[i] = 1.0
+	}
+
+	copy(params[5].Value.Data(), getFloat32s(g, "A_log"))
+
+	// D: set to zeros (golden file doesn't use skip connection)
+	dData := params[6].Value.Data()
+	for i := range dData {
+		dData[i] = 0.0
+	}
+
+	copy(params[7].Value.Data(), getFloat32s(g, "w_out"))
+
+	output, err := block.Forward(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	assertClose(t, "mamba_block_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------

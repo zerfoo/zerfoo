@@ -93,6 +93,7 @@ type MambaBlock[T tensor.Numeric] struct {
 
 	// Conv1D weight: [d_inner, 1, conv_ker] (depthwise)
 	convWeight *graph.Parameter[T]
+	convBias   *graph.Parameter[T] // [d_inner] — conv1d bias
 
 	// SSM parameters
 	A *graph.Parameter[T] // [d_inner, d_state] — log-space initialization
@@ -179,6 +180,17 @@ func NewMambaBlock[T tensor.Numeric](
 		return nil, err
 	}
 
+	// Conv1D bias: [d_inner], initialized to zeros
+	convBiasData := make([]T, dInner)
+	convBiasTensor, err := tensor.New[T]([]int{dInner}, convBiasData)
+	if err != nil {
+		return nil, err
+	}
+	convBias, err := graph.NewParameter[T](name+"_conv_bias", convBiasTensor, tensor.New[T])
+	if err != nil {
+		return nil, err
+	}
+
 	// A: initialized as -exp(linspace(log(1), log(d_state), d_inner*d_state))
 	// Simplified: initialize A in log-space as negative values
 	aData := make([]T, dInner*dState)
@@ -244,6 +256,7 @@ func NewMambaBlock[T tensor.Numeric](
 		dtProj:     dtProj,
 		outProj:    outProj,
 		convWeight: convWeight,
+		convBias:   convBias,
 		A:          aParam,
 		D:          dParam,
 		discMode:   ZOH, // default
@@ -334,10 +347,11 @@ func (m *MambaBlock[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNum
 	xConvData := make([]T, batch*seqLen*m.dInner)
 	xFlatData := xTensor.Data()
 	convW := m.convWeight.Value.Data() // [d_inner * conv_ker]
+	convB := m.convBias.Value.Data()   // [d_inner]
 	for b := 0; b < batch; b++ {
 		for s := 0; s < seqLen; s++ {
 			for d := 0; d < m.dInner; d++ {
-				var sum T
+				sum := convB[d]
 				for k := 0; k < m.convKer; k++ {
 					// Causal: look back (left-padded)
 					srcPos := s - (m.convKer - 1) + k
@@ -666,6 +680,29 @@ func (m *MambaBlock[T]) Backward(ctx context.Context, mode types.BackwardMode, o
 		return nil, err
 	}
 
+	// Accumulate conv bias gradient: dBias[d] = sum over batch,seq of dXConv[b,s,d]
+	dXConvData := dXConv.Data()
+	dConvBiasData := make([]T, m.dInner)
+	for b := 0; b < batch; b++ {
+		for s := 0; s < seqLen; s++ {
+			for d := 0; d < m.dInner; d++ {
+				dConvBiasData[d] = m.ops.Add(dConvBiasData[d], dXConvData[(b*seqLen+s)*m.dInner+d])
+			}
+		}
+	}
+	dConvBias, err := tensor.New[T]([]int{m.dInner}, dConvBiasData)
+	if err != nil {
+		return nil, err
+	}
+	if m.convBias.Gradient == nil {
+		m.convBias.Gradient = dConvBias
+	} else {
+		m.convBias.Gradient, err = m.engine.Add(ctx, m.convBias.Gradient, dConvBias)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// 2. Backward through split: reassemble [dx, dz] -> [batch, seq, 2*d_inner]
 	dXPreConvData := dXPreConv.Data()
 	dZData := dZ.Data()
@@ -898,6 +935,7 @@ func (m *MambaBlock[T]) conv1dBackward(
 func (m *MambaBlock[T]) Parameters() []*graph.Parameter[T] {
 	params := m.inProj.Parameters()
 	params = append(params, m.convWeight)
+	params = append(params, m.convBias)
 	params = append(params, m.xProj.Parameters()...)
 	params = append(params, m.dtProj.Parameters()...)
 	params = append(params, m.A)
