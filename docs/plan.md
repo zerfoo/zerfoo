@@ -313,13 +313,13 @@ optimizer_sgd, recurrent_simple_rnn, ssm_mamba, ssm_s4. Wire these first.
 - [x] T86.1.6 MoE (MixtureOfExperts + MoEGate)  Owner: auto  Est: 1h  verifies: [UC-L01]  Done: 2026-04-11
   Full numerical parity test already passing (TestParity_MoE).
 - [x] T86.1.7 LMHead  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
-- [ ] T86.1.8 MIMOMambaBlock  Owner: TBD  Est: 1h  verifies: [UC-L01]
-  SKIP: 7+ projection layers with per-head SSM params, cross-head mixing.
+- [x] T86.1.8 MIMOMambaBlock  Owner: TBD  Est: 1h  verifies: [UC-L01]  DONE 2026-04-12
+  Structural parity test: shape, no NaN/Inf, non-constant output.
 - [x] T86.1.9 AttnRes structural  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
 - [x] T86.1.10 BlockAttnRes residual  Owner: Agent  Est: 30m  verifies: [UC-L01]  Done: 2026-04-11 PR#386
   Full golden parity test with RMSNorm keys and softmax attention weights.
-- [ ] T86.1.11 HModule hierarchical residual  Owner: TBD  Est: 45m  verifies: [UC-L01]
-  SKIP: needs attention graph.Node construction.
+- [x] T86.1.11 HModule hierarchical residual  Owner: TBD  Est: 45m  verifies: [UC-L01]  DONE 2026-04-12
+  Structural parity test using AttentionHead as graph.Node.
 - [x] T86.1.12 PatchEmbed timeseries  Est: 30m  verifies: [UC-L01]  DONE 2026-04-10
 - [x] T86.1.13 GRN (Gated Residual Network)  Owner: Agent  Est: 30m  verifies: [UC-L01]  Done: 2026-04-11 PR#386
   GRN forward matches within 1e-4 (TestParity_GRN).
