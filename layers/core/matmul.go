@@ -227,24 +227,64 @@ func (m *MatMul[T]) Backward(ctx context.Context, mode types.BackwardMode, outpu
 	a := inputs[0]
 	b := inputs[1]
 
-	// Gradient w.r.t. a: outputGradient @ b^T
-	bT, err := m.engine.Transpose(ctx, b, []int{1, 0})
-	if err != nil {
-		return nil, fmt.Errorf("MatMul backward: transpose b: %w", err)
-	}
-	gradA, err := m.engine.MatMul(ctx, outputGradient, bT)
-	if err != nil {
-		return nil, err
+	aShape := a.Shape()
+	bShape := b.Shape()
+
+	// transposeAxes returns axes that swap the last two dimensions.
+	transposeAxes := func(ndim int) []int {
+		axes := make([]int, ndim)
+		for i := range axes {
+			axes[i] = i
+		}
+		axes[ndim-2], axes[ndim-1] = axes[ndim-1], axes[ndim-2]
+		return axes
 	}
 
-	// Gradient w.r.t. b: a^T @ outputGradient
-	aT, err := m.engine.Transpose(ctx, a, []int{1, 0})
-	if err != nil {
-		return nil, fmt.Errorf("MatMul backward: transpose a: %w", err)
-	}
-	gradB, err := m.engine.MatMul(ctx, aT, outputGradient)
-	if err != nil {
-		return nil, err
+	// Detect whether Forward used the transposed-B path (C = A @ B^T).
+	// This mirrors the shape check in Forward: inner dims don't match
+	// but B is 2D and A's last dim equals B's last dim.
+	bTransposedPath := aShape[len(aShape)-1] != bShape[len(bShape)-2] &&
+		len(bShape) == 2 && aShape[len(aShape)-1] == bShape[1]
+
+	var gradA, gradB *tensor.TensorNumeric[T]
+	var err error
+
+	if bTransposedPath {
+		// Forward was: C = A @ B^T
+		// dA = dOut @ B
+		gradA, err = m.engine.MatMul(ctx, outputGradient, b)
+		if err != nil {
+			return nil, err
+		}
+		// dB = dOut^T @ A
+		dOutT, err := m.engine.Transpose(ctx, outputGradient, transposeAxes(len(outputGradient.Shape())))
+		if err != nil {
+			return nil, fmt.Errorf("MatMul backward: failed to transpose outputGradient: %w", err)
+		}
+		gradB, err = m.engine.MatMul(ctx, dOutT, a)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Forward was: C = A @ B
+		// dA = dOut @ B^T
+		bT, err := m.engine.Transpose(ctx, b, transposeAxes(len(bShape)))
+		if err != nil {
+			return nil, fmt.Errorf("MatMul backward: failed to transpose b: %w", err)
+		}
+		gradA, err = m.engine.MatMul(ctx, outputGradient, bT)
+		if err != nil {
+			return nil, err
+		}
+		// dB = A^T @ dOut
+		aT, err := m.engine.Transpose(ctx, a, transposeAxes(len(aShape)))
+		if err != nil {
+			return nil, fmt.Errorf("MatMul backward: failed to transpose a: %w", err)
+		}
+		gradB, err = m.engine.MatMul(ctx, aT, outputGradient)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return []*tensor.TensorNumeric[T]{gradA, gradB}, nil
