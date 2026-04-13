@@ -849,7 +849,7 @@ New code needed:
 
 #### E92.1: GGUF Metadata and Configuration (ModelConfig extensions)
 
-- [ ] T92.1.1 Extend ModelConfig with Gemma 4 fields  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T92.1.1 Extend ModelConfig with Gemma 4 fields  Owner: TBD  Est: 1h  verifies: [infrastructure]  2026-04-13 PR#402
   File: model/gguf/arch.go
   Add fields to ModelConfig:
   - `GlobalNumKVHeads int` -- KV head count for global attention layers (0 = use NumKVHeads)
@@ -864,13 +864,13 @@ New code needed:
   Parse from GGUF metadata keys in the gemma4 architecture detection block.
   AC: `go test ./model/gguf/...` passes. New fields populated from Gemma 4 GGUF files.
 
-- [ ] T92.1.2 Add Gemma 4 architecture detection in GGUF parser  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [x] T92.1.2 Add Gemma 4 architecture detection in GGUF parser  Owner: TBD  Est: 30m  verifies: [infrastructure]  2026-04-13 PR#402
   File: model/gguf/arch.go
   Add `case "gemma4":` block to populate the new fields from GGUF metadata.
   Set defaults: `SlidingWindowPattern = 6` (5 sliding + 1 global), vocabulary=262144.
   AC: Parsing a Gemma 4 GGUF populates all config fields correctly.
 
-- [ ] T92.1.3 Add unit tests for Gemma 4 config parsing  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [x] T92.1.3 Add unit tests for Gemma 4 config parsing  Owner: TBD  Est: 30m  verifies: [infrastructure]  2026-04-13 PR#402
   File: model/gguf/arch_test.go
   Test all 4 variant configs: 31B, 26B-A4B, E4B, E2B.
   AC: Tests pass with correct field values for each variant.
@@ -897,7 +897,7 @@ New code needed:
   `transposeWeight2D`, merged QKV optimization, merged Gate+Up optimization.
   AC: Graph builds without error from Gemma 4 31B tensor fixtures.
 
-- [ ] T92.2.2 Add GELU FFN option to core.FFN  Owner: TBD  Est: 45m  verifies: [UC-001]
+- [x] T92.2.2 Add GELU FFN option to core.FFN  Owner: TBD  Est: 45m  verifies: [UC-001]  2026-04-13 PR#402
   File: layers/core/ffn.go
   Add `WithGELU[T]()` option that uses `gelu_pytorch_tanh` activation instead of SwiGLU.
   The GELU variant has gate+up as a single projection (no separate gate_proj), or
@@ -905,7 +905,7 @@ New code needed:
   to determine the exact FFN structure.
   AC: `go test ./layers/core/...` passes. GELU FFN produces correct output.
 
-- [ ] T92.2.3 Add K=V shared projection support to GQA  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T92.2.3 Add K=V shared projection support to GQA  Owner: TBD  Est: 1h  verifies: [UC-001]  2026-04-13 PR#402
   File: layers/attention/grouped_query_attention.go
   Add `SetKEqV()` method that configures GQA to use the K projection weight for
   both K and V (shared projection). When enabled, the V projection is skipped and
@@ -1042,9 +1042,9 @@ New code needed:
 #### Wave E92-1: Config + GELU + K=V primitives (3 agents)
 All independent -- different files, no shared code.
 
-- [ ] Agent 1: T92.1.1 + T92.1.2 + T92.1.3 (GGUF config extensions)
-- [ ] Agent 2: T92.2.2 (GELU FFN option in layers/core/)
-- [ ] Agent 3: T92.2.3 (K=V support in layers/attention/)
+- [x] Agent 1: T92.1.1 + T92.1.2 + T92.1.3 (GGUF config extensions)  2026-04-13 PR#402
+- [x] Agent 2: T92.2.2 (GELU FFN option in layers/core/)  2026-04-13 PR#402
+- [x] Agent 3: T92.2.3 (K=V support in layers/attention/)  2026-04-13 PR#402
 
 #### Wave E92-2: Dense builder + tests (2 agents)
 Deps: Wave E92-1
