@@ -525,3 +525,207 @@ func TestExtractModelConfig_KVHeadsDefaultsToHeads(t *testing.T) {
 		t.Errorf("NumKVHeads = %d, want 32 (default to NumHeads)", cfg.NumKVHeads)
 	}
 }
+
+func TestExtractModelConfig_Gemma4(t *testing.T) {
+	t.Run("31B dense", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":                          "gemma4",
+			"general.name":                                  "Gemma 4 31B",
+			"gemma4.embedding_length":                       uint32(4096),
+			"gemma4.block_count":                            uint32(48),
+			"gemma4.attention.head_count":                   uint32(32),
+			"gemma4.attention.head_count_kv":                uint32(8),
+			"gemma4.feed_forward_length":                    uint32(16384),
+			"gemma4.context_length":                         uint32(131072),
+			"gemma4.attention.global.head_count_kv":         uint32(4),
+			"gemma4.attention.global.key_length":            uint32(256),
+			"gemma4.attention.sliding.head_count_kv":        uint32(2),
+			"gemma4.attention.sliding.key_length":           uint32(256),
+			"gemma4.attention.k_eq_v":                       "true",
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.Architecture != "gemma4" {
+			t.Errorf("Architecture = %q, want gemma4", cfg.Architecture)
+		}
+		if cfg.GlobalNumKVHeads != 4 {
+			t.Errorf("GlobalNumKVHeads = %d, want 4", cfg.GlobalNumKVHeads)
+		}
+		if cfg.GlobalHeadDim != 256 {
+			t.Errorf("GlobalHeadDim = %d, want 256", cfg.GlobalHeadDim)
+		}
+		if cfg.SlidingNumKVHeads != 2 {
+			t.Errorf("SlidingNumKVHeads = %d, want 2", cfg.SlidingNumKVHeads)
+		}
+		if cfg.SlidingHeadDim != 256 {
+			t.Errorf("SlidingHeadDim = %d, want 256", cfg.SlidingHeadDim)
+		}
+		if !cfg.AttentionKEqV {
+			t.Error("AttentionKEqV = false, want true")
+		}
+		// Gemma 4 defaults.
+		if cfg.SlidingWindowPattern != 6 {
+			t.Errorf("SlidingWindowPattern = %d, want 6 (default)", cfg.SlidingWindowPattern)
+		}
+		if cfg.VocabSize != 262144 {
+			t.Errorf("VocabSize = %d, want 262144 (default)", cfg.VocabSize)
+		}
+	})
+
+	t.Run("26B-A4B MoE", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":                          "gemma4",
+			"gemma4.embedding_length":                       uint32(3072),
+			"gemma4.block_count":                            uint32(36),
+			"gemma4.attention.head_count":                   uint32(24),
+			"gemma4.attention.head_count_kv":                uint32(8),
+			"gemma4.feed_forward_length":                    uint32(12288),
+			"gemma4.context_length":                         uint32(131072),
+			"gemma4.attention.global.head_count_kv":         uint32(4),
+			"gemma4.attention.global.key_length":            uint32(256),
+			"gemma4.attention.sliding.head_count_kv":        uint32(2),
+			"gemma4.attention.sliding.key_length":           uint32(256),
+			"gemma4.attention.k_eq_v":                       "true",
+			"gemma4.expert_count":                           uint32(128),
+			"gemma4.expert_used_count":                      uint32(8),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.GlobalNumKVHeads != 4 {
+			t.Errorf("GlobalNumKVHeads = %d, want 4", cfg.GlobalNumKVHeads)
+		}
+		if !cfg.AttentionKEqV {
+			t.Error("AttentionKEqV = false, want true")
+		}
+		if cfg.NumExperts != 128 {
+			t.Errorf("NumExperts = %d, want 128", cfg.NumExperts)
+		}
+		if cfg.NumExpertsPerToken != 8 {
+			t.Errorf("NumExpertsPerToken = %d, want 8", cfg.NumExpertsPerToken)
+		}
+	})
+
+	t.Run("E4B edge", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":                   "gemma4",
+			"gemma4.embedding_length":                uint32(2048),
+			"gemma4.block_count":                     uint32(24),
+			"gemma4.attention.head_count":            uint32(16),
+			"gemma4.attention.head_count_kv":         uint32(4),
+			"gemma4.feed_forward_length":             uint32(8192),
+			"gemma4.context_length":                  uint32(8192),
+			"gemma4.ple.hidden_size":                 uint32(256),
+			"gemma4.kv_shared_layers":                uint32(4),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.PLEHiddenSize != 256 {
+			t.Errorf("PLEHiddenSize = %d, want 256", cfg.PLEHiddenSize)
+		}
+		if cfg.KVSharedLayers != 4 {
+			t.Errorf("KVSharedLayers = %d, want 4", cfg.KVSharedLayers)
+		}
+		if cfg.DoubleWideMLP {
+			t.Error("DoubleWideMLP = true, want false for E4B")
+		}
+	})
+
+	t.Run("E2B edge", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":                   "gemma4",
+			"gemma4.embedding_length":                uint32(1536),
+			"gemma4.block_count":                     uint32(18),
+			"gemma4.attention.head_count":            uint32(12),
+			"gemma4.attention.head_count_kv":         uint32(4),
+			"gemma4.feed_forward_length":             uint32(6144),
+			"gemma4.context_length":                  uint32(8192),
+			"gemma4.ple.hidden_size":                 uint32(128),
+			"gemma4.kv_shared_layers":                uint32(4),
+			"gemma4.mlp.double_wide":                 "true",
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.PLEHiddenSize != 128 {
+			t.Errorf("PLEHiddenSize = %d, want 128", cfg.PLEHiddenSize)
+		}
+		if cfg.KVSharedLayers != 4 {
+			t.Errorf("KVSharedLayers = %d, want 4", cfg.KVSharedLayers)
+		}
+		if !cfg.DoubleWideMLP {
+			t.Error("DoubleWideMLP = false, want true for E2B")
+		}
+		// Verify defaults still apply.
+		if cfg.SlidingWindowPattern != 6 {
+			t.Errorf("SlidingWindowPattern = %d, want 6 (default)", cfg.SlidingWindowPattern)
+		}
+		if cfg.VocabSize != 262144 {
+			t.Errorf("VocabSize = %d, want 262144 (default)", cfg.VocabSize)
+		}
+	})
+
+	t.Run("k_eq_v as uint32", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":         "gemma4",
+			"gemma4.embedding_length":      uint32(4096),
+			"gemma4.block_count":           uint32(48),
+			"gemma4.attention.head_count":  uint32(32),
+			"gemma4.attention.k_eq_v":      uint32(1),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if !cfg.AttentionKEqV {
+			t.Error("AttentionKEqV = false, want true (from uint32)")
+		}
+	})
+
+	t.Run("double_wide as uint32", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":         "gemma4",
+			"gemma4.embedding_length":      uint32(1536),
+			"gemma4.block_count":           uint32(18),
+			"gemma4.attention.head_count":  uint32(12),
+			"gemma4.mlp.double_wide":       uint32(1),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if !cfg.DoubleWideMLP {
+			t.Error("DoubleWideMLP = false, want true (from uint32)")
+		}
+	})
+
+	t.Run("explicit vocab overrides default", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":         "gemma4",
+			"gemma4.embedding_length":      uint32(4096),
+			"gemma4.block_count":           uint32(48),
+			"gemma4.attention.head_count":  uint32(32),
+			"gemma4.vocab_size":            uint32(300000),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.VocabSize != 300000 {
+			t.Errorf("VocabSize = %d, want 300000 (explicit overrides default)", cfg.VocabSize)
+		}
+	})
+}
