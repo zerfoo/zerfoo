@@ -999,12 +999,12 @@ New code needed:
 
 #### E92.5: Integration Testing and Validation
 
-- [ ] T92.5.1 Download Gemma 4 E2B Q4_K_M GGUF for CI testing  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [ ] T92.5.1 Download Gemma 4 E2B Q4_K_M GGUF for CI testing  Owner: TBD  Est: 30m  verifies: [infrastructure]  BLOCKED: awaiting public Gemma 4 GGUF availability
   Smallest variant (~1.5GB Q4_K_M) for fast CI testing.
   Store path in test as `GEMMA4_GGUF_PATH` env var (skip if not set).
   AC: GGUF file available on dev machine.
 
-- [ ] T92.5.2 End-to-end inference test: load GGUF + generate text  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [ ] T92.5.2 End-to-end inference test: load GGUF + generate text  Owner: TBD  Est: 1h  verifies: [UC-001]  BLOCKED: depends on T92.5.1
   Deps: T92.2.1, T92.5.1
   File: tests/integration/gemma4_test.go
   Load Gemma 4 E2B GGUF, generate 50 tokens, verify coherent output.
@@ -1018,12 +1018,12 @@ New code needed:
   AC: Results documented in docs/devlog.md. Target: within 20% of Ollama.
   BLOCKED: same purego cross-compile blocker as T86.5.8.
 
-- [ ] T92.5.4 Add Gemma 4 to supported architectures table in CLAUDE.md  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T92.5.4 Add Gemma 4 to supported architectures table in CLAUDE.md  Owner: TBD  Est: 15m  verifies: [infrastructure]  2026-04-13
   Deps: T92.5.2
   Update the "Supported Architectures" table.
   AC: Table includes Gemma 4 with status and features noted.
 
-- [ ] T92.5.5 Run full test suite: go test ./...  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T92.5.5 Run full test suite: go test ./...  Owner: TBD  Est: 15m  verifies: [infrastructure]  2026-04-13
   Deps: all E92 tasks
   AC: All tests pass including existing architecture tests (no regressions).
 
