@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"reflect"
 	"testing"
 
@@ -238,4 +240,77 @@ func TestFFN_WithSwiGLUAndNoBias(t *testing.T) {
 	testutils.AssertNoError(t, err, "Forward with SwiGLU+NoBias")
 	testutils.AssertNotNil(t, output, "Output should not be nil")
 	testutils.AssertEqual(t, output.Shape()[1], 4, "Output dim should be 4")
+}
+
+// TestFFN_WithGELU tests that GELU FFN builds and produces valid output.
+func TestFFN_WithGELU(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+	ops := &numeric.Float32Ops{}
+
+	ffn, err := NewFFN[float32]("test_gelu", engine, ops, 4, 8, 4,
+		WithGELU[float32](),
+		WithFFNNoBias[float32](),
+	)
+	testutils.AssertNoError(t, err, "NewFFN with GELU")
+	testutils.AssertNotNil(t, ffn, "FFN should not be nil")
+
+	input, _ := tensor.New[float32]([]int{1, 4}, []float32{1, 2, 3, 4})
+	output, err := ffn.Forward(context.Background(), input)
+	testutils.AssertNoError(t, err, "Forward with GELU")
+	testutils.AssertNotNil(t, output, "Output should not be nil")
+	testutils.AssertEqual(t, output.Shape()[1], 4, "Output dim should be 4")
+
+	// Verify no NaN values in output.
+	for i, v := range output.Data() {
+		testutils.AssertTrue(t, !math.IsNaN(float64(v)), fmt.Sprintf("output[%d] is NaN", i))
+	}
+}
+
+// TestFFN_GELUDiffersFromSwiGLU verifies GELU FFN produces different output than SwiGLU FFN.
+func TestFFN_GELUDiffersFromSwiGLU(t *testing.T) {
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+	ops := &numeric.Float64Ops{}
+
+	inputDim, hiddenDim, outputDim := 4, 8, 4
+
+	// Create SwiGLU FFN.
+	swigluFFN, err := NewFFN[float64]("swiglu", engine, ops, inputDim, hiddenDim, outputDim,
+		WithFFNNoBias[float64](),
+	)
+	testutils.AssertNoError(t, err, "NewFFN SwiGLU")
+
+	// Create GELU FFN.
+	geluFFN, err := NewFFN[float64]("gelu", engine, ops, inputDim, hiddenDim, outputDim,
+		WithGELU[float64](),
+		WithFFNNoBias[float64](),
+	)
+	testutils.AssertNoError(t, err, "NewFFN GELU")
+
+	// Copy weights from SwiGLU to GELU so the only difference is the activation.
+	geluFFN.w1.linear.weights.Value = swigluFFN.w1.linear.weights.Value
+	geluFFN.w2.linear.weights.Value = swigluFFN.w2.linear.weights.Value
+	geluFFN.w3.linear.weights.Value = swigluFFN.w3.linear.weights.Value
+
+	input, _ := tensor.New[float64]([]int{1, inputDim}, []float64{1, 2, 3, 4})
+
+	ctx := context.Background()
+	swigluOut, err := swigluFFN.Forward(ctx, input)
+	testutils.AssertNoError(t, err, "SwiGLU forward")
+
+	geluOut, err := geluFFN.Forward(ctx, input)
+	testutils.AssertNoError(t, err, "GELU forward")
+
+	// Outputs should differ because different activations are used.
+	swigluData := swigluOut.Data()
+	geluData := geluOut.Data()
+	testutils.AssertEqual(t, len(swigluData), len(geluData), "Output lengths should match")
+
+	differs := false
+	for i := range swigluData {
+		if math.Abs(swigluData[i]-geluData[i]) > 1e-10 {
+			differs = true
+			break
+		}
+	}
+	testutils.AssertTrue(t, differs, "GELU and SwiGLU outputs should differ")
 }

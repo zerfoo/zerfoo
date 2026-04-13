@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -16,6 +17,7 @@ import (
 type FFN[T tensor.Numeric] struct {
 	name         string
 	noBias       bool
+	useGELU      bool
 	w1           *Dense[T]
 	w2           *Dense[T]
 	w3           *Dense[T]
@@ -39,6 +41,14 @@ type FFNOpt[T tensor.Numeric] func(*FFN[T])
 func WithSwiGLU[T tensor.Numeric]() FFNOpt[T] {
 	return func(f *FFN[T]) {
 		f.swiglu = activations.NewSwiGLU[T](f.w1.linear.engine, f.w1.linear.ops)
+	}
+}
+
+// WithGELU enables GELU activation instead of SwiGLU.
+// The FFN computes: output = W2(GELU(W1(x)) * W3(x))
+func WithGELU[T tensor.Numeric]() FFNOpt[T] {
+	return func(f *FFN[T]) {
+		f.useGELU = true
 	}
 }
 
@@ -187,33 +197,46 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	f.w1Output = w1Output // Cache for backward pass
 	f.w3Output = w3Output // Cache for backward pass
 
-	// Try fused GPU SwiGLU path: single kernel replaces Concat + Split + sigmoid + Mul + Mul.
-	// Unwrap EngineProxy to detect the real engine type.
-	var swiGLUOutput *tensor.TensorNumeric[T]
-	realEngine := compute.Engine[T](f.w1.linear.engine)
-	if proxy, ok := f.w1.linear.engine.(*compute.EngineProxy[T]); ok {
-		realEngine = proxy.Real()
-	}
-	if provider, ok := realEngine.(compute.FusedSwiGLUProvider[T]); ok {
-		out, err := provider.GPUFusedSwiGLU(w1Output, w3Output)
-		if err == nil {
-			swiGLUOutput = out
+	var activationOutput *tensor.TensorNumeric[T]
+	if f.useGELU {
+		// GELU path: output = GELU(W1(x)) * W3(x)
+		geluOutput, geluErr := geluForward(ctx, f.w1.linear.engine, f.w1.linear.ops, w1Output)
+		if geluErr != nil {
+			return nil, fmt.Errorf("GELU activation: %w", geluErr)
+		}
+		gated, mulErr := f.w1.linear.engine.Mul(ctx, geluOutput, w3Output)
+		if mulErr != nil {
+			return nil, fmt.Errorf("GELU gate multiply: %w", mulErr)
+		}
+		activationOutput = gated
+	} else {
+		// SwiGLU path: try fused GPU path first, fall back to CPU.
+		// Unwrap EngineProxy to detect the real engine type.
+		realEngine := compute.Engine[T](f.w1.linear.engine)
+		if proxy, ok := f.w1.linear.engine.(*compute.EngineProxy[T]); ok {
+			realEngine = proxy.Real()
+		}
+		if provider, ok := realEngine.(compute.FusedSwiGLUProvider[T]); ok {
+			out, fusedErr := provider.GPUFusedSwiGLU(w1Output, w3Output)
+			if fusedErr == nil {
+				activationOutput = out
+			}
+		}
+		if activationOutput == nil {
+			swigluInput, concatErr := f.w1.linear.engine.Concat(ctx, []*tensor.TensorNumeric[T]{w1Output, w3Output}, -1)
+			if concatErr != nil {
+				return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU input: %w", concatErr)
+			}
+			swigluOut, swigluErr := f.swiglu.Forward(ctx, swigluInput)
+			if swigluErr != nil {
+				return nil, swigluErr
+			}
+			activationOutput = swigluOut
 		}
 	}
-	if swiGLUOutput == nil {
-		swigluInput, err := f.w1.linear.engine.Concat(ctx, []*tensor.TensorNumeric[T]{w1Output, w3Output}, -1)
-		if err != nil {
-			return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU input: %w", err)
-		}
+	f.swiGLUOutput = activationOutput // Cache for backward pass
 
-		swiGLUOutput, err = f.swiglu.Forward(ctx, swigluInput)
-		if err != nil {
-			return nil, err
-		}
-	}
-	f.swiGLUOutput = swiGLUOutput // Cache for backward pass
-
-	w2Output, err := f.w2.Forward(ctx, swiGLUOutput)
+	w2Output, err := f.w2.Forward(ctx, activationOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -307,6 +330,44 @@ func (f *FFN[T]) Parameters() []*graph.Parameter[T] {
 		params = append(params, p)
 	}
 	return params
+}
+
+// geluForward applies GELU activation using engine primitives.
+// GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+func geluForward[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T], x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	x2, err := engine.Mul(ctx, x, x)
+	if err != nil {
+		return nil, err
+	}
+	x3, err := engine.Mul(ctx, x2, x)
+	if err != nil {
+		return nil, err
+	}
+	cubicTerm, err := engine.MulScalar(ctx, x3, ops.FromFloat64(0.044715))
+	if err != nil {
+		return nil, err
+	}
+	inner, err := engine.Add(ctx, x, cubicTerm)
+	if err != nil {
+		return nil, err
+	}
+	scaled, err := engine.MulScalar(ctx, inner, ops.FromFloat64(math.Sqrt(2/math.Pi)))
+	if err != nil {
+		return nil, err
+	}
+	tanhResult, err := engine.Tanh(ctx, scaled)
+	if err != nil {
+		return nil, err
+	}
+	onePlusTanh, err := engine.AddScalar(ctx, tanhResult, ops.One())
+	if err != nil {
+		return nil, err
+	}
+	xTimesOnePlusTanh, err := engine.Mul(ctx, x, onePlusTanh)
+	if err != nil {
+		return nil, err
+	}
+	return engine.MulScalar(ctx, xTimesOnePlusTanh, ops.FromFloat64(0.5))
 }
 
 // splitMergedGateUp splits a merged gate+up output into separate gate and up tensors.
