@@ -8,6 +8,7 @@ func init() {
 	RegisterArchitecture("gemma3", buildGemmaGraph)
 	RegisterArchitecture("gemma4", buildGemma4Graph)
 	RegisterArchitecture("gemma4moe", buildGemma4MoEGraph)
+	RegisterArchitecture("gemma4e", buildGemma4EdgeGraph)
 	RegisterArchitecture("qwen2", buildQwenGraph)
 	RegisterArchitecture("mistral", buildMistralGraph)
 	RegisterArchitecture("phi", buildPhiGraph)
