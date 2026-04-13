@@ -197,7 +197,8 @@ See docs/adr/084-extract-crossasset-to-wolf.md.
   AC: PR created, CI passes, merged.
   Deps: T91.4.1 (wolf PR must merge first so wolf has the package before zerfoo removes it).
 
-- [ ] T91.4.3 Update wolf go.mod to use released zerfoo v3  Owner: TBD  Est: 15m  verifies: [infrastructure]  SUPERSEDED: tags being reset to v1.x.x per issue #393
+- [x] T91.4.3 Update wolf go.mod to use released zerfoo v1.48.0  Owner: TBD  Est: 15m  verifies: [infrastructure]  DONE 2026-04-13
+  Updated from pseudo-version v1.46.1-0.20260412... to v1.48.0. Build + vet pass. Pre-existing test failures unrelated to upgrade.
   After zerfoo v3.0.0 is released, update wolf's go.mod to import
   `github.com/zerfoo/zerfoo/v3` (Go module v3 path).
   Note: This changes ALL zerfoo imports in wolf to use the /v3 path.
