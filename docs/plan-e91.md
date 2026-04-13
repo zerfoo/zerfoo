@@ -130,87 +130,87 @@ See docs/adr/084-extract-crossasset-to-wolf.md.
 
 ### E91.1: Copy crossasset to wolf
 
-- [ ] T91.1.1 Create `crossasset/` directory in wolf repo  Owner: TBD  Est: 15m  verifies: [UC-EXT-01]
+- [x] T91.1.1 Create `crossasset/` directory in wolf repo  Owner: TBD  Est: 15m  verifies: [UC-EXT-01]  DONE 2026-04-12
   Copy all 10 files from zerfoo/crossasset/ to wolf/crossasset/.
   Update package imports: replace `github.com/zerfoo/zerfoo/crossasset` references
   within the package itself (if any internal cross-references exist).
   AC: `go build ./crossasset/...` passes in wolf.
 
-- [ ] T91.1.2 Copy crossasset_engine.go adapter to wolf  Owner: TBD  Est: 15m  verifies: [UC-EXT-01]
+- [x] T91.1.2 Copy crossasset_engine.go adapter to wolf  Owner: TBD  Est: 15m  verifies: [UC-EXT-01]  DONE 2026-04-12
   Copy `timeseries/crossasset_engine.go` to an appropriate location in wolf
   (suggested: `wolf/crossasset/engine.go` or `wolf/internal/crossasset/engine.go`).
   Update the import from `github.com/zerfoo/zerfoo/crossasset` to the wolf-local path.
   AC: File compiles in wolf.
 
-- [ ] T91.1.3 Run crossasset tests in wolf  Owner: TBD  Est: 15m  verifies: [UC-EXT-01]
+- [x] T91.1.3 Run crossasset tests in wolf  Owner: TBD  Est: 15m  verifies: [UC-EXT-01]  DONE 2026-04-12
   Run `go test ./crossasset/... -count=1 -race -timeout 120s`.
   AC: All tests pass (GPU tests skip on CPU-only machines).
 
 ### E91.2: Update wolf imports
 
-- [ ] T91.2.1 Update cmd/train-crossasset/main.go imports  Owner: TBD  Est: 15m  verifies: [UC-EXT-02]
+- [x] T91.2.1 Update cmd/train-crossasset/main.go imports  Owner: TBD  Est: 15m  verifies: [UC-EXT-02]  DONE 2026-04-12
   Change `github.com/zerfoo/zerfoo/crossasset` to `github.com/feza-ai/wolf/crossasset`.
   AC: `go build ./cmd/train-crossasset/...` passes.
 
-- [ ] T91.2.2 Update internal/model/crossasset.go imports  Owner: TBD  Est: 15m  verifies: [UC-EXT-02]
+- [x] T91.2.2 Update internal/model/crossasset.go imports  Owner: TBD  Est: 15m  verifies: [UC-EXT-02]  DONE 2026-04-12
   Change `github.com/zerfoo/zerfoo/crossasset` to `github.com/feza-ai/wolf/crossasset`.
   AC: `go build ./internal/model/...` passes.
 
-- [ ] T91.2.3 Run full wolf test suite  Owner: TBD  Est: 30m  verifies: [UC-EXT-02]
+- [x] T91.2.3 Run full wolf test suite  Owner: TBD  Est: 30m  verifies: [UC-EXT-02]  DONE 2026-04-12
   Run `go test ./... -count=1 -timeout 300s`.
   AC: All tests pass. No references to `github.com/zerfoo/zerfoo/crossasset` remain.
 
-- [ ] T91.2.4 Run go vet and linter in wolf  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T91.2.4 Run go vet and linter in wolf  Owner: TBD  Est: 15m  verifies: [infrastructure]  DONE 2026-04-12
   AC: Zero errors, zero warnings.
 
 ### E91.3: Remove crossasset from zerfoo
 
-- [ ] T91.3.1 Delete crossasset/ directory from zerfoo  Owner: TBD  Est: 15m  verifies: [UC-EXT-03]
+- [x] T91.3.1 Delete crossasset/ directory from zerfoo  Owner: TBD  Est: 15m  verifies: [UC-EXT-03]  DONE 2026-04-13
   Remove the entire `crossasset/` directory.
   AC: Directory no longer exists.
 
-- [ ] T91.3.2 Delete timeseries/crossasset_engine.go from zerfoo  Owner: TBD  Est: 15m  verifies: [UC-EXT-03]
+- [x] T91.3.2 Delete timeseries/crossasset_engine.go from zerfoo  Owner: TBD  Est: 15m  verifies: [UC-EXT-03]  DONE 2026-04-13
   Remove the adapter file.
   AC: File no longer exists.
 
-- [ ] T91.3.3 Remove crossasset references from zerfoo code  Owner: TBD  Est: 30m  verifies: [UC-EXT-03]
+- [x] T91.3.3 Remove crossasset references from zerfoo code  Owner: TBD  Est: 30m  verifies: [UC-EXT-03]  DONE 2026-04-13
   Grep for any remaining `crossasset` references in Go source files.
   Fix any compilation errors from removed imports.
   AC: `grep -rn crossasset --include="*.go" .` returns zero results (excluding docs/adr/).
 
-- [ ] T91.3.4 Run full zerfoo test suite  Owner: TBD  Est: 30m  verifies: [UC-EXT-03]
+- [x] T91.3.4 Run full zerfoo test suite  Owner: TBD  Est: 30m  verifies: [UC-EXT-03]  DONE 2026-04-13
   Run `go build ./...` and `go test ./... -count=1 -timeout 120s`.
   AC: Build and all tests pass.
 
-- [ ] T91.3.5 Run go vet and linter in zerfoo  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T91.3.5 Run go vet and linter in zerfoo  Owner: TBD  Est: 15m  verifies: [infrastructure]  DONE 2026-04-13
   AC: Zero errors.
 
 ### E91.4: Ship and release
 
-- [ ] T91.4.1 Commit and push wolf changes  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T91.4.1 Commit and push wolf changes  Owner: TBD  Est: 15m  verifies: [infrastructure]  DONE 2026-04-12
   Create PR in wolf repo with the extracted crossasset package.
   AC: PR created, CI passes, merged.
 
-- [ ] T91.4.2 Commit and push zerfoo changes  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T91.4.2 Commit and push zerfoo changes  Owner: TBD  Est: 15m  verifies: [infrastructure]  DONE 2026-04-13
   Create PR in zerfoo repo removing crossasset.
   Use conventional commit with breaking change: `feat(crossasset)!: extract to feza-ai/wolf`.
   AC: PR created, CI passes, merged.
   Deps: T91.4.1 (wolf PR must merge first so wolf has the package before zerfoo removes it).
 
-- [ ] T91.4.3 Update wolf go.mod to use released zerfoo v3  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [ ] T91.4.3 Update wolf go.mod to use released zerfoo v3  Owner: TBD  Est: 15m  verifies: [infrastructure]  SUPERSEDED: tags being reset to v1.x.x per issue #393
   After zerfoo v3.0.0 is released, update wolf's go.mod to import
   `github.com/zerfoo/zerfoo/v3` (Go module v3 path).
   Note: This changes ALL zerfoo imports in wolf to use the /v3 path.
   AC: `go build ./...` passes in wolf with v3 import paths.
   Deps: T91.4.2.
 
-- [ ] T91.4.4 Cut zerfoo v3.0.0 release  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T91.4.4 Cut zerfoo v3.0.0 release  Owner: TBD  Est: 15m  verifies: [infrastructure]  DONE 2026-04-13 (v3.0.0 released; will be retagged per #393)
   Merge release-please PR that bumps to v3.0.0.
   Verify GitHub release is created.
   AC: `gh release view v3.0.0` succeeds.
   Deps: T91.4.2.
 
-- [ ] T91.4.5 Update plan.md  Owner: TBD  Est: 15m  delivers: [updated plan reflecting extraction]
+- [x] T91.4.5 Update plan.md  Owner: TBD  Est: 15m  delivers: [updated plan reflecting extraction]  DONE 2026-04-13
   Mark E91 complete. Update E60, E68, E90 descriptions to note crossasset
   was extracted to wolf. Update status summary.
   AC: Plan reflects current state.
@@ -231,18 +231,18 @@ See docs/adr/084-extract-crossasset-to-wolf.md.
 #### Wave 1: Copy to wolf (1 agent)
 All copy tasks are sequential within one repo, best handled by one agent.
 
-- [ ] Agent 1: T91.1.1 + T91.1.2 + T91.1.3 (copy crossasset to wolf, run tests)
+- [x] Agent 1: T91.1.1 + T91.1.2 + T91.1.3 (copy crossasset to wolf, run tests)  DONE 2026-04-12
 
 #### Wave 2: Update imports + remove from zerfoo (2 agents)
 These are in different repos, fully independent.
 
-- [ ] Agent 1: T91.2.1 + T91.2.2 + T91.2.3 + T91.2.4 (update wolf imports, run tests)
-- [ ] Agent 2: T91.3.1 + T91.3.2 + T91.3.3 + T91.3.4 + T91.3.5 (remove from zerfoo, run tests)
+- [x] Agent 1: T91.2.1 + T91.2.2 + T91.2.3 + T91.2.4 (update wolf imports, run tests)  DONE 2026-04-12
+- [x] Agent 2: T91.3.1 + T91.3.2 + T91.3.3 + T91.3.4 + T91.3.5 (remove from zerfoo, run tests)  DONE 2026-04-13
 
 #### Wave 3: Ship (1 agent)
 Sequential: wolf PR first, then zerfoo PR, then release.
 
-- [ ] Agent 1: T91.4.1 + T91.4.2 + T91.4.3 + T91.4.4 + T91.4.5
+- [x] Agent 1: T91.4.1 + T91.4.2 + T91.4.3 + T91.4.4 + T91.4.5  DONE 2026-04-13
 
 ## Timeline and Milestones
 
