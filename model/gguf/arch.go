@@ -63,6 +63,17 @@ type ModelConfig struct {
 	// MoE expert gating configuration.
 	ScoringFunc string // expert gating scoring function ("softmax" or "sigmoid"; default: "softmax")
 
+	// Gemma 4 per-layer attention configuration.
+	GlobalNumKVHeads          int     // KV head count for global attention layers (0 = use NumKVHeads)
+	GlobalHeadDim             int     // head dimension for global attention layers (0 = use HeadDim)
+	SlidingNumKVHeads         int     // KV head count for sliding attention layers (0 = use NumKVHeads)
+	SlidingHeadDim            int     // head dimension for sliding attention layers (0 = use HeadDim)
+	GlobalPartialRotaryFactor float32 // partial rotary factor for global layers (0 = full rotation)
+	AttentionKEqV             bool    // if true, K and V share the same projection in global layers
+	KVSharedLayers            int     // number of layers sharing KV projections (edge variants)
+	PLEHiddenSize             int     // per-layer embedding hidden size (0 = disabled)
+	DoubleWideMLP             bool    // if true, use double-width MLP (E2B variant)
+
 	// Vision encoder fields (LLaVA, multimodal models).
 	VisionImageSize  int    // vision encoder input image size (e.g. 336)
 	VisionPatchSize  int    // vision encoder patch size (e.g. 14)
@@ -329,6 +340,52 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	// ExpertSharedCount is populated for nemotron_h_moe models.
 	if v, ok := f.GetUint32(prefix + "expert_shared_count"); ok {
 		cfg.ExpertSharedCount = int(v)
+	}
+
+	// Extract Gemma 4 per-layer attention fields.
+	if v, ok := f.GetUint32(prefix + "attention.global.head_count_kv"); ok {
+		cfg.GlobalNumKVHeads = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "attention.global.key_length"); ok {
+		cfg.GlobalHeadDim = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "attention.sliding.head_count_kv"); ok {
+		cfg.SlidingNumKVHeads = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "attention.sliding.key_length"); ok {
+		cfg.SlidingHeadDim = int(v)
+	}
+	if v, ok := f.GetFloat32(prefix + "rope.global.dimension_fraction"); ok {
+		cfg.GlobalPartialRotaryFactor = v
+	}
+	if v, ok := f.GetString(prefix + "attention.k_eq_v"); ok && v == "true" {
+		cfg.AttentionKEqV = true
+	}
+	// Also check for boolean metadata.
+	if v, ok := f.GetUint32(prefix + "attention.k_eq_v"); ok && v == 1 {
+		cfg.AttentionKEqV = true
+	}
+	if v, ok := f.GetUint32(prefix + "kv_shared_layers"); ok {
+		cfg.KVSharedLayers = int(v)
+	}
+	if v, ok := f.GetUint32(prefix + "ple.hidden_size"); ok {
+		cfg.PLEHiddenSize = int(v)
+	}
+	if v, ok := f.GetString(prefix + "mlp.double_wide"); ok && v == "true" {
+		cfg.DoubleWideMLP = true
+	}
+	if v, ok := f.GetUint32(prefix + "mlp.double_wide"); ok && v == 1 {
+		cfg.DoubleWideMLP = true
+	}
+
+	// Gemma 4 defaults: SlidingWindowPattern=6, vocabulary=262144.
+	if strings.HasPrefix(arch, "gemma4") {
+		if cfg.SlidingWindowPattern == 0 {
+			cfg.SlidingWindowPattern = 6
+		}
+		if cfg.VocabSize == 0 {
+			cfg.VocabSize = 262144
+		}
 	}
 
 	// Detect the actual architecture — e.g. Mistral models that declare "llama".
