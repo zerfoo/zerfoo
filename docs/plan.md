@@ -930,7 +930,7 @@ New code needed:
 
 #### E92.3: MoE Variant (26B-A4B -- Phase 2)
 
-- [ ] T92.3.1 Create arch_gemma4_moe.go with conditional MoE/dense FFN  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T92.3.1 Create arch_gemma4_moe.go with conditional MoE/dense FFN  Owner: TBD  Est: 2h  verifies: [UC-001]
   File: inference/arch_gemma4_moe.go
   Deps: T92.2.1
   Build function `buildGemma4MoEGraph` that extends the dense builder:
@@ -943,22 +943,22 @@ New code needed:
   Follow the pattern in `arch_deepseek.go` lines 300-330 for MoE wiring.
   AC: Graph builds from 26B-A4B tensor fixtures. MoE routing produces valid output.
 
-- [ ] T92.3.2 Register "gemma4moe" in architecture registry  Owner: TBD  Est: 15m  verifies: [UC-001]
+- [x] T92.3.2 Register "gemma4moe" in architecture registry  Owner: TBD  Est: 15m  verifies: [UC-001]
   File: inference/registry_init.go
   AC: `GetArchitecture("gemma4moe")` returns the builder.
 
-- [ ] T92.3.3 Create test fixtures and structural tests for MoE  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T92.3.3 Create test fixtures and structural tests for MoE  Owner: TBD  Est: 1h  verifies: [UC-001]
   File: inference/arch_gemma4_test.go
   Create `makeGemma4_26BTestTensors(cfg)` fixture with expert weights.
   Tests: graph builds, MoE routing active, expert count correct, forward non-NaN.
   AC: All tests pass.
 
-- [ ] T92.3.4 Run go vet + golangci-lint  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T92.3.4 Run go vet + golangci-lint  Owner: TBD  Est: 15m  verifies: [infrastructure]
   AC: Zero warnings.
 
 #### E92.4: Edge Variants (E4B/E2B -- Phase 3)
 
-- [ ] T92.4.1 Add Per-Layer Embedding (PLE) support  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T92.4.1 Add Per-Layer Embedding (PLE) support  Owner: TBD  Est: 2h  verifies: [UC-001]
   File: inference/arch_gemma4_edge.go
   Deps: T92.2.1
   PLE adds a per-layer input embedding projection: for each layer, a small
@@ -967,7 +967,7 @@ New code needed:
   Projection: `model.layers.{i}.ple_proj.weight` [256, hidden_size].
   AC: PLE tensors loaded and applied per layer. Forward output non-NaN.
 
-- [ ] T92.4.2 Add KV-shared layer support  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T92.4.2 Add KV-shared layer support  Owner: TBD  Est: 2h  verifies: [UC-001]
   File: inference/arch_gemma4_edge.go
   Deps: T92.2.1
   E4B shares KV projections across 18 layers; E2B across 20 layers.
@@ -976,25 +976,25 @@ New code needed:
   same K/V weight parameters as the source layer.
   AC: Shared layers use identical K/V weight pointers. Forward output non-NaN.
 
-- [ ] T92.4.3 Add double-wide MLP option (E2B)  Owner: TBD  Est: 30m  verifies: [UC-001]
+- [x] T92.4.3 Add double-wide MLP option (E2B)  Owner: TBD  Est: 30m  verifies: [UC-001]
   File: inference/arch_gemma4_edge.go
   E2B uses `use_double_wide_mlp: true` which doubles the intermediate size.
   Read from ModelConfig and apply when constructing FFN.
   AC: E2B FFN uses doubled intermediate size.
 
-- [ ] T92.4.4 Create buildGemma4EdgeGraph builder  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T92.4.4 Create buildGemma4EdgeGraph builder  Owner: TBD  Est: 1h  verifies: [UC-001]
   File: inference/arch_gemma4_edge.go
   Deps: T92.4.1, T92.4.2, T92.4.3
   Compose PLE + KV-shared + edge-specific config into a complete builder.
   Register as "gemma4e" in registry_init.go.
   AC: Graph builds from E4B and E2B tensor fixtures.
 
-- [ ] T92.4.5 Create test fixtures and structural tests for edge variants  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T92.4.5 Create test fixtures and structural tests for edge variants  Owner: TBD  Est: 1h  verifies: [UC-001]
   File: inference/arch_gemma4_test.go
   Tests for E4B and E2B: PLE active, KV sharing correct, double-wide MLP for E2B.
   AC: All tests pass.
 
-- [ ] T92.4.6 Run go vet + golangci-lint  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T92.4.6 Run go vet + golangci-lint  Owner: TBD  Est: 15m  verifies: [infrastructure]
   AC: Zero warnings.
 
 #### E92.5: Integration Testing and Validation
@@ -1056,8 +1056,8 @@ Deps: Wave E92-1
 Deps: Wave E92-2 (need dense builder as base)
 MoE and Edge builders are independent of each other.
 
-- [ ] Agent 1: T92.3.1 + T92.3.2 + T92.3.3 + T92.3.4 (MoE variant)
-- [ ] Agent 2: T92.4.1 + T92.4.2 + T92.4.3 + T92.4.4 + T92.4.5 + T92.4.6 (edge variants)
+- [x] Agent 1: T92.3.1 + T92.3.2 + T92.3.3 + T92.3.4 (MoE variant)  2026-04-13 PR#428
+- [x] Agent 2: T92.4.1 + T92.4.2 + T92.4.3 + T92.4.4 + T92.4.5 + T92.4.6 (edge variants)  2026-04-13 PR#428
 
 #### Wave E92-4: Integration and validation (2 agents)
 Deps: Wave E92-3
