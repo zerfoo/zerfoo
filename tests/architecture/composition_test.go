@@ -142,9 +142,6 @@ var dataAbuseAllowlist = map[string]bool{
 	"timeseries/foundation.go":                  true,
 	"timeseries/cfc_engine.go":                  true,
 	"timeseries/layernorm_ops.go":               true, // backward pass .Data() — tracked in E67
-	// crossasset/ — legacy direct-slice code tracked for Engine migration
-	"crossasset/gpu_params.go": true,
-	"crossasset/gpu_train.go":  true,
 	// layers/ssm — SSM package uses raw .Data() for stateful recurrences (E70)
 	"layers/ssm/mamba_block.go":   true,
 	"layers/ssm/s4.go":            true,
@@ -377,8 +374,6 @@ var mathImportAllowlist = map[string]bool{
 	"training/": true,
 	// distributed/ uses math for gradient aggregation
 	"distributed/": true,
-	// crossasset/ legacy — tracked in E70
-	"crossasset/": true,
 	// timeseries/ legacy — tracked in E70
 	"timeseries/": true,
 	// tabular/ legacy
@@ -476,11 +471,6 @@ var privateLayerAllowlist = map[string]bool{
 	"timeseries/patchtst_backward.go":       true,
 	"timeseries/tft.go":                     true,
 	"timeseries/ttm.go":                     true,
-	// crossasset/ — legacy layer implementations tracked in E68
-	"crossasset/crossasset.go": true,
-	"crossasset/backward.go":   true, // layerNormCached/layerNormBackward — tracked in E68
-	"crossasset/gpu_params.go": true,
-	"crossasset/gpu_train.go":  true,
 	// tabular/ — legacy models
 	"tabular/model.go":          true,
 	"tabular/ft_transformer.go": true,
