@@ -70,6 +70,10 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	// every other position (encoder-style attention).
 	bidirectional bool
 
+	// kEqV, when true, uses the K projection output as V (shared K=V).
+	// Gemma 4 global attention layers use this optimization.
+	kEqV bool
+
 	// Cached tensors for backward pass
 	qProj           *tensor.TensorNumeric[T] // Projected Q
 	kProj           *tensor.TensorNumeric[T] // Projected K
@@ -272,6 +276,13 @@ func (gqa *GroupedQueryAttention[T]) SetBidirectional(bidirectional bool) {
 	gqa.bidirectional = bidirectional
 }
 
+// SetKEqV configures GQA to use the K projection output for both K and V.
+// When enabled, the V projection (wv) is skipped and K output is used as V.
+// This implements Gemma 4's unified K=V projection for global attention layers.
+func (gqa *GroupedQueryAttention[T]) SetKEqV(v bool) {
+	gqa.kEqV = v
+}
+
 // OutputShape returns the output shape of the GroupedQueryAttention.
 func (gqa *GroupedQueryAttention[T]) OutputShape() []int {
 	return gqa.outputShape
@@ -391,9 +402,13 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		if err != nil {
 			return nil, err
 		}
-		vProj, err = gqa.wv.Forward(ctx, input)
-		if err != nil {
-			return nil, err
+		if gqa.kEqV {
+			vProj = kProj
+		} else {
+			vProj, err = gqa.wv.Forward(ctx, input)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
