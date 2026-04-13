@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0](https://github.com/zerfoo/zerfoo/compare/v2.0.0...v3.0.0) (2026-04-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **crossasset:** The crossasset/ package has been removed from zerfoo. It now lives at github.com/feza-ai/wolf/crossasset.
+
+### Features
+
+* **crossasset:** extract to feza-ai/wolf ([4e04b5a](https://github.com/zerfoo/zerfoo/commit/4e04b5a8397bbab7f92e69b34509801fc0e09054))
+* **parity:** add MIMOMambaBlock and HModule structural parity tests ([05c8d3c](https://github.com/zerfoo/zerfoo/commit/05c8d3c0431e9cb54c38236fb3f8112672a86875))
+
 ## [2.0.0](https://github.com/zerfoo/zerfoo/compare/v1.46.0...v2.0.0) (2026-04-12)
 
 
