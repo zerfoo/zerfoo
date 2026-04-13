@@ -58,6 +58,7 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 - E83: Serve handler refactoring (5/5 COMPLETE -- PRs #334, #336, #338, #341)
 - E84: ModeLDSL composition (8/8 COMPLETE -- PRs #334, #336, #338, #341)
 - E85: Fix GPU training memory leak in PatchTST encoder bwd (COMPLETE -- ztensor#84/#85 dst-memory reuse, 28K×20×10 40.3s, no OOM)
+- E92: Gemma 4 architecture support (0/25 -- 3 phases: dense text, MoE, edge variants)
 - GPU status: Q5_0 GEMV alignment fix shipped (ztensor 5f19e54). Q4_0 re-quantization restored for 231 tok/s decode. Pool-backed GPUStorage prevents arena corruption.
 
 ---
@@ -775,6 +776,297 @@ Deps: Wave E90-2.
 
 ---
 
+## E92: Gemma 4 Architecture Support
+
+### Context
+
+Gemma 4 is Google's latest open model family (Apache-2.0, released 2026-03-02),
+built from Gemini 3 research. It introduces significant architectural changes
+over Gemma 3 that prevent the existing `buildGemmaGraph` builder from handling
+Gemma 4 models. GGUF conversions are widely available from Unsloth and others
+with millions of downloads.
+
+Four variants exist:
+- **31B (dense)**: 60 layers, 32 QH / 16 sliding KV / 4 global KV heads, 256K context
+- **26B-A4B (MoE)**: 30 layers, 128 experts top-8, 3.8B active params, 256K context
+- **E4B (edge)**: 42 layers, PLE, KV-shared layers, audio+vision, 128K context
+- **E2B (edge)**: 35 layers, PLE, KV-shared, double-wide MLP, audio+vision, 128K context
+
+Key architectural differences from Gemma 3:
+1. **Hybrid attention**: Interleaved sliding-window + global layers (pattern: 5 sliding + 1 global).
+   Sliding and global layers have DIFFERENT KV head counts and head dimensions.
+2. **Dual RoPE**: Sliding layers use theta=10K; global layers use theta=1M with
+   partial_rotary_factor=0.25 (proportional RoPE).
+3. **K=V in global layers** (31B, 26B): Keys and values share the same projection,
+   halving KV cache for global layers.
+4. **GELU activation** (gelu_pytorch_tanh) instead of SwiGLU.
+5. **MoE** (26B-A4B): 128 experts, top-8 routing per token.
+6. **Per-Layer Embeddings** (E variants): Each layer has its own 256-dim input embedding.
+7. **KV-shared layers** (E variants): Multiple layers share the same KV projections.
+8. **262K vocab** (up from 256K), logit softcapping at 30.0, 4 norms per layer.
+
+Decision rationale: docs/adr/085-gemma4-architecture-support.md
+
+### Approach
+
+The existing `buildTransformerGraph` assumes all layers share the same KV head
+count and head dimension. Gemma 4 breaks this assumption: sliding layers use
+16 KV heads with headDim=256, while global layers use 4 KV heads with headDim=512.
+
+Rather than making `buildTransformerGraph` more complex (risking regressions for
+all 20+ supported architectures), the Gemma 4 builder will construct its own
+per-layer loop calling the same layer primitives (GQA, RMSNorm, FFN, MoE) that
+`buildTransformerGraph` uses. This is the same pattern used by `arch_deepseek.go`
+which also has per-layer variation (MoE on some layers, dense on others).
+
+Existing components reused without modification:
+- `attention.GroupedQueryAttention` (with per-layer KV head counts)
+- `normalization.RMSNormFromParam` (RMSNorm with eps=1e-6)
+- `core.MixtureOfExperts` + `core.MoEGate` (for 26B-A4B MoE variant)
+- `embeddings.RotaryPositionalEmbedding` (with per-layer theta and partial factor)
+- Logit softcapping (existing `lmHeadNode`)
+- Tied embedding (existing `newEmbeddingNode`)
+- Merged QKV and Gate+Up optimizations (existing patterns in `arch_common.go`)
+
+New code needed:
+- `arch_gemma4.go`: Dense builder with per-layer GQA configuration
+- `arch_gemma4_moe.go`: MoE variant with conditional MoE/dense FFN per layer
+- `arch_gemma4_edge.go`: Edge variant with PLE and KV-shared layers
+- GGUF metadata parsing for Gemma 4's new config keys
+- GELU FFN option (Gemma 4 uses GELU instead of SwiGLU)
+- K=V attention support (shared K/V projection in global layers)
+
+### Acceptance Criteria
+
+- All 4 Gemma 4 variants load from GGUF and produce coherent text output.
+- Gemma 4 31B Q4_K_M generates coherent responses on DGX Spark.
+- Gemma 4 26B-A4B Q4_K_M generates coherent responses with MoE routing.
+- Architecture test passes (no raw .Data() or loop violations).
+- Parity test: Gemma 4 E2B output matches llama.cpp/Ollama on same prompt.
+- All existing architecture tests remain green (no regressions).
+
+### Work Breakdown
+
+#### E92.1: GGUF Metadata and Configuration (ModelConfig extensions)
+
+- [ ] T92.1.1 Extend ModelConfig with Gemma 4 fields  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  File: model/gguf/arch.go
+  Add fields to ModelConfig:
+  - `GlobalNumKVHeads int` -- KV head count for global attention layers (0 = use NumKVHeads)
+  - `GlobalHeadDim int` -- head dimension for global attention layers (0 = use HeadDim)
+  - `SlidingNumKVHeads int` -- KV head count for sliding attention layers (0 = use NumKVHeads)
+  - `SlidingHeadDim int` -- head dimension for sliding attention layers (0 = use HeadDim)
+  - `GlobalPartialRotaryFactor float32` -- partial rotary factor for global layers (0 = full)
+  - `AttentionKEqV bool` -- if true, K and V share the same projection in global layers
+  - `KVSharedLayers int` -- number of layers sharing KV projections (edge variants)
+  - `PLEHiddenSize int` -- per-layer embedding hidden size (0 = disabled)
+  - `DoubleWideMLP bool` -- if true, use double-width MLP (E2B variant)
+  Parse from GGUF metadata keys in the gemma4 architecture detection block.
+  AC: `go test ./model/gguf/...` passes. New fields populated from Gemma 4 GGUF files.
+
+- [ ] T92.1.2 Add Gemma 4 architecture detection in GGUF parser  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  File: model/gguf/arch.go
+  Add `case "gemma4":` block to populate the new fields from GGUF metadata.
+  Set defaults: `SlidingWindowPattern = 6` (5 sliding + 1 global), vocabulary=262144.
+  AC: Parsing a Gemma 4 GGUF populates all config fields correctly.
+
+- [ ] T92.1.3 Add unit tests for Gemma 4 config parsing  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  File: model/gguf/arch_test.go
+  Test all 4 variant configs: 31B, 26B-A4B, E4B, E2B.
+  AC: Tests pass with correct field values for each variant.
+
+#### E92.2: Dense Builder (31B -- text-only, Phase 1)
+
+- [ ] T92.2.1 Create arch_gemma4.go with per-layer GQA configuration  Owner: TBD  Est: 3h  verifies: [UC-001]
+  File: inference/arch_gemma4.go
+  Build function `buildGemma4Graph` that:
+  1. Loads embedding weights (tied LM head, sqrt(hidden_size) scaling).
+  2. Iterates layers 0..N-1, determining per-layer attention config:
+     - `isGlobal := (i+1) % slidingWindowPattern == 0`
+     - Global: `globalNumKVHeads`, `globalHeadDim`, theta=1M, partialRotaryFactor=0.25
+     - Sliding: `slidingNumKVHeads`, `slidingHeadDim`, theta=10K, full RoPE
+  3. Creates GQA per layer with the appropriate KV head count and head dim.
+  4. For global layers with `attentionKEqV`, passes the K projection weight
+     for both K and V (shared projection).
+  5. Uses GELU FFN (not SwiGLU) -- add `core.WithGELU[float32]()` FFN option.
+  6. Applies 4 norms per layer: input, post-attn, pre-FFN, post-FFN.
+  7. Q/K norms after projection.
+  8. Logit softcapping (30.0).
+  9. Final RMSNorm + tied LM head.
+  Reuse: `newTensorLookup`, `newParamWrapper`, `newEmbeddingNode`, `newLMHeadNode`,
+  `transposeWeight2D`, merged QKV optimization, merged Gate+Up optimization.
+  AC: Graph builds without error from Gemma 4 31B tensor fixtures.
+
+- [ ] T92.2.2 Add GELU FFN option to core.FFN  Owner: TBD  Est: 45m  verifies: [UC-001]
+  File: layers/core/ffn.go
+  Add `WithGELU[T]()` option that uses `gelu_pytorch_tanh` activation instead of SwiGLU.
+  The GELU variant has gate+up as a single projection (no separate gate_proj), or
+  keeps gate+up separate with GELU replacing SiLU. Check Gemma 4 GGUF weight names
+  to determine the exact FFN structure.
+  AC: `go test ./layers/core/...` passes. GELU FFN produces correct output.
+
+- [ ] T92.2.3 Add K=V shared projection support to GQA  Owner: TBD  Est: 1h  verifies: [UC-001]
+  File: layers/attention/grouped_query_attention.go
+  Add `SetKEqV()` method that configures GQA to use the K projection weight for
+  both K and V (shared projection). When enabled, the V projection is skipped and
+  the K output is used directly as V.
+  AC: `go test ./layers/attention/...` passes. K=V produces same output as
+  separate K/V when K and V weights are identical.
+
+- [ ] T92.2.4 Register "gemma4" in architecture registry  Owner: TBD  Est: 15m  verifies: [UC-001]
+  File: inference/registry_init.go
+  Add `RegisterArchitecture("gemma4", buildGemma4Graph)`.
+  AC: `GetArchitecture("gemma4")` returns the builder.
+
+- [ ] T92.2.5 Create test fixtures and structural tests  Owner: TBD  Est: 1h  verifies: [UC-001]
+  File: inference/arch_gemma4_test.go
+  Create `makeGemma4_31BTestTensors(cfg)` fixture with per-layer varying KV weights.
+  Tests: graph builds, forward produces non-NaN output, tied embedding verified,
+  layer count correct, hybrid attention pattern verified.
+  AC: All tests pass.
+
+- [ ] T92.2.6 Run go vet + golangci-lint on changed files  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  AC: Zero warnings.
+
+#### E92.3: MoE Variant (26B-A4B -- Phase 2)
+
+- [ ] T92.3.1 Create arch_gemma4_moe.go with conditional MoE/dense FFN  Owner: TBD  Est: 2h  verifies: [UC-001]
+  File: inference/arch_gemma4_moe.go
+  Deps: T92.2.1
+  Build function `buildGemma4MoEGraph` that extends the dense builder:
+  1. Inherits all hybrid attention, dual RoPE, K=V, GELU, 4-norm config.
+  2. For MoE layers: replaces dense FFN with `core.MixtureOfExperts` (128 experts, top-8).
+     Each expert is a small GELU FFN (intermediate_size=704).
+  3. Dense MLP layers use intermediate_size=2112.
+  4. Gate weights loaded from `model.layers.{i}.mlp.gate.weight`.
+  5. Expert weights loaded from `model.layers.{i}.mlp.experts.{j}.{gate,up,down}_proj.weight`.
+  Follow the pattern in `arch_deepseek.go` lines 300-330 for MoE wiring.
+  AC: Graph builds from 26B-A4B tensor fixtures. MoE routing produces valid output.
+
+- [ ] T92.3.2 Register "gemma4moe" in architecture registry  Owner: TBD  Est: 15m  verifies: [UC-001]
+  File: inference/registry_init.go
+  AC: `GetArchitecture("gemma4moe")` returns the builder.
+
+- [ ] T92.3.3 Create test fixtures and structural tests for MoE  Owner: TBD  Est: 1h  verifies: [UC-001]
+  File: inference/arch_gemma4_test.go
+  Create `makeGemma4_26BTestTensors(cfg)` fixture with expert weights.
+  Tests: graph builds, MoE routing active, expert count correct, forward non-NaN.
+  AC: All tests pass.
+
+- [ ] T92.3.4 Run go vet + golangci-lint  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  AC: Zero warnings.
+
+#### E92.4: Edge Variants (E4B/E2B -- Phase 3)
+
+- [ ] T92.4.1 Add Per-Layer Embedding (PLE) support  Owner: TBD  Est: 2h  verifies: [UC-001]
+  File: inference/arch_gemma4_edge.go
+  Deps: T92.2.1
+  PLE adds a per-layer input embedding projection: for each layer, a small
+  (256-dim) per-token embedding is projected to hidden_size and added to the
+  layer input. Weight tensor: `model.layers.{i}.ple.weight` [vocab, 256].
+  Projection: `model.layers.{i}.ple_proj.weight` [256, hidden_size].
+  AC: PLE tensors loaded and applied per layer. Forward output non-NaN.
+
+- [ ] T92.4.2 Add KV-shared layer support  Owner: TBD  Est: 2h  verifies: [UC-001]
+  File: inference/arch_gemma4_edge.go
+  Deps: T92.2.1
+  E4B shares KV projections across 18 layers; E2B across 20 layers.
+  Implementation: identify which layers share KV weights (from GGUF metadata or
+  weight name deduplication). When building GQA for a shared layer, pass the
+  same K/V weight parameters as the source layer.
+  AC: Shared layers use identical K/V weight pointers. Forward output non-NaN.
+
+- [ ] T92.4.3 Add double-wide MLP option (E2B)  Owner: TBD  Est: 30m  verifies: [UC-001]
+  File: inference/arch_gemma4_edge.go
+  E2B uses `use_double_wide_mlp: true` which doubles the intermediate size.
+  Read from ModelConfig and apply when constructing FFN.
+  AC: E2B FFN uses doubled intermediate size.
+
+- [ ] T92.4.4 Create buildGemma4EdgeGraph builder  Owner: TBD  Est: 1h  verifies: [UC-001]
+  File: inference/arch_gemma4_edge.go
+  Deps: T92.4.1, T92.4.2, T92.4.3
+  Compose PLE + KV-shared + edge-specific config into a complete builder.
+  Register as "gemma4e" in registry_init.go.
+  AC: Graph builds from E4B and E2B tensor fixtures.
+
+- [ ] T92.4.5 Create test fixtures and structural tests for edge variants  Owner: TBD  Est: 1h  verifies: [UC-001]
+  File: inference/arch_gemma4_test.go
+  Tests for E4B and E2B: PLE active, KV sharing correct, double-wide MLP for E2B.
+  AC: All tests pass.
+
+- [ ] T92.4.6 Run go vet + golangci-lint  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  AC: Zero warnings.
+
+#### E92.5: Integration Testing and Validation
+
+- [ ] T92.5.1 Download Gemma 4 E2B Q4_K_M GGUF for CI testing  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  Smallest variant (~1.5GB Q4_K_M) for fast CI testing.
+  Store path in test as `GEMMA4_GGUF_PATH` env var (skip if not set).
+  AC: GGUF file available on dev machine.
+
+- [ ] T92.5.2 End-to-end inference test: load GGUF + generate text  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T92.2.1, T92.5.1
+  File: tests/integration/gemma4_test.go
+  Load Gemma 4 E2B GGUF, generate 50 tokens, verify coherent output.
+  Compare with llama.cpp/Ollama output on same prompt for sanity.
+  AC: Test produces coherent text. No panics, no NaN.
+
+- [ ] T92.5.3 Benchmark Gemma 4 E2B on DGX Spark  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T92.5.2
+  Run bench-compare-ollama.sh on DGX for Gemma 4 E2B Q4_K_M.
+  Record tok/s for decode and prefill. Compare against Ollama.
+  AC: Results documented in docs/devlog.md. Target: within 20% of Ollama.
+  BLOCKED: same purego cross-compile blocker as T86.5.8.
+
+- [ ] T92.5.4 Add Gemma 4 to supported architectures table in CLAUDE.md  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T92.5.2
+  Update the "Supported Architectures" table.
+  AC: Table includes Gemma 4 with status and features noted.
+
+- [ ] T92.5.5 Run full test suite: go test ./...  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: all E92 tasks
+  AC: All tests pass including existing architecture tests (no regressions).
+
+### E92 Parallel Tracks
+
+| Track | Tasks | Description | Dependencies |
+|-------|-------|-------------|-------------|
+| A: Config | T92.1.1-T92.1.3 | GGUF metadata parsing | None |
+| B: Dense | T92.2.1-T92.2.6 | 31B dense builder | A (T92.1.1) |
+| C: MoE | T92.3.1-T92.3.4 | 26B-A4B MoE builder | B (T92.2.1) |
+| D: Edge | T92.4.1-T92.4.6 | E4B/E2B edge builder | B (T92.2.1) |
+| E: Validation | T92.5.1-T92.5.5 | Integration testing | B, C, D |
+
+### E92 Waves
+
+#### Wave E92-1: Config + GELU + K=V primitives (3 agents)
+All independent -- different files, no shared code.
+
+- [ ] Agent 1: T92.1.1 + T92.1.2 + T92.1.3 (GGUF config extensions)
+- [ ] Agent 2: T92.2.2 (GELU FFN option in layers/core/)
+- [ ] Agent 3: T92.2.3 (K=V support in layers/attention/)
+
+#### Wave E92-2: Dense builder + tests (2 agents)
+Deps: Wave E92-1
+
+- [ ] Agent 1: T92.2.1 + T92.2.4 + T92.2.6 (dense builder + registry + lint)
+- [ ] Agent 2: T92.2.5 (test fixtures and structural tests)
+
+#### Wave E92-3: MoE + Edge (2 agents)
+Deps: Wave E92-2 (need dense builder as base)
+MoE and Edge builders are independent of each other.
+
+- [ ] Agent 1: T92.3.1 + T92.3.2 + T92.3.3 + T92.3.4 (MoE variant)
+- [ ] Agent 2: T92.4.1 + T92.4.2 + T92.4.3 + T92.4.4 + T92.4.5 + T92.4.6 (edge variants)
+
+#### Wave E92-4: Integration and validation (2 agents)
+Deps: Wave E92-3
+
+- [ ] Agent 1: T92.5.1 + T92.5.2 + T92.5.5 (GGUF download + e2e test + full suite)
+- [ ] Agent 2: T92.5.3 + T92.5.4 (DGX benchmark + docs update)
+
+---
+
 ## Backlog
 
 ### Community and DevRel
@@ -995,6 +1287,7 @@ Task details removed during /tidy --apply. See git history for full lists.
 | M-COMP-3 | Composition Remediation Phase 3 | E74-E76 | All backward passes compose from functional backward ops; inference .Data() eliminated; timeseries/ removed from arch test allowlist | 2026-Q3 |
 | M-COMP-4 | Composition Remediation Phase 4 | E77-E84 | dirty-architecture.md violations reduced from ~9,800 to <2,000 lines; tabular/, layers/, generate/, inference/, training/, serve/, modeldsl/ all compose from layers/ or Engine | 2026-Q3 |
 | M-E86 | PyTorch Parity Complete | E86 | 100% layer forward parity, 100% backward parity, all model architectures, GPU kernel parity on DGX | 2026-Q3 |
+| M-E92 | Gemma 4 Support | E92 | All 4 variants load from GGUF and produce coherent text; parity with Ollama on E2B | 2026-Q2 |
 
 ---
 
@@ -1044,6 +1337,10 @@ Task details removed during /tidy --apply. See git history for full lists.
 | R69 | ModeLDSL composition changes DSL compilation behavior (E84) | Medium | Medium | Run full modeldsl test suite; compare compiled model structure before/after; validate layer-type registration |
 | R70 | PyTorch golden files may not match Zerfoo's intended semantics for some ops (E86) | Medium | Medium | When PyTorch and Zerfoo disagree, investigate which is correct rather than blindly matching PyTorch. Document intentional differences in the golden file description field. |
 | R71 | GPU parity tests may show larger tolerance than CPU due to non-deterministic kernel execution order (E86) | Low | High | Use 1e-3 tolerance for GPU tests (vs 1e-5 for CPU). If larger divergence, investigate specific kernel. |
+| R75 | Gemma 4 per-layer varying KV heads breaks buildTransformerGraph assumptions (E92) | Medium | Low | Gemma 4 builder constructs its own per-layer loop (same pattern as arch_deepseek.go) rather than modifying shared function. No regression risk for other architectures. |
+| R76 | K=V shared projection produces wrong attention output (E92) | Medium | Medium | Validate by comparing GQA output with K=V enabled vs disabled when K and V weights are identical. Add dedicated parity test. |
+| R77 | 128-expert MoE exceeds memory on consumer GPUs (E92) | Low | High | Only affects 26B-A4B variant. Target Q4_K_M quantization (~16GB). Recommend GPU with 24GB+ VRAM. Edge variants (E2B/E4B) are the consumer targets. |
+| R78 | Gemma 4 GGUF metadata keys change across converter versions (E92) | Low | Medium | Test against Unsloth (most popular), LM Studio, and bartowski GGUFs. Add fallback parsing for alternative key names. |
 | R72 | Float32 conversion in crossasset changes training accuracy (E90) | Medium | Medium | Run 10-epoch training before/after; compare loss curves within 1e-3; final accuracy within 2%. Float32 has sufficient precision for DModel=256. |
 | R73 | GPU engine stability on Grace Hopper unified memory (E90) | Medium | High | E60 noted CUDA launch timeouts and illegal memory access. Test with ZERFOO_DISABLE_CUDA_GRAPH=1. If issues persist, use fused kernels only for matmul (largest speedup). |
 | R74 | CrossAsset public API break from float64-to-float32 migration (E90) | High | High | This is a breaking change. Update all callers (wolf integration). Document in CHANGELOG.md. |
@@ -1140,6 +1437,17 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-13: E92 added -- Gemma 4 architecture support
+
+- Added E92 (25 tasks, 4 waves) for Gemma 4 architecture support across all 4 variants.
+- Phase 1: Dense 31B builder with hybrid attention, dual RoPE, K=V, GELU FFN.
+- Phase 2: MoE 26B-A4B with 128 experts top-8 routing (reuses existing MoE layer).
+- Phase 3: Edge E4B/E2B with PLE and KV-shared layers.
+- Created ADR-085 (docs/adr/085-gemma4-architecture-support.md).
+- Vision and audio encoders deferred to future multimodal epic.
+- Added risks R75-R78 for per-layer KV, K=V, MoE memory, GGUF metadata.
+- Trimmed plan: collapsed E50, E51, E74, E85, E87, E89, pruned 7 branches, fixed DGX IP.
 
 ### 2026-04-11: E86.5 GPU parity complete + E90 added
 
@@ -1313,6 +1621,12 @@ E77-E84 phase 4. See git history for full changelog.
   high-level composition but E84 goes deeper into the individual layer implementations.
   The LayerType constant reconciliation (T84.1.6) should make layers/registry the single
   source of truth.
+- E92 (Gemma 4): The builder uses its own per-layer loop (like arch_deepseek.go)
+  because Gemma 4 has per-layer varying KV head counts and head dims. Does NOT
+  modify buildTransformerGraph. Reuses GQA, MoE, RMSNorm, FFN, RoPE layers.
+  Key differences from Gemma 3: GELU (not SwiGLU), K=V in global layers,
+  hybrid attention with 2 RoPE configs per model, MoE variant with 128 experts.
+  Vision and audio encoders are deferred (multimodal epic). ADR-085.
 - E86 (PyTorch parity): The golden file generator is tests/golden/generate_golden.py.
   Run `python3 tests/golden/generate_golden.py` to regenerate all golden files.
   Go tests are in tests/parity/layer_parity_test.go. Pattern for adding a new layer:
