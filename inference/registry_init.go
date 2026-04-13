@@ -6,6 +6,7 @@ func init() {
 	RegisterArchitecture("llama", buildLlamaGraph)
 	RegisterArchitecture("gemma", buildGemmaGraph)
 	RegisterArchitecture("gemma3", buildGemmaGraph)
+	RegisterArchitecture("gemma4", buildGemma4Graph)
 	RegisterArchitecture("qwen2", buildQwenGraph)
 	RegisterArchitecture("mistral", buildMistralGraph)
 	RegisterArchitecture("phi", buildPhiGraph)
