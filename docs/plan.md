@@ -877,7 +877,7 @@ New code needed:
 
 #### E92.2: Dense Builder (31B -- text-only, Phase 1)
 
-- [ ] T92.2.1 Create arch_gemma4.go with per-layer GQA configuration  Owner: TBD  Est: 3h  verifies: [UC-001]
+- [x] T92.2.1 Create arch_gemma4.go with per-layer GQA configuration  Owner: TBD  Est: 3h  verifies: [UC-001]  2026-04-13 PR#403
   File: inference/arch_gemma4.go
   Build function `buildGemma4Graph` that:
   1. Loads embedding weights (tied LM head, sqrt(hidden_size) scaling).
@@ -913,19 +913,19 @@ New code needed:
   AC: `go test ./layers/attention/...` passes. K=V produces same output as
   separate K/V when K and V weights are identical.
 
-- [ ] T92.2.4 Register "gemma4" in architecture registry  Owner: TBD  Est: 15m  verifies: [UC-001]
+- [x] T92.2.4 Register "gemma4" in architecture registry  Owner: TBD  Est: 15m  verifies: [UC-001]  2026-04-13 PR#403
   File: inference/registry_init.go
   Add `RegisterArchitecture("gemma4", buildGemma4Graph)`.
   AC: `GetArchitecture("gemma4")` returns the builder.
 
-- [ ] T92.2.5 Create test fixtures and structural tests  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T92.2.5 Create test fixtures and structural tests  Owner: TBD  Est: 1h  verifies: [UC-001]  2026-04-13 PR#403
   File: inference/arch_gemma4_test.go
   Create `makeGemma4_31BTestTensors(cfg)` fixture with per-layer varying KV weights.
   Tests: graph builds, forward produces non-NaN output, tied embedding verified,
   layer count correct, hybrid attention pattern verified.
   AC: All tests pass.
 
-- [ ] T92.2.6 Run go vet + golangci-lint on changed files  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T92.2.6 Run go vet + golangci-lint on changed files  Owner: TBD  Est: 15m  verifies: [infrastructure]  2026-04-13 PR#403
   AC: Zero warnings.
 
 #### E92.3: MoE Variant (26B-A4B -- Phase 2)
@@ -1049,8 +1049,8 @@ All independent -- different files, no shared code.
 #### Wave E92-2: Dense builder + tests (2 agents)
 Deps: Wave E92-1
 
-- [ ] Agent 1: T92.2.1 + T92.2.4 + T92.2.6 (dense builder + registry + lint)
-- [ ] Agent 2: T92.2.5 (test fixtures and structural tests)
+- [x] Agent 1: T92.2.1 + T92.2.4 + T92.2.6 (dense builder + registry + lint)  2026-04-13 PR#403
+- [x] Agent 2: T92.2.5 (test fixtures and structural tests)  2026-04-13 PR#403
 
 #### Wave E92-3: MoE + Edge (2 agents)
 Deps: Wave E92-2 (need dense builder as base)
