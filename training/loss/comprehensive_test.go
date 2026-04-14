@@ -133,7 +133,9 @@ func TestCrossEntropyLoss_ForwardErrors(t *testing.T) {
 		failOn map[string]int
 	}{
 		{"softmax_error", map[string]int{"Softmax": 1}},
-		{"log_error", map[string]int{"Log": 1}},
+		// Note: "log_error" was removed; CrossEntropyLoss.Forward no
+		// longer calls engine.Log (replaced with fused log-softmax for
+		// numerical stability).
 	}
 
 	for _, tt := range tests {
