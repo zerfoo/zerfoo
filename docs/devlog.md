@@ -2,6 +2,85 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-14: T98.2.1 deeper bisect -- bug between PLE and RMSNorm; fused-RMSNorm bypass triggers Mul launch failure
+
+**Type:** investigation
+**Tags:** gemma4, gemma4e, cuda, e98, t98.2.1
+
+**Problem:** Continue from earlier T98.2.1 entry. Localize whether the gemma4e
+illegal memory access originates inside the FusedRMSNormGPU kernel, in
+preceding kernels, or in something pool-related.
+
+**Approach:** Added force-sync TrySlice probes to the GE_DBG / GQA_DBG
+helpers. If a previous async kernel had raised an illegal access, the next
+cudaMemcpy (TrySlice) surfaces it. Two bisect attempts followed:
+
+1. Skip the unused `engine.Mul(input, rsqrt)` inside the GPU-fused branch of
+   `rmsNormalize` (rms_helper.go:51). Result: same failure -- GQA input
+   sync still FAILs.
+2. Bypass the GPU-fused RMSNorm path entirely (force the multi-step
+   fallback). Result: the fallback's very first kernel call,
+   `engine.Mul(input, input)` for shape [1, 5, 1536], fails synchronously
+   with `cuda error 1` (cudaErrorInvalidValue) before we ever reach GQA.
+
+**Findings:**
+
+1. With probes enabled, every PLE producer intermediate (`tokenPLE`,
+   `scaled`, `modelProj`, returned `hidden`) syncs OK. No async kernel fault
+   from PLE.
+2. The next probe (GQA layer 0 `input`, which is the FusedRMSNormGPU output)
+   fails with illegal memory access. So the failing kernel is either
+   FusedRMSNorm or something it touches (weight upload, devOut/devScales
+   pool alloc).
+3. Removing the broadcast `Mul(input, rsqrt)` did not help, ruling out that
+   broadcast as the corrupting kernel.
+4. Bypassing FusedRMSNorm to take the fallback breaks earlier with cuda
+   error 1 on `Mul(input, input)`. This is *not* the same illegal-access
+   error -- it's a synchronous launch failure. Best guess: when
+   `tensor.ToGPU(weight)` runs lazily inside FusedRMSNormGPU on the gemma4e
+   path it does some side effect (registering the weight pointer, syncing,
+   pool churn) that the fallback path skips, leaving the engine in a state
+   where Mul rejects the launch params.
+5. Removing the TrySlice probes (purely passive logging) reproduces the
+   fallback Mul failure identically -- the probes are not the cause.
+
+**State of the bisect tree:**
+
+```
+hidden (PLE.return) sync OK
+  -> RMSNorm.Forward
+       -> FusedRMSNormGPU(input, gain, eps)
+              [fused kernel]                    <-- may corrupt
+              [tensor.ToGPU(weight) lazy upload]<-- may corrupt
+              [pool allocs for devOut/devScales]<-- may corrupt
+       -> engine.Mul(input, rsqrt)              <-- ruled OUT
+  -> GQA input sync FAIL
+```
+
+**Next steps for next session:**
+
+1. Inside `FusedRMSNormGPU`, add the same probe BEFORE and AFTER each step:
+   after `tensor.ToGPU(weight)`, after `pool.Alloc(devOut)`, after
+   `pool.Alloc(devScales)`, after `e.kernels.RMSNorm(...)`. The first FAIL
+   localizes to one of those four.
+2. Hypothesis worth checking: gemma4e input_layernorm.weight may have
+   storage that `tensor.ToGPU` mishandles -- e.g. a weight that was
+   pre-uploaded as Float16Storage but the CPU-only GPUStorage check at
+   gpu_fused_rmsnorm.go:66 fails to recognize it, leading to a redundant
+   ToGPU that aliases an existing buffer.
+3. Compare the `model.layers.0.input_layernorm.weight` storage type at
+   load time between gemma3 and gemma4e (both have shape [hidden, F32] in
+   GGUF; verify they take the same load path through inference/load_gguf).
+4. Cross-repo: the actual fix may belong in ztensor's
+   `gpu_fused_rmsnorm.go` weight handling, in which case the PR will need
+   a coordinated bump.
+
+**Artifacts:**
+- branch: e98-t98.2.1-gqa-debug-instr (HEAD reverted to passive
+  instrumentation only; fused/Mul changes have been undone in the working
+  tree -- commit pending)
+- failing pods: gemma4-e2e-20260414-{224220, 230912, 231733, 232256, 233051}
+
 ## 2026-04-14: T98.2.1 dynamic instrumentation -- bug is UPSTREAM of GQA layer 0
 
 **Type:** investigation
