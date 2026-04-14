@@ -1529,12 +1529,143 @@ Deps: Wave E97-2.
 
 ---
 
+## E98: Gemma 4 edge CUDA qNorm illegal memory access (unblocks T97.1.3)
+
+**Context.** Pod `gemma4-e2e-20260414-164140` failed during prefill with
+`GroupedQueryAttention: qNorm: cudaMemcpy failed: an illegal memory access`
+for gemma4e on CUDA (input shapes `[[1 5 1536]]`). The failure was preceded
+by three `GPUStorage.TrySlice: cudaMemcpy failed: an illegal memory access;
+returning zero slice of length 7680` warnings, strongly suggesting at least
+one tensor consumed during prefill is CPU-backed (or points at freed/invalid
+GPU memory) and is being sliced by a GPU kernel that expects device memory.
+
+The E96 CPU forward path works; the bug is gemma4e + CUDA-specific. Without
+this fix, T97.1.3 (GPU greedy decode) cannot complete and E97 cannot close.
+
+Full finding: docs/devlog.md entry 2026-04-14 "T97.1.3 Gemma 4 edge generate
+on CUDA -- illegal memory access in qNorm".
+
+**Approach.** Isolate fast, then fix minimally. Reproduce with a smaller
+(non-gemma4e) model first to confirm the bug is gemma4e-specific; then trace
+the exact tensor path that triggers `TrySlice` warnings; then repair the
+upload/bridge gap.
+
+### E98.1: Isolate
+
+- [ ] T98.1.1 Repro with gemma3:1b GGUF on CUDA via gemma4_e2e generate  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Build gemma4_e2e on DGX (already there), fetch a gemma3:1b GGUF locally,
+  rsync to /var/lib/zerfoo/models/, submit:
+  `scripts/gemma4-spark.sh -mode generate -device cuda
+   -gguf /var/lib/zerfoo/models/gemma-3-1b-it-Q4_K_M.gguf -steps 5`
+  Expected: PASS or same TrySlice warnings.
+  AC: outcome recorded in devlog; if PASS -> bug is gemma4e-specific and we
+  focus on `inference/arch_gemma4_edge.go`; if FAIL -> bug is cross-arch in
+  `inference.LoadFile` GPU upload path.
+  Risk: Ollama gemma3:1b image is ~815MB; GGUF may need to be fetched from
+  HF (google/gemma-3-1b-it-GGUF). Allow extra 15m.
+
+- [ ] T98.1.2 Instrument GPUStorage.TrySlice to dump caller frames  Owner: TBD  Est: 45m  verifies: [infrastructure]
+  Deps: none (parallel with T98.1.1)
+  File: `internal/cuda/gpu_storage.go` (or the ztensor equivalent that owns
+  `GPUStorage.TrySlice`). Locate the warning log site, add opt-in runtime
+  stack trace (envvar `ZERFOO_TRY_SLICE_TRACE=1`) using `runtime.Callers`
+  bounded to 16 frames. Do not make it the default; spam would be harmful.
+  AC: rerunning gemma4_e2e generate on CUDA emits stack traces identifying
+  which gemma4e builder call path slices a zero-sized GPU tensor.
+
+- [ ] T98.1.3 Unit test: TrySlice returning zero does not silently succeed  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  Deps: none (parallel)
+  Cover the current behavior -- warning then zero slice -- and propose a
+  stricter mode (ZERFOO_TRY_SLICE_STRICT=1) that returns an error instead.
+  If we adopt strict mode for debugging, callers will fail loudly at the
+  real site.
+  AC: new test in `internal/cuda/gpu_storage_test.go` covers both modes.
+
+### E98.2: Fix
+
+- [ ] T98.2.1 Fix the identified qNorm/PLE tensor upload gap  Owner: TBD  Est: 2h  verifies: [UC-001]
+  Deps: T98.1.1, T98.1.2
+  Likely suspects (in decreasing order of probability) based on E95 + E96
+  work:
+  a) qNorm gain parameter for `GroupedQueryAttention` is constructed via
+     `graph.NewParameter` but not included in the `UploadWeights` set
+     used by `inference.LoadFile` (see `inference/load_gguf.go:100-115`).
+  b) `KVReuseNode` produces a slice view whose backing storage is the
+     donor layer's K/V output on the CPU side but has not been uploaded
+     to the CUDA arena.
+  c) `pleSliceNode` / `pleCombinedProducer` constants are registered via
+     `graph.ConstantTensors()` but one of the ancillary buffers escapes
+     that path.
+  Fix whichever call site actually triggers from T98.1.2's stack trace.
+  AC: `gemma4_e2e -mode generate -device cuda -steps 5` completes without
+  TrySlice warnings and without illegal memory access.
+
+- [ ] T98.2.2 Regression unit test for GPU upload of gemma4e builder  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T98.2.1
+  File: `inference/arch_gemma4_edge_test.go` or a new
+  `inference/arch_gemma4_edge_cuda_test.go` (behind `//go:build cuda`).
+  Build the gemma4e graph from synthetic tensors, call the same GPU upload
+  path `inference.LoadFile` uses, assert every Parameter and ConstantTensor
+  is uploaded. The CPU test must exercise the upload-set enumeration
+  without a real GPU (pure accounting check).
+  AC: test would have failed pre-fix; passes post-fix.
+
+- [ ] T98.2.3 Lint + vet + full test sweep  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T98.2.1, T98.2.2
+  `go build ./... && go vet ./... && go test ./... -race -timeout 300s`.
+  AC: green.
+
+### E98.3: Close out
+
+- [ ] T98.3.1 Rebuild on DGX and run T97.1.3 (closes deferred task)  Owner: TBD  Est: 20m  verifies: [UC-001]
+  Deps: T98.2.1 merged to main
+  Rebuild `/var/lib/zerfoo/bin/gemma4_e2e` on DGX from the fixed main, then
+  `scripts/gemma4-spark.sh -mode generate -device cuda -steps 20 -cleanup`.
+  AC: pod PASS, decoded text non-degenerate, no NaN/Inf across steps.
+  Mark T97.1.3 complete on success and roll up into T97.3.1.
+
+- [ ] T98.3.2 Devlog + plan close-out  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T98.3.1
+  Devlog entry with root cause, fix, verification artifacts (pod name,
+  decoded text snippet). Mark E98 complete, flip T97.1.3 to [x], and
+  evaluate whether T97.3.1 can now close (T97.2.3 remains deferred per the
+  Ollama finding, so E97 closes partial).
+
+### E98 Waves
+
+#### Wave E98-1: Triangulate (3 agents)
+- [ ] Agent 1: T98.1.1 (cross-arch repro on DGX)
+- [ ] Agent 2: T98.1.2 (TrySlice stack trace instrumentation)
+- [ ] Agent 3: T98.1.3 (TrySlice unit test)
+
+Sync point: after this wave, we know where the bad slice originates.
+
+#### Wave E98-2: Fix (2 agents)
+Deps: Wave E98-1.
+- [ ] Agent 1: T98.2.1 -> T98.2.2 (fix + regression test, sequential — same files)
+- [ ] Agent 2: T98.2.3 (lint/vet/test sweep, can start once T98.2.1 commits)
+
+#### Wave E98-3: Verify + Close (1 agent)
+Deps: Wave E98-2 + PR merged to main.
+- [ ] Agent 1: T98.3.1 -> T98.3.2
+
+### E98 Risk Register
+
+| ID | Risk | Mitigation |
+|----|------|------------|
+| R98.1 | gemma3:1b repro also fails (bug is cross-arch, bigger scope) | T98.1.1 outcome decides direction; if cross-arch, scope expands and we file a new epic. |
+| R98.2 | Stack trace points at cuBLAS/cuDNN internals (bug is in ztensor CUDA kernel, not wiring) | Escalate to ztensor repo; may need 3+ extra days. |
+| R98.3 | TrySlice silently returning zero masks upstream bugs (bug is older and deeper) | Adopt ZERFOO_TRY_SLICE_STRICT (T98.1.3) as default for debug builds; keep permissive for prod until explicit cleanup. |
+
+---
+
 ## E86 pointer: PyTorch Parity Testing
 
 Separate large epic already in this plan (see E86 earlier, line ~228).
-Independent of E96/E97 -- different domain (training/parity vs
-inference/GPU validation). Ready to schedule in its own waves when E96/E97
-clear. No changes in this planning pass.
+Independent of E96/E97/E98 -- different domain (training/parity vs
+inference/GPU validation). Ready to schedule in its own waves when E98
+clears. No changes in this planning pass.
 
 ---
 
@@ -1914,6 +2045,23 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-14 (late): E96 shipped; E97-1/E97-2 partial; E98 added for Gemma 4 edge CUDA qNorm bug
+
+- **E96 complete**: T96.1.1-3 + T96.2.1-2 marked [x]. First confirmed GPU
+  forward pass of gemma4e on DGX via pod `gemma4-e2e-20260414-160552`.
+  Architectural deviation: darwin cross-compile failed (purego linknames);
+  switched to native build on DGX.
+- **E97-1 complete** (PR #467 merged): T97.1.1 added `-mode=generate`
+  scaffolding to `cmd/gemma4_e2e`; T97.2.1 found no Ollama Gemma 4 image
+  available and deferred T97.2.2 and T97.2.3.
+- **E97-2 partial** (PR #468 merged): T97.1.2 parameterized Spark manifest
+  and script for mode/prompt/steps/seq/device. T97.1.3 BLOCKED by a CUDA
+  illegal memory access in `GroupedQueryAttention.qNorm` during gemma4e
+  prefill (pod `gemma4-e2e-20260414-164140`).
+- **E98 added**: "Gemma 4 edge CUDA qNorm illegal memory access
+  (unblocks T97.1.3)". 3 waves, 6 active tasks, targeting triangulation
+  -> fix -> DGX re-verification. Waves designed for 3/2/1 parallel agents.
 
 ### 2026-04-14: E96 + E97 added; plan now tracks DGX staging and Gemma 4 generation follow-ups
 
