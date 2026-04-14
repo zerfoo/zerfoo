@@ -2,6 +2,70 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-14: T98.2.1 static analysis -- upload path covers EmbeddedFrozen, narrows suspect
+
+**Type:** investigation
+**Tags:** gemma4, gemma4e, cuda, qnorm, upload-set, e98
+
+**Problem:** Narrow the gemma4e CUDA qNorm illegal memory access to a
+specific tensor that's not being uploaded to the CUDA arena.
+
+**Findings:**
+- `ztensor/graph/graph.go:399 Graph.ConstantTensors()` includes three
+  sources: (1) tensors from Parameter/Constant nodes, (2) every node's
+  `EmbeddedFrozen()` if it implements `EmbeddedFrozenProvider`, (3) every
+  node's `Parameters()` Value. So the PLE nodes' frozen tensors (via
+  `pleCombinedProducer.EmbeddedFrozen()` and
+  `pleSliceNode.EmbeddedFrozen()` which returns `n.normLayer.Parameters()`)
+  DO land in `ConstantTensors()` and thus get uploaded. H1 (upload
+  oversight) is invalidated as stated.
+- `paramWrapper.Wrap` (`inference/builder_helpers.go:66`) just returns a
+  `*graph.Parameter{Name, Value}` -- no registration with the graph. But
+  the wrapped Parameter is embedded in the consuming layer (RMSNorm,
+  Linear), which exposes it via its own `Parameters()`. Every arch uses
+  this pattern; gemma3 (which passes) uses the same `pw.Wrap`.
+- `arch_gemma4_edge.go:181-191` is structurally identical to the
+  corresponding section in `arch_common.go:154-164` (used by gemma3).
+  Both create `inputNorm` via `NewRMSNormFromParam` with `pw.Wrap` and
+  `AddNode(inputNorm, hidden)` to produce `normed`.
+- The error TrySlice length 7680 = 1 * 5 * 1536 (batch * seqLen * hidden)
+  matches the pre-attention RMSNorm output shape exactly, strongly
+  implying the failing read is on the RMSNorm output tensor itself, not
+  on Q/K/V post-projection slices.
+- `pleSliceNode.Parameters() = nil` and `layerOutputScaleNode.Parameters()
+  = nil` are intentional per a prior architectural guard (see memory obs
+  3963 -- PLE uses frozen tensors without Parameters for inference-only
+  execution). Their frozen tensors flow through `EmbeddedFrozen()`.
+
+**Open hypotheses for the next session:**
+1. **KVReuseNode-adjacent bug:** layer 15 (first shared) is where
+   `KVReuseNode` enters. If layer 0's GQA somehow reaches a donor output
+   reference via `donorGQA[]` that hasn't been flushed to GPU, that
+   explains the 7680-length zero slice. But layer 0 is a donor (not
+   consumer) so this is unlikely unless builder ordering is wrong.
+2. **qNorm weight shape mismatch:** `q_norm.weight` for gemma4e is
+   `[headDim]` (per-head), not `[hiddenSize]`. The fused qNorm kernel
+   may be slicing against a wrong stride when the weight is [headDim] but
+   the input is [B, S, hiddenSize]. Compare to gemma3 where qNorm is
+   likely absent (`opts.qkNorm = true` is set only for gemma3 in
+   arch_gemma.go:44, but gemma3:1b in Ollama may have
+   `opts.qkNorm = false`). Check whether Ollama's gemma3:1b manifest
+   actually has q_norm.weight in its GGUF.
+3. **fusedPreFFN boundary:** gemma4e uses a fused pre-FFN node at line 349
+   that takes both `attnOut` and `hidden` (residual). If it accesses the
+   residual before the attention output is committed to the arena, you
+   could see stale memory. But this would fail POST-attention, not AT
+   qNorm.
+
+**Next step:** build a debug binary that runs the CUDA engine with
+per-node shape + device logging during prefill. Alternatively, add a
+single printf at the GQA.Forward boundary dumping the input tensor's
+device pointer + a small checksum to prove whether `normed` is truly on
+GPU when GQA reads it.
+
+**Status:** T98.2.1 in progress; stopping at checkpoint. Root cause not
+yet identified; 3 hypotheses above for next session.
+
 ## 2026-04-14: T98.1.1 Gemma 4 edge CUDA qNorm bug is arch-specific (gemma3:1b PASSES)
 
 **Type:** investigation
