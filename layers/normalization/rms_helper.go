@@ -32,14 +32,8 @@ func rmsNormalize[T tensor.Numeric](
 ) (rmsNormalizeResult[T], error) {
 	var zero rmsNormalizeResult[T]
 
-	// T98.2.1 bisect probe #2: skip the GPU fused RMSNorm kernel entirely
-	// and force the multi-step fallback to test whether the fused kernel
-	// itself is corrupting CUDA state on gemma4e prefill.
-	if false /* T98.2.1 disabled */ {
-	}
-
 	// GPU fused single-pass kernel for float32.
-	if fused, ok := engine.(compute.FusedRMSNormer); false && ok {
+	if fused, ok := engine.(compute.FusedRMSNormer); ok {
 		if f32Input, iof := any(input).(*tensor.TensorNumeric[float32]); iof {
 			f32Gain, gOk := any(gain).(*tensor.TensorNumeric[float32])
 			f32Eps, eOk := any(epsilon).(float32)
@@ -52,14 +46,17 @@ func rmsNormalize[T tensor.Numeric](
 				if scales != nil {
 					rsqrt = any(scales).(*tensor.TensorNumeric[T])
 				}
-				// T98.2.1 probe: skip the broadcast Mul to test whether it is the
-				// kernel corrupting CUDA state on the gemma4e prefill path. The
-				// resulting `normalized` is unused by RMSNorm.Forward (only rsqrt
-				// is cached), and Backward recomputes it.
+				var normalized *tensor.TensorNumeric[T]
+				if rsqrt != nil {
+					normalized, err = engine.Mul(ctx, input, rsqrt)
+					if err != nil {
+						return zero, err
+					}
+				}
 				return rmsNormalizeResult[T]{
 					output:     any(out).(*tensor.TensorNumeric[T]),
 					rsqrt:      rsqrt,
-					normalized: nil,
+					normalized: normalized,
 				}, nil
 			}
 		}
