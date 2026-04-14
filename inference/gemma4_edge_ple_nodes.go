@@ -22,8 +22,10 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
 )
@@ -180,8 +182,7 @@ func (p *pleCombinedProducer[T]) Backward(_ context.Context, _ types.BackwardMod
 type pleSliceNode[T tensor.Numeric] struct {
 	engine    compute.Engine[T]
 	producer  *pleCombinedProducer[T]
-	normGain  *tensor.TensorNumeric[T] // [pleDim] shared RMSNorm gain
-	eps       float32
+	normLayer *normalization.RMSNorm[T] // shared per-layer projection norm
 	layerIdx  int
 	pleDim    int
 	numLayers int
@@ -189,6 +190,7 @@ type pleSliceNode[T tensor.Numeric] struct {
 
 func newPLESliceNode[T tensor.Numeric](
 	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
 	producer *pleCombinedProducer[T],
 	normGain *tensor.TensorNumeric[T],
 	eps float32,
@@ -207,11 +209,18 @@ func newPLESliceNode[T tensor.Numeric](
 	if layerIdx < 0 || layerIdx >= producer.numLayers {
 		return nil, fmt.Errorf("pleSliceNode: layerIdx %d out of range [0, %d)", layerIdx, producer.numLayers)
 	}
+	gainParam, err := graph.NewParameter[T](fmt.Sprintf("ple_proj_norm.gain.layer_%d", layerIdx), normGain, tensor.New[T])
+	if err != nil {
+		return nil, fmt.Errorf("pleSliceNode: wrap normGain: %w", err)
+	}
+	normLayer, err := normalization.NewRMSNormFromParam[T](engine, ops, ops.FromFloat64(float64(eps)), gainParam)
+	if err != nil {
+		return nil, fmt.Errorf("pleSliceNode: build RMSNorm: %w", err)
+	}
 	return &pleSliceNode[T]{
 		engine:    engine,
 		producer:  producer,
-		normGain:  normGain,
-		eps:       eps,
+		normLayer: normLayer,
 		layerIdx:  layerIdx,
 		pleDim:    producer.pleDim,
 		numLayers: producer.numLayers,
@@ -224,7 +233,12 @@ func (n *pleSliceNode[T]) OutputShape() []int                { return nil }
 func (n *pleSliceNode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
 func (n *pleSliceNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
-	return []*tensor.TensorNumeric[T]{n.normGain}
+	params := n.normLayer.Parameters()
+	frozen := make([]*tensor.TensorNumeric[T], 0, len(params))
+	for _, p := range params {
+		frozen = append(frozen, p.Value)
+	}
+	return frozen
 }
 
 // Forward reads the producer's cached tensors, extracts slice [layerIdx],
@@ -242,8 +256,9 @@ func (n *pleSliceNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeri
 	if err != nil {
 		return nil, fmt.Errorf("pleSliceNode(layer=%d): proj slice: %w", n.layerIdx, err)
 	}
-	// RMSNorm over last dim using the shared normGain.
-	projNormed, err := rmsNormLastDim[T](ctx, n.engine, projSlice, n.normGain, n.eps)
+	// Delegate RMSNorm to layers/normalization (architectural guard:
+	// private layer reimpls are disallowed outside layers/).
+	projNormed, err := n.normLayer.Forward(ctx, projSlice)
 	if err != nil {
 		return nil, fmt.Errorf("pleSliceNode(layer=%d): rmsnorm: %w", n.layerIdx, err)
 	}
@@ -289,44 +304,6 @@ func sliceLastDim[T tensor.Numeric](_ context.Context, _ compute.Engine[T], src 
 		}
 	}
 	return tensor.New[T]([]int{batch, seqLen, length}, out)
-}
-
-// rmsNormLastDim computes RMSNorm over the last axis of a rank-3 tensor
-// using the provided per-channel gain. Gemma-family RMSNorm uses (1 + gain)
-// as the effective scale (matches normalization.RMSNorm Gemma default).
-func rmsNormLastDim[T tensor.Numeric](_ context.Context, _ compute.Engine[T], src *tensor.TensorNumeric[T], gain *tensor.TensorNumeric[T], eps float32) (*tensor.TensorNumeric[T], error) {
-	shape := src.Shape()
-	if len(shape) != 3 {
-		return nil, fmt.Errorf("rmsNormLastDim: expected rank 3, got %d", len(shape))
-	}
-	dim := shape[2]
-	gainShape := gain.Shape()
-	if len(gainShape) != 1 || gainShape[0] != dim {
-		return nil, fmt.Errorf("rmsNormLastDim: gain shape %v incompatible with dim=%d", gainShape, dim)
-	}
-	gainData := gain.Data()
-	srcData := src.Data()
-	if srcData == nil || gainData == nil {
-		return nil, fmt.Errorf("rmsNormLastDim: CPU path requires dense data")
-	}
-	out := make([]T, len(srcData))
-	batch, seqLen := shape[0], shape[1]
-	for b := 0; b < batch; b++ {
-		for s := 0; s < seqLen; s++ {
-			off := (b*seqLen + s) * dim
-			var sumSq float64
-			for d := 0; d < dim; d++ {
-				v := float64(srcData[off+d])
-				sumSq += v * v
-			}
-			invRMS := 1.0 / math.Sqrt(sumSq/float64(dim)+float64(eps))
-			for d := 0; d < dim; d++ {
-				g := 1.0 + float64(gainData[d])
-				out[off+d] = T(float64(srcData[off+d]) * invRMS * g)
-			}
-		}
-	}
-	return tensor.New[T](shape, out)
 }
 
 // layerOutputScaleNode multiplies its input by a learned scalar stored as a
