@@ -1179,7 +1179,7 @@ edge builder to match the canonical architecture.
 
 #### E93.3: Builder rewrite
 
-- [ ] T93.3.1 Rewrite arch_gemma4_edge.go for canonical layout  Owner: TBD  Est: 3h  verifies: [UC-001]  (Previously blocked on AltUp/Laurel (retracted) and on GQA external-KV (now addressed by E95). HF transformers `modeling_gemma4.py` is the canonical reference; ADR-086 carries line-numbered wiring decisions; ADR-087 covers external-KV plumbing; wave E95 lands it before this task starts.)
+- [x] T93.3.1 Rewrite arch_gemma4_edge.go for canonical layout  Owner: TBD  Est: 3h  verifies: [UC-001]  2026 04 14  (Previously blocked on AltUp/Laurel (retracted) and on GQA external-KV (now addressed by E95). HF transformers `modeling_gemma4.py` is the canonical reference; ADR-086 carries line-numbered wiring decisions; ADR-087 covers external-KV plumbing; wave E95 lands it before this task starts.)
   Deps: T93.2.1, T93.1.2, E95 (all tasks)
   File: `inference/arch_gemma4_edge.go`
   In one focused pass, replace the per-layer-PLE-embedding path with the
@@ -1192,7 +1192,7 @@ edge builder to match the canonical architecture.
   "missing tensor" error on a real GGUF. No changes to exported symbols.
   All tensor lookups use the names defined in T93.2.1.
 
-- [ ] T93.3.2 Update synthetic fixtures in arch_gemma4_test.go  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T93.3.2 Update synthetic fixtures in arch_gemma4_test.go  Owner: TBD  Est: 1h  verifies: [UC-001]  2026 04 14
   Deps: T93.3.1
   File: `inference/arch_gemma4_test.go`
   Update `makeGemma4EdgeTestTensors` (and any sibling helpers) to produce the
@@ -1200,12 +1200,12 @@ edge builder to match the canonical architecture.
   propagate, no panics).
   AC: All existing edge-builder unit tests pass against the rewritten builder.
 
-- [ ] T93.3.3 Run full inference test suite  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T93.3.3 Run full inference test suite  Owner: TBD  Est: 15m  verifies: [infrastructure]  2026 04 14
   Deps: T93.3.1, T93.3.2
   AC: `go test ./inference/...` clean. Dense and MoE Gemma 4 builders
   unchanged and still pass.
 
-- [ ] T93.3.4 Lint and vet after builder rewrite  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T93.3.4 Lint and vet after builder rewrite  Owner: TBD  Est: 15m  verifies: [infrastructure]  2026 04 14
   Deps: T93.3.1
   AC: `go vet ./...` clean. `golangci-lint run` clean.
 
@@ -1281,7 +1281,7 @@ set already cataloged in `docs/gemma4-edge-architecture.md`. The three
 open wiring questions in ADR-086 remain, to be resolved by reading the
 correct Gemma 4 builder in llama.cpp (not `gemma3n-iswa.cpp`).
 
-- [ ] Agent 1: T93.3.1 -> T93.3.2 -> T93.3.3 -> T93.3.4
+- [x] Agent 1: T93.3.1 -> T93.3.2 -> T93.3.3 -> T93.3.4  2026 04 14
 
 #### Wave E93-4: Integration (1 agent)
 Deps: Wave E93-3. Steps gate each other (generation depends on graph, parity
