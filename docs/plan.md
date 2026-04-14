@@ -1179,7 +1179,7 @@ edge builder to match the canonical architecture.
 
 #### E93.3: Builder rewrite
 
-- [ ] T93.3.1 Rewrite arch_gemma4_edge.go for canonical layout  Owner: TBD  Est: 3h  verifies: [UC-001]
+- [ ] T93.3.1 Rewrite arch_gemma4_edge.go for canonical layout  Owner: TBD  Est: 3h  verifies: [UC-001]  BLOCKED: Gemma 4 edge uses AltUp (4-stream residual) + Laurel (aux branch) — see docs/devlog.md 2026-04-13 (evening). Needs new layer primitives, extended tensor-map, and new ADR before rewrite can start.
   Deps: T93.2.1, T93.1.2
   File: `inference/arch_gemma4_edge.go`
   In one focused pass, replace the per-layer-PLE-embedding path with the
@@ -1270,11 +1270,26 @@ Deps: Wave E93-1. Different files, no shared code.
 - [x] Agent 2: T93.2.2 (ModelConfig audit in arch.go)  2026 04 13
 - [x] Agent 3: T93.2.3 (lint + vet after Agents 1 and 2 land)  2026 04 13
 
-#### Wave E93-3: Builder rewrite (1 agent)
-Deps: Wave E93-2. All changes on one tightly coupled file; sequential avoids
-merge risk.
+#### Wave E93-3: Builder rewrite (BLOCKED — needs replan)
+Wave E93-3 cannot execute as scoped. Gemma 4 edge is the Gemma 3N
+architecture extended; its forward pass uses AltUp (4 parallel residual
+streams) plus Laurel (auxiliary gated branch). Neither primitive exists
+in zerfoo. See `docs/devlog.md` 2026-04-13 (evening) for the full
+finding and ground-truth reference to llama.cpp/src/models/gemma3n-iswa.cpp.
 
-- [ ] Agent 1: T93.3.1 -> T93.3.2 -> T93.3.3 -> T93.3.4
+Required before E93-3 can resume:
+- Extend `docs/gemma4-edge-architecture.md` with AltUp and Laurel tensors
+  (9 additional per-block names, 2 global names) and the 4-stream forward
+  pass.
+- Write ADR-087 (or supersede ADR-086) documenting AltUp + Laurel adoption.
+- Extend `model/gguf/arch.go` tensor-name map with altup_*/laurel_*/
+  per_layer_post_norm.
+- Add `layers/altup/` (router + predict + correct) and `layers/laurel/`
+  primitives with tests.
+
+Once the above lands, revise and re-run this wave.
+
+- [ ] Agent 1: T93.3.1 -> T93.3.2 -> T93.3.3 -> T93.3.4  BLOCKED
 
 #### Wave E93-4: Integration (1 agent)
 Deps: Wave E93-3. Steps gate each other (generation depends on graph, parity
