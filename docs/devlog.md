@@ -2,6 +2,38 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-14: T97.1.3 Gemma 4 edge generate on CUDA -- illegal memory access in qNorm
+
+**Type:** investigation
+**Tags:** gemma4, gemma4e, cuda, grouped-query-attention, rmsnorm, blocker
+
+**Problem:** Submitted pod `gemma4-e2e-20260414-164140` with
+`-mode generate -device cuda -prompt "The quick brown fox" -steps 20`.
+Pod loaded the model correctly (arch=gemma4e, 35 layers, PLE + shared-KV
+detected), but the first forward step of greedy decoding failed with:
+`GroupedQueryAttention: qNorm: cudaMemcpy failed: an illegal memory access
+was encountered (input shapes: [[1 5 1536]], dep ops: [RMSNorm])` preceded
+by three `GPUStorage.TrySlice: cudaMemcpy failed ... returning zero slice
+of length 7680` warnings.
+
+**Root cause:** Unknown. Forward mode (E96) used `compute.NewCPUEngine` and
+succeeded; generate mode uses `inference.LoadFile` with `-device cuda` which
+exercises the real CUDA engine + Generator. The illegal access originates in
+the Q-projection RMSNorm (per-head qNorm) of GroupedQueryAttention. Likely
+suspects: (a) qNorm gain tensor not uploaded to the GPU arena for the
+gemma4e path, (b) a slice/view over an external-KV or PLE-derived tensor
+that is CPU-backed instead of GPU-backed, (c) an alignment issue on the
+shared-KV donor/proxy tensors on the CUDA side.
+
+**Fix:** N/A yet. Filed as T97.1.3 BLOCKED. Next step: reproduce under a
+smaller model (gemma3:1b on CUDA) to confirm this is gemma4e-specific, then
+trace the qNorm gain tensor registration path in `inference/arch_gemma4_edge.go`
+vs the CPU-tested path from E96.
+
+**Impact:** Blocks T97.1.3 (GPU greedy decode verification) and the E97
+close-out. T97.1.1 (CLI surface) and T97.1.2 (Spark manifest params) landed
+successfully and are not affected.
+
 ## 2026-04-14: T97.2.1 Ollama Gemma 4 availability -- DEFER E97.2
 
 **Type:** investigation
