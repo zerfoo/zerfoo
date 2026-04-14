@@ -1393,6 +1393,154 @@ After E95 lands, E93-3 resumes with the external-KV API available and becomes a 
 
 ---
 
+## E96: DGX Staging + First Gemma 4 E2E Spark Run
+
+Verify E93-3/E93-4 end-to-end on real GPU. E93-4 shipped the harness
+(cmd/gemma4_e2e, docs/bench/manifests/gemma4-e2e.yaml, scripts/gemma4-spark.sh)
+but actual submission needs one-time DGX staging + the run itself. This
+epic closes that validation gap before anyone builds further on the Gemma 4
+stack.
+
+### E96.1: DGX staging
+
+- [ ] T96.1.1 Cross-compile gemma4_e2e for linux/arm64  Owner: TBD  Est: 10m  verifies: [infrastructure]
+  Deps: none
+  `GOOS=linux GOARCH=arm64 go build -o gemma4_e2e ./cmd/gemma4_e2e`
+  AC: arm64 binary produced, `file gemma4_e2e` reports ELF 64-bit aarch64,
+  size reasonable (under 50 MB).
+
+- [ ] T96.1.2 rsync binary to DGX /var/lib/zerfoo/bin/  Owner: TBD  Est: 5m  verifies: [infrastructure]
+  Deps: T96.1.1
+  `rsync -av gemma4_e2e ndungu@192.168.86.250:/var/lib/zerfoo/bin/`
+  AC: binary present on DGX, executable, matches local sha256.
+
+- [ ] T96.1.3 Copy Gemma 4 E2B GGUF to DGX /var/lib/zerfoo/models/  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  First check whether the host already has the model under ~/zerfoo or
+  /var/lib/zerfoo/models/. If absent: rsync from local cache
+  (~/.cache/zerfoo/models/gemma-4-E2B-it-Q4_K_M.gguf, ~3 GB) over the LAN.
+  AC: file present at /var/lib/zerfoo/models/gemma-4-E2B-it-Q4_K_M.gguf,
+  sha256 matches local.
+
+### E96.2: First Spark run
+
+- [ ] T96.2.1 Submit gemma4-e2e pod via scripts/gemma4-spark.sh  Owner: TBD  Est: 20m  verifies: [UC-001]
+  Deps: T96.1.2, T96.1.3
+  `scripts/gemma4-spark.sh -cleanup`
+  AC: pod reports completed, logs show "gemma4_e2e: PASS", forward pass
+  under 2 min, finite non-zero logits at shape [1, 4, vocab].
+
+- [ ] T96.2.2 Record result in docs/devlog.md  Owner: TBD  Est: 10m  verifies: [infrastructure]
+  Deps: T96.2.1
+  Journal entry with commit hash, pod name, runtime, first 10 logit values
+  (spot check finite), GPU memory usage from pod events.
+  AC: devlog entry appended at top.
+
+### E96 Waves
+
+#### Wave E96-1: Staging (2 agents)
+- [ ] Agent 1: T96.1.1 -> T96.1.2 (build + push binary, sequential)
+- [ ] Agent 2: T96.1.3 (copy GGUF, independent)
+
+Prereq: interactive SSH to 192.168.86.250 with ndungu@ creds available on
+the executing host. If automated agents cannot SSH, mark this wave as
+owner=human and run manually.
+
+#### Wave E96-2: Run (1 agent)
+Deps: Wave E96-1.
+- [ ] Agent 1: T96.2.1 -> T96.2.2
+
+---
+
+## E97: Gemma 4 Generation + Ollama Parity (follow-up to E93-4)
+
+Completes the verification started in E93-4. T93.4.2 and T93.4.3 were
+deferred because they each require a new integration surface (tokenizer
+for generation, external Ollama harness for parity). This epic lifts both
+with clearer scope.
+
+Deps: E96 complete (confirms forward pass on GPU works). All GPU tasks
+run against Spark on DGX.
+
+### E97.1: 50-token generation
+
+- [ ] T97.1.1 Extend cmd/gemma4_e2e with -mode=generate and -prompt flags  Owner: TBD  Est: 2h  verifies: [UC-001]
+  Deps: none (local work)
+  File: `cmd/gemma4_e2e/main.go`
+  Load tokenizer via `model.LoadTokenizerFromGGUF` (or equivalent), encode
+  `-prompt`, run greedy decode for N steps (default 50), emit token IDs +
+  decoded text + per-step logit finiteness.
+  AC: binary supports `-mode=generate -prompt "The quick" -steps 50`.
+  Local build green.
+
+- [ ] T97.1.2 Add generate mode to Spark manifest  Owner: TBD  Est: 20m  verifies: [infrastructure]
+  Deps: T97.1.1
+  File: `docs/bench/manifests/gemma4-e2e.yaml`
+  Parameterize args so the submit script picks mode=forward (E96) or
+  mode=generate (E97). Add a second manifest `gemma4-generate.yaml` if
+  substitution gets messy.
+  AC: `scripts/gemma4-spark.sh -mode generate -prompt "..."` submits a
+  pod that runs the generation path.
+
+- [ ] T97.1.3 Run generation on DGX and record result  Owner: TBD  Est: 30m  verifies: [UC-001]
+  Deps: T97.1.2, T96.2.1
+  AC: pod completes; decoded text non-degenerate (not all same token); no
+  NaN/Inf across all 50 steps; devlog entry with output.
+
+### E97.2: Ollama parity
+
+- [ ] T97.2.1 Evaluate Ollama Gemma 4 availability  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  Deps: none
+  Check `ollama list` for a Gemma 4 E2B variant. If unavailable, note
+  which variant is closest (gemma3:4b?) and whether parity is meaningful.
+  This gates the rest of E97.2.
+  AC: decision recorded in devlog (proceed / pick alternate / defer).
+
+- [ ] T97.2.2 Parity harness: shared prompt + top-1 extraction  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+  Deps: T97.2.1 (if proceed)
+  File: `cmd/gemma4_parity/main.go`
+  Run zerfoo generate and `ollama generate` on the same prompt at
+  temperature=0 for first N tokens. Emit JSON with both token lists +
+  divergence index.
+  AC: binary emits valid JSON for a dummy 3-token comparison locally.
+
+- [ ] T97.2.3 Run parity on DGX and document  Owner: TBD  Est: 45m  verifies: [UC-001]
+  Deps: T97.2.2, T97.1.3
+  AC: first 3 greedy tokens match; devlog documents divergence point if
+  any and its likely cause.
+
+### E97.3: Close out
+
+- [ ] T97.3.1 Mark T93.4.2 / T93.4.3 complete when E97 lands  Owner: TBD  Est: 5m  verifies: [infrastructure]
+  Deps: T97.1.3, T97.2.3
+  AC: plan updated; devlog closing entry.
+
+### E97 Waves
+
+#### Wave E97-1: Generation scaffolding (2 agents)
+- [ ] Agent 1: T97.1.1 (extend binary)
+- [ ] Agent 2: T97.2.1 (Ollama availability research)
+
+#### Wave E97-2: Spark + parity (2 agents)
+Deps: Wave E97-1.
+- [ ] Agent 1: T97.1.2 -> T97.1.3
+- [ ] Agent 2: T97.2.2
+
+#### Wave E97-3: Close (1 agent)
+Deps: Wave E97-2.
+- [ ] Agent 1: T97.2.3 -> T97.3.1
+
+---
+
+## E86 pointer: PyTorch Parity Testing
+
+Separate large epic already in this plan (see E86 earlier, line ~228).
+Independent of E96/E97 -- different domain (training/parity vs
+inference/GPU validation). Ready to schedule in its own waves when E96/E97
+clear. No changes in this planning pass.
+
+---
+
 ## E94: AltUp and Laurel Primitives for Gemma 4 Edge (ARCHIVED — premise retracted 2026-04-13)
 
 Archived 2026-04-13. Full retraction: docs/devlog.md. Board items #443-#454 closed as not-planned. Tasks T94.1.1-T94.4.2 are obsolete; E93-3 is unblocked at original scope.
@@ -1769,6 +1917,19 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-14: E96 + E97 added; plan now tracks DGX staging and Gemma 4 generation follow-ups
+
+- E96 "DGX Staging + First Gemma 4 E2E Spark Run" covers the one-time
+  validation of the E93-3/E93-4 deliverables on real GPU. 5 tasks across
+  staging (T96.1.1-3) and execution (T96.2.1-2). Wave count: 2 (staging
+  2 agents, run 1 agent).
+- E97 "Gemma 4 Generation + Ollama Parity" lifts the T93.4.2 / T93.4.3
+  tasks deferred out of E93-4 with concrete subtasks. 7 tasks across
+  generation (T97.1.x), parity harness (T97.2.x), and close-out
+  (T97.3.1). Wave count: 3.
+- E86 PyTorch Parity remains a separate large epic, already in this plan;
+  referenced but not restructured in this pass.
 
 ### 2026-04-13 (late night): E95 added, E93-3 gated on external-KV plumbing
 
