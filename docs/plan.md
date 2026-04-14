@@ -1463,14 +1463,14 @@ run against Spark on DGX.
 
 ### E97.1: 50-token generation
 
-- [ ] T97.1.1 Extend cmd/gemma4_e2e with -mode=generate and -prompt flags  Owner: TBD  Est: 2h  verifies: [UC-001]
+- [x] T97.1.1 Extend cmd/gemma4_e2e with -mode=generate and -prompt flags  Owner: dndungu  Est: 2h  verifies: [UC-001]  Completed: 2026-04-14
   Deps: none (local work)
   File: `cmd/gemma4_e2e/main.go`
-  Load tokenizer via `model.LoadTokenizerFromGGUF` (or equivalent), encode
-  `-prompt`, run greedy decode for N steps (default 50), emit token IDs +
-  decoded text + per-step logit finiteness.
-  AC: binary supports `-mode=generate -prompt "The quick" -steps 50`.
-  Local build green.
+  Used `inference.LoadFile` (wires graph + tokenizer + Generator), added
+  `-mode={forward|generate}`, `-prompt`, `-steps`, `-device` flags. Generate
+  path calls `m.Generate(ctx, prompt, WithTemperature(0), WithMaxTokens(steps))`
+  and asserts non-empty, non-degenerate output. Forward path (E96) unchanged.
+  AC met: `-mode=generate -prompt "..." -steps 50` wired; local build+vet+tests green.
 
 - [ ] T97.1.2 Add generate mode to Spark manifest  Owner: TBD  Est: 20m  verifies: [infrastructure]
   Deps: T97.1.1
@@ -1488,30 +1488,25 @@ run against Spark on DGX.
 
 ### E97.2: Ollama parity
 
-- [ ] T97.2.1 Evaluate Ollama Gemma 4 availability  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [x] T97.2.1 Evaluate Ollama Gemma 4 availability  Owner: dndungu  Est: 30m  verifies: [infrastructure]  Completed: 2026-04-14
   Deps: none
-  Check `ollama list` for a Gemma 4 E2B variant. If unavailable, note
-  which variant is closest (gemma3:4b?) and whether parity is meaningful.
-  This gates the rest of E97.2.
-  AC: decision recorded in devlog (proceed / pick alternate / defer).
+  Finding (ollama 0.17.7 on DGX): no Gemma 4 image in local library or
+  upstream registry; only gemma3:1b and gemma3:4b. Comparing against Gemma 3
+  would not be meaningful (different architecture, no PLE, no shared KV).
+  Decision: **defer** E97.2 until Ollama or llama.cpp ships a Gemma 4
+  builder; revisit via HuggingFace transformers reference if needed sooner.
+  AC met: decision recorded in devlog (2026-04-14 entry).
 
-- [ ] T97.2.2 Parity harness: shared prompt + top-1 extraction  Owner: TBD  Est: 1.5h  verifies: [UC-001]
-  Deps: T97.2.1 (if proceed)
-  File: `cmd/gemma4_parity/main.go`
-  Run zerfoo generate and `ollama generate` on the same prompt at
-  temperature=0 for first N tokens. Emit JSON with both token lists +
-  divergence index.
-  AC: binary emits valid JSON for a dummy 3-token comparison locally.
+- [ ] T97.2.2 Parity harness: shared prompt + top-1 extraction  Owner: TBD  Est: 1.5h  verifies: [UC-001]  DEFERRED (blocked by T97.2.1 finding)
+  Deps: T97.2.1 (proceed decision — currently DEFERRED)
 
-- [ ] T97.2.3 Run parity on DGX and document  Owner: TBD  Est: 45m  verifies: [UC-001]
+- [ ] T97.2.3 Run parity on DGX and document  Owner: TBD  Est: 45m  verifies: [UC-001]  DEFERRED (blocked by T97.2.1 finding)
   Deps: T97.2.2, T97.1.3
-  AC: first 3 greedy tokens match; devlog documents divergence point if
-  any and its likely cause.
 
 ### E97.3: Close out
 
-- [ ] T97.3.1 Mark T93.4.2 / T93.4.3 complete when E97 lands  Owner: TBD  Est: 5m  verifies: [infrastructure]
-  Deps: T97.1.3, T97.2.3
+- [ ] T97.3.1 Mark T93.4.2 complete when E97.1 lands  Owner: TBD  Est: 5m  verifies: [infrastructure]
+  Deps: T97.1.3 (T97.2.3 deferred — T93.4.3 stays open against E97.2 until Gemma 4 shows up upstream)
   AC: plan updated; devlog closing entry.
 
 ### E97 Waves

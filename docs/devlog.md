@@ -2,6 +2,27 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-14: T97.2.1 Ollama Gemma 4 availability -- DEFER E97.2
+
+**Type:** investigation
+**Tags:** gemma4, ollama, parity, e97
+
+**Problem:** E97.2 (Ollama parity) needs a matching Gemma 4 build on the
+reference runtime.
+
+**Finding:** `ollama list` on DGX (ollama 0.17.7) shows no Gemma 4 image;
+only `gemma3:1b`, `gemma3:4b`, `gemma3:4b-it-q4_K_M`. Gemma 4 E2B differs
+architecturally from Gemma 3 (adds PLE, shared KV layers 20-34, gemma4e
+variant detection). Comparing zerfoo Gemma 4 vs Ollama Gemma 3 would not
+establish parity.
+
+**Decision:** Defer T97.2.2 and T97.2.3 until Ollama or llama.cpp ships a
+Gemma 4 builder. Revisit via HuggingFace transformers Python reference if
+sooner parity is needed.
+
+**Impact:** E97.3 close-out (T97.3.1) now closes T93.4.2 only; T93.4.3
+(Ollama parity) stays open against E97.2 until upstream arrives.
+
 ## 2026-04-14: Gemma 4 E2B first end-to-end GPU forward on DGX (E96)
 
 **Type:** finding
