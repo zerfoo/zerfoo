@@ -135,12 +135,9 @@ func runGenerate(ggufPath, device, prompt string, steps int) error {
 	fmt.Printf("gemma4_e2e: arch=%s layers=%d hidden=%d vocab=%d\n",
 		cfg.Architecture, cfg.NumLayers, cfg.HiddenSize, cfg.VocabSize)
 
-	switch cfg.Architecture {
-	case "gemma4", "gemma4e", "gemma4moe":
-	default:
-		return fmt.Errorf("unexpected architecture %q", cfg.Architecture)
-	}
-
+	// Generate mode accepts any architecture inference.LoadFile handles. The
+	// gemma4/gemma4e/gemma4moe guard in forward mode exists for the E96 smoke
+	// check; generate mode uses the real Generator which validates arch itself.
 	fmt.Printf("gemma4_e2e: prompt=%q steps=%d\n", prompt, steps)
 	out, err := mdl.Generate(context.Background(), prompt,
 		inference.WithTemperature(0),
