@@ -74,6 +74,13 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	// Gemma 4 global attention layers use this optimization.
 	kEqV bool
 
+	// externalKV, when true, expects K and V to be supplied as forward
+	// inputs (inputs[1] and inputs[2]) instead of being computed from the
+	// layer's own wk/wv weights. In this mode the layer carries no wk, wv,
+	// or k_norm parameters. Used by architectures with cross-layer K/V
+	// sharing (e.g. Gemma 4 edge). Mutually exclusive with kEqV.
+	externalKV bool
+
 	// Cached tensors for backward pass
 	qProj           *tensor.TensorNumeric[T] // Projected Q
 	kProj           *tensor.TensorNumeric[T] // Projected K
@@ -106,6 +113,7 @@ type GQAOptions[T tensor.Numeric] struct {
 	MaxSeqLen     int
 	Bidirectional bool // when true, disables causal masking for encoder-style models
 	NoRoPE        bool // when true, skip RoPE creation (for models like GPT-2 that use learned position embeddings)
+	ExternalKV    bool // when true, K/V are supplied as Forward inputs; wk/wv/k_norm are not instantiated
 }
 
 // GQAOption is a function that applies an option to GQAOptions.
@@ -131,6 +139,21 @@ func WithMaxSeqLen[T tensor.Numeric](maxSeqLen int) GQAOption[T] {
 func WithBidirectionalGQA[T tensor.Numeric]() GQAOption[T] {
 	return func(o *GQAOptions[T]) {
 		o.Bidirectional = true
+	}
+}
+
+// WithExternalKV returns an option that configures the GroupedQueryAttention
+// layer to read K and V from additional Forward inputs instead of computing
+// them from internal wk/wv projections. When set, the constructor does not
+// instantiate wk, wv, or k_norm; Forward expects inputs[1] to be K and
+// inputs[2] to be V, each with shape [batch, seq, numKeyValueHeads * headDim]
+// (matching what the internal projection would produce). RoPE for K still
+// applies (if configured). Q, q_norm, w_out, attention math, and output
+// projection remain unchanged. This option is mutually exclusive with the
+// kEqV mode configured via SetKEqV. See ADR-087 for rationale.
+func WithExternalKV[T tensor.Numeric]() GQAOption[T] {
+	return func(o *GQAOptions[T]) {
+		o.ExternalKV = true
 	}
 }
 
@@ -182,14 +205,17 @@ func NewGroupedQueryAttention[T tensor.Numeric](
 		return nil, fmt.Errorf("failed to create WQ dense layer: %w", err)
 	}
 
-	wk, err := core.NewDense[T]("wk", engine, ops, modelDim, headDim*numKeyValueHeads) // K projection
-	if err != nil {
-		return nil, fmt.Errorf("failed to create WK dense layer: %w", err)
-	}
+	var wk, wv *core.Dense[T]
+	if !options.ExternalKV {
+		wk, err = core.NewDense[T]("wk", engine, ops, modelDim, headDim*numKeyValueHeads) // K projection
+		if err != nil {
+			return nil, fmt.Errorf("failed to create WK dense layer: %w", err)
+		}
 
-	wv, err := core.NewDense[T]("wv", engine, ops, modelDim, headDim*numKeyValueHeads) // V projection
-	if err != nil {
-		return nil, fmt.Errorf("failed to create WV dense layer: %w", err)
+		wv, err = core.NewDense[T]("wv", engine, ops, modelDim, headDim*numKeyValueHeads) // V projection
+		if err != nil {
+			return nil, fmt.Errorf("failed to create WV dense layer: %w", err)
+		}
 	}
 
 	// Initialize ScaledDotProductAttention. dk is headDim.
@@ -223,6 +249,7 @@ func NewGroupedQueryAttention[T tensor.Numeric](
 		wo:                        wo,
 		rope:                      rope,
 		bidirectional:             options.Bidirectional,
+		externalKV:                options.ExternalKV,
 	}, nil
 }
 
@@ -279,8 +306,17 @@ func (gqa *GroupedQueryAttention[T]) SetBidirectional(bidirectional bool) {
 // SetKEqV configures GQA to use the K projection output for both K and V.
 // When enabled, the V projection (wv) is skipped and K output is used as V.
 // This implements Gemma 4's unified K=V projection for global attention layers.
+// Mutually exclusive with WithExternalKV: panics if both are requested.
 func (gqa *GroupedQueryAttention[T]) SetKEqV(v bool) {
+	if v && gqa.externalKV {
+		panic("GroupedQueryAttention: SetKEqV is mutually exclusive with WithExternalKV")
+	}
 	gqa.kEqV = v
+}
+
+// ExternalKV reports whether this layer was configured with WithExternalKV.
+func (gqa *GroupedQueryAttention[T]) ExternalKV() bool {
+	return gqa.externalKV
 }
 
 // OutputShape returns the output shape of the GroupedQueryAttention.
@@ -298,8 +334,16 @@ func (gqa *GroupedQueryAttention[T]) ScaleRope(ctx context.Context, factor float
 
 // SetQKNorms sets optional per-head RMSNorm layers for Q and K projections.
 // Used by architectures like Gemma 3 that normalize Q/K after projection.
+// When externalKV is set, the kNorm argument is ignored (K is supplied
+// pre-computed and any normalization must have been applied by the donor).
 func (gqa *GroupedQueryAttention[T]) SetQKNorms(qNorm, kNorm graph.Node[T]) {
 	gqa.qNorm = qNorm
+	if gqa.externalKV {
+		// In external-KV mode the layer carries no k_norm: the donor layer
+		// is responsible for any K normalization before publishing.
+		gqa.kNorm = nil
+		return
+	}
 	gqa.kNorm = kNorm
 }
 
@@ -349,8 +393,12 @@ func (gqa *GroupedQueryAttention[T]) Parameters() []*graph.Parameter[T] {
 	var params []*graph.Parameter[T]
 
 	params = append(params, gqa.wq.Parameters()...)
-	params = append(params, gqa.wk.Parameters()...)
-	params = append(params, gqa.wv.Parameters()...)
+	if gqa.wk != nil {
+		params = append(params, gqa.wk.Parameters()...)
+	}
+	if gqa.wv != nil {
+		params = append(params, gqa.wv.Parameters()...)
+	}
 	params = append(params, gqa.wo.Parameters()...)
 
 	if p := gqa.MergedQKVParameter(); p != nil {
@@ -369,8 +417,21 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	input := inputs[0] // (batch_size, seq_len, model_dim)
 	gqa.outputShape = input.Shape()
 
-	var mask *tensor.TensorNumeric[T]
-	if len(inputs) > 1 {
+	var (
+		externalK *tensor.TensorNumeric[T]
+		externalV *tensor.TensorNumeric[T]
+		mask      *tensor.TensorNumeric[T]
+	)
+	if gqa.externalKV {
+		if len(inputs) < 3 {
+			return nil, fmt.Errorf("GroupedQueryAttention: externalKV mode expects at least 3 inputs (hidden, K, V), got %d", len(inputs))
+		}
+		externalK = inputs[1]
+		externalV = inputs[2]
+		if len(inputs) > 3 {
+			mask = inputs[3]
+		}
+	} else if len(inputs) > 1 {
 		mask = inputs[1]
 	}
 
@@ -383,7 +444,24 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 	// 1. Linear projections for Q, K, V
 	var err error
 	var qProj, kProj, vProj *tensor.TensorNumeric[T]
-	if gqa.mergedQKV != nil && seqLen == 1 {
+	switch {
+	case gqa.externalKV:
+		// External K/V path: Q projected normally, K/V taken from inputs.
+		qProj, err = gqa.wq.Forward(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		expectedKVDim := gqa.numKeyValueHeads * gqa.headDim
+		for name, t := range map[string]*tensor.TensorNumeric[T]{"K": externalK, "V": externalV} {
+			shape := t.Shape()
+			if len(shape) != 3 || shape[0] != batchSize || shape[1] != seqLen || shape[2] != expectedKVDim {
+				return nil, fmt.Errorf("GroupedQueryAttention: external %s has shape %v, expected [%d, %d, %d]",
+					name, shape, batchSize, seqLen, expectedKVDim)
+			}
+		}
+		kProj = externalK
+		vProj = externalV
+	case gqa.mergedQKV != nil && seqLen == 1:
 		// Merged QKV: single GEMV + zero-copy split for decode.
 		merged, mergeErr := gqa.engine.MatMul(ctx, input, gqa.mergedQKV)
 		if mergeErr != nil {
@@ -393,7 +471,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		if err != nil {
 			return nil, fmt.Errorf("split merged QKV: %w", err)
 		}
-	} else {
+	default:
 		qProj, err = gqa.wq.Forward(ctx, input)
 		if err != nil {
 			return nil, err
@@ -990,6 +1068,9 @@ func (gqa *GroupedQueryAttention[T]) reverseHeadReplication(ctx context.Context,
 //  6. Reverse head split (reshape/transpose back to projection shape)
 //  7. wq/wk/wv backward
 func (gqa *GroupedQueryAttention[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if gqa.externalKV {
+		return nil, fmt.Errorf("GroupedQueryAttention: Backward is not supported in externalKV mode")
+	}
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("GroupedQueryAttention: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
