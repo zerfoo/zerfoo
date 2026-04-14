@@ -32,8 +32,14 @@ func rmsNormalize[T tensor.Numeric](
 ) (rmsNormalizeResult[T], error) {
 	var zero rmsNormalizeResult[T]
 
+	// T98.2.1 bisect probe #2: skip the GPU fused RMSNorm kernel entirely
+	// and force the multi-step fallback to test whether the fused kernel
+	// itself is corrupting CUDA state on gemma4e prefill.
+	if false /* T98.2.1 disabled */ {
+	}
+
 	// GPU fused single-pass kernel for float32.
-	if fused, ok := engine.(compute.FusedRMSNormer); ok {
+	if fused, ok := engine.(compute.FusedRMSNormer); false && ok {
 		if f32Input, iof := any(input).(*tensor.TensorNumeric[float32]); iof {
 			f32Gain, gOk := any(gain).(*tensor.TensorNumeric[float32])
 			f32Eps, eOk := any(epsilon).(float32)
