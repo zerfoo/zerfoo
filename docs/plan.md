@@ -1067,6 +1067,223 @@ Deps: Wave E92-3
 
 ---
 
+## E93: Realign Gemma 4 Edge Builder with Canonical GGUF Layout
+
+### Context
+
+Wave E92-4 surfaced a structural mismatch between zerfoo's `arch_gemma4_edge.go`
+and real Gemma 4 edge GGUFs produced by Google/unsloth via llama.cpp. See
+`docs/devlog.md` 2026-04-13 for the full investigation. Summary:
+
+- zerfoo expects per-layer `model.layers.N.ple_embedding.weight`.
+- Real GGUFs ship a single shared `per_layer_token_embd.weight` plus per-layer
+  projection `blk.N.proj.weight`, and global `per_layer_model_proj.weight` and
+  `per_layer_proj_norm.weight`.
+- Real GGUFs additionally carry per-layer `inp_gate.weight`,
+  `layer_output_scale.weight`, `post_attention_norm.weight`, `post_ffw_norm.weight`,
+  and `post_norm.weight` that the current builder does not consume.
+
+Metadata routing (gemma4 -> gemma4e via PLE fingerprint), canonical-key
+extraction, and a skip-on-missing-env-var integration harness already shipped
+in commits 8213a7e6 and c6580c07. What remains is a structural rewrite of the
+edge builder to match the canonical architecture.
+
+### Approach
+
+1. Research the canonical Gemma 4 edge architecture end to end: shared PLE
+   table, per-layer projection path, input gate semantics, output scale
+   semantics, and the three additional norms per block. Sources:
+   unsloth/gemma-4-E2B-it-GGUF metadata and llama.cpp's Gemma 4 graph builder
+   for reference.
+2. Extend tensor name mapping in `inference/load_gguf.go` so the loaded tensor
+   map uses zerfoo-canonical names the builder can look up deterministically.
+3. Extend `gguf.ModelConfig` only where the new components need runtime flags
+   (most likely none; shapes derive from existing fields and tensor shapes).
+4. Rewrite `inference/arch_gemma4_edge.go` in one focused pass to consume the
+   canonical tensor set. Keep the `buildGemma4EdgeGraph` entry point and
+   registry entry stable so no call sites change.
+5. Update synthetic fixtures in `inference/arch_gemma4_test.go` to match the
+   new tensor layout, preserving shape-level structural tests.
+6. Re-run `tests/integration/gemma4_test.go` against the real Q4_K_M GGUF to
+   confirm graph build and forward pass. Expand to a 50-token autoregressive
+   generation test and compare top-1 next-token logits against Ollama on the
+   same prompt.
+
+### Acceptance Criteria
+
+- `TestGemma4E2B_EndToEnd` passes against a real unsloth/Google Gemma 4 E2B
+  GGUF when `GEMMA4_GGUF_PATH` is set: graph builds, forward pass produces
+  finite non-zero logits of shape `[1, seq, vocab]`, no NaN, no Inf, no
+  missing-tensor error.
+- `TestGemma4E2B_Generate50Tokens` produces 50 coherent tokens (non-repeating
+  pathological output, no NaN, matches llama.cpp/Ollama top-1 for at least
+  the first few deterministic greedy steps).
+- All existing unit tests in `inference/` pass (no regressions in dense or
+  MoE builders).
+- `go vet ./...` and `golangci-lint run` report zero new findings.
+- Integration test remains skippable via unset `GEMMA4_GGUF_PATH` so CI stays
+  green without the 3GB model file.
+
+### Work Breakdown
+
+#### E93.1: Research and decision record
+
+- [ ] T93.1.1 Document canonical Gemma 4 edge architecture  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Read unsloth GGUF metadata, llama.cpp Gemma 4 graph builder, and Google's
+  Gemma 4 technical report. Produce `docs/gemma4-edge-architecture.md` listing
+  every tensor, its shape, its role in the forward pass, and its position in
+  the block (pre-attn, post-attn, post-FFN, etc.).
+  AC: New doc exists. Every tensor observed in the real GGUF (verified via
+  tensor dump) is categorized and annotated.
+
+- [ ] T93.1.2 Create ADR for PLE sharing model  Owner: TBD  Est: 30m  verifies: [UC-001]
+  Deps: T93.1.1
+  File: `docs/adr/086-gemma4-edge-ple-architecture.md` (next number; confirm
+  by listing `docs/adr/`).
+  Document the decision to adopt the canonical shared-PLE-plus-per-layer-proj
+  layout over the prior per-layer-PLE assumption. Record alternatives
+  considered and why they were rejected.
+  AC: ADR file created with Status: Accepted. Plan references it.
+
+#### E93.2: Tensor mapping and config
+
+- [ ] T93.2.1 Add Gemma 4 edge tensor names to load_gguf name mapper  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T93.1.1
+  File: `inference/load_gguf.go`
+  Map GGUF names to zerfoo-canonical names:
+  - `per_layer_token_embd.weight` -> `model.ple_embed_tokens.weight`
+  - `per_layer_model_proj.weight` -> `model.ple_model_proj.weight`
+  - `per_layer_proj_norm.weight` -> `model.ple_proj_norm.weight`
+  - `blk.N.proj.weight` -> `model.layers.N.ple_layer_proj.weight`
+  - `blk.N.inp_gate.weight` -> `model.layers.N.input_gate.weight`
+  - `blk.N.layer_output_scale.weight` -> `model.layers.N.layer_output_scale.weight`
+  - `blk.N.post_attention_norm.weight` -> `model.layers.N.post_attention_layernorm.weight`
+  - `blk.N.post_ffw_norm.weight` -> `model.layers.N.post_ffw_layernorm.weight`
+  - `blk.N.post_norm.weight` -> `model.layers.N.post_layernorm.weight`
+  AC: Tensor map produced by `LoadGGUF` on a real Gemma 4 E2B GGUF contains
+  all target names. Unit test added to `inference/load_gguf_test.go` verifying
+  the mapping on a synthetic tensor-header fixture.
+
+- [ ] T93.2.2 Extend ModelConfig for edge-specific flags if needed  Owner: TBD  Est: 30m  verifies: [UC-001]
+  Deps: T93.1.1
+  File: `model/gguf/arch.go` and `model/gguf/arch_test.go`
+  Evaluate whether runtime flags (e.g., `HasInputGate`, `HasOutputScale`) are
+  required, or whether the builder can branch on tensor presence alone.
+  Conservative default: branch on tensor presence, add no new config fields.
+  AC: Either no change (documented why in commit message) or new fields
+  extracted from canonical GGUF keys with passing unit tests.
+
+- [ ] T93.2.3 Lint and vet after mapping changes  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T93.2.1, T93.2.2
+  AC: `go vet ./...` clean. `golangci-lint run` clean.
+
+#### E93.3: Builder rewrite
+
+- [ ] T93.3.1 Rewrite arch_gemma4_edge.go for canonical layout  Owner: TBD  Est: 3h  verifies: [UC-001]
+  Deps: T93.2.1, T93.1.2
+  File: `inference/arch_gemma4_edge.go`
+  In one focused pass, replace the per-layer-PLE-embedding path with the
+  canonical layout: shared PLE embed -> global PLE proj + norm -> per-layer
+  PLE proj per block. Wire the per-block input gate, output scale, and the
+  three additional norms (post-attention, post-FFN, post-norm) in their
+  correct positions in the forward graph. Keep `buildGemma4EdgeGraph`
+  signature and registry entry stable.
+  AC: File compiles. `buildGemma4EdgeGraph` returns a graph without the
+  "missing tensor" error on a real GGUF. No changes to exported symbols.
+  All tensor lookups use the names defined in T93.2.1.
+
+- [ ] T93.3.2 Update synthetic fixtures in arch_gemma4_test.go  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T93.3.1
+  File: `inference/arch_gemma4_test.go`
+  Update `makeGemma4EdgeTestTensors` (and any sibling helpers) to produce the
+  canonical tensor set. Preserve structural test intent (graph builds, shapes
+  propagate, no panics).
+  AC: All existing edge-builder unit tests pass against the rewritten builder.
+
+- [ ] T93.3.3 Run full inference test suite  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T93.3.1, T93.3.2
+  AC: `go test ./inference/...` clean. Dense and MoE Gemma 4 builders
+  unchanged and still pass.
+
+- [ ] T93.3.4 Lint and vet after builder rewrite  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T93.3.1
+  AC: `go vet ./...` clean. `golangci-lint run` clean.
+
+#### E93.4: Integration verification
+
+- [ ] T93.4.1 Run integration test against real E2B GGUF  Owner: TBD  Est: 30m  verifies: [UC-001]
+  Deps: T93.3.1, T93.3.2
+  `GEMMA4_GGUF_PATH=~/.cache/zerfoo/models/gemma-4-E2B-it-Q4_K_M.gguf go test -run TestGemma4E2B_EndToEnd ./tests/integration/...`
+  AC: Test passes. Output logs show arch=gemma4e, correct layer count,
+  non-zero finite logits.
+
+- [ ] T93.4.2 Add 50-token autoregressive generation test  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+  Deps: T93.4.1
+  File: `tests/integration/gemma4_test.go`
+  Add `TestGemma4E2B_Generate50Tokens`. Use the existing tokenizer path
+  (`model.LoadTokenizerFromGGUF` or equivalent) to tokenize a fixed prompt,
+  run 50 greedy decode steps, and verify no NaN, finite logits each step,
+  and non-degenerate output (not all the same token).
+  AC: Test passes on a real GGUF. Skips cleanly when `GEMMA4_GGUF_PATH` is
+  unset.
+
+- [ ] T93.4.3 Parity check against Ollama top-1 tokens  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T93.4.2
+  Compare greedy top-1 first-N tokens from zerfoo against
+  `ollama run gemma3:4b` (or the Gemma 4 variant when Ollama exposes it) on
+  the same prompt at temperature 0. Document any divergence in
+  `docs/devlog.md`.
+  AC: At minimum the first 3 greedy tokens match (allowing minor numeric
+  drift beyond that). Divergence analysis, if any, documented.
+
+- [ ] T93.4.4 Full project test run  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T93.3.3, T93.4.2
+  AC: `go test ./...` clean. No regressions in any package.
+
+- [ ] T93.4.5 Update devlog closing the 2026-04-13 blocker  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T93.4.1, T93.4.2
+  Append a closure note to `docs/devlog.md` summarizing the rework, linking
+  ADR-086, and marking T92.5.2 as unblocked.
+  AC: devlog updated. Plan updated to mark T92.5.2 complete with the date
+  and integration-test reference.
+
+### E93 Parallel Tracks
+
+| Track | Tasks | Description | Dependencies |
+|-------|-------|-------------|-------------|
+| A: Research | T93.1.1-T93.1.2 | Architecture doc + ADR | None |
+| B: Mapping | T93.2.1-T93.2.3 | Tensor mapper + config audit + lint | A |
+| C: Builder | T93.3.1-T93.3.4 | Edge builder rewrite + tests + lint | B |
+| D: Integration | T93.4.1-T93.4.5 | Real-GGUF verification + generation | C |
+
+### E93 Waves
+
+#### Wave E93-1: Research (1 agent)
+All deps-free research for this epic.
+
+- [ ] Agent 1: T93.1.1 + T93.1.2 (architecture doc + ADR)
+
+#### Wave E93-2: Foundations (3 agents)
+Deps: Wave E93-1. Different files, no shared code.
+
+- [ ] Agent 1: T93.2.1 (tensor name mapper in load_gguf.go)
+- [ ] Agent 2: T93.2.2 (ModelConfig audit in arch.go)
+- [ ] Agent 3: T93.2.3 (lint + vet after Agents 1 and 2 land)
+
+#### Wave E93-3: Builder rewrite (1 agent)
+Deps: Wave E93-2. All changes on one tightly coupled file; sequential avoids
+merge risk.
+
+- [ ] Agent 1: T93.3.1 -> T93.3.2 -> T93.3.3 -> T93.3.4
+
+#### Wave E93-4: Integration (1 agent)
+Deps: Wave E93-3. Steps gate each other (generation depends on graph, parity
+depends on generation).
+
+- [ ] Agent 1: T93.4.1 -> T93.4.2 -> T93.4.3 -> T93.4.4 -> T93.4.5
+
+---
+
 ## Backlog
 
 ### Community and DevRel
@@ -1437,6 +1654,20 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-13 (evening): E93 added -- gemma4e builder rework
+
+- Added E93 (12 tasks, 4 waves) to realign `arch_gemma4_edge.go` with the
+  canonical Gemma 4 edge GGUF layout surfaced by T92.5.2.
+- Wave E93-1: research + ADR-086 (shared PLE plus per-layer proj decision).
+- Wave E93-2: tensor name mapping (load_gguf.go) + config audit (arch.go).
+- Wave E93-3: single-agent builder rewrite + synthetic fixture update + lint.
+- Wave E93-4: integration verification (real-GGUF graph+forward, 50-token
+  generation, Ollama parity check, full test run, devlog closure).
+- T92.5.2 remains BLOCKED until E93 lands; closure note in T93.4.5 will
+  unblock it.
+- No new ADRs created in this planning pass; T93.1.2 creates ADR-086 during
+  execution.
 
 ### 2026-04-13: E92 added -- Gemma 4 architecture support
 
