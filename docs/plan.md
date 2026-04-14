@@ -1179,8 +1179,8 @@ edge builder to match the canonical architecture.
 
 #### E93.3: Builder rewrite
 
-- [ ] T93.3.1 Rewrite arch_gemma4_edge.go for canonical layout  Owner: TBD  Est: 3h  verifies: [UC-001]  (Previously blocked on AltUp/Laurel; retracted — see docs/devlog.md 2026-04-13 late evening. GGUF has no AltUp/Laurel tensors. Proceed at original scope; use llama.cpp's Gemma 4 builder as reference to resolve the three open wiring questions in ADR-086.)
-  Deps: T93.2.1, T93.1.2
+- [ ] T93.3.1 Rewrite arch_gemma4_edge.go for canonical layout  Owner: TBD  Est: 3h  verifies: [UC-001]  (Previously blocked on AltUp/Laurel (retracted) and on GQA external-KV (now addressed by E95). HF transformers `modeling_gemma4.py` is the canonical reference; ADR-086 carries line-numbered wiring decisions; ADR-087 covers external-KV plumbing; wave E95 lands it before this task starts.)
+  Deps: T93.2.1, T93.1.2, E95 (all tasks)
   File: `inference/arch_gemma4_edge.go`
   In one focused pass, replace the per-layer-PLE-embedding path with the
   canonical layout: shared PLE embed -> global PLE proj + norm -> per-layer
@@ -1288,6 +1288,94 @@ Deps: Wave E93-3. Steps gate each other (generation depends on graph, parity
 depends on generation).
 
 - [ ] Agent 1: T93.4.1 -> T93.4.2 -> T93.4.3 -> T93.4.4 -> T93.4.5
+
+---
+
+## E95: External K/V Input Path for GroupedQueryAttention (pre-req for E93-3)
+
+Added 2026-04-13 (night). E93-3 discovery found that `layers/attention/grouped_query_attention.go` has no API to skip K/V projection or accept external K/V tensors, but HF transformers Gemma 4 semantics require exactly that for shared-KV layers. Rather than hide the sharing (Option C) or construction-swap weights (Option A), we adopt Option B: add external-K/V as a first-class graph concept. Decision rationale: `docs/adr/087-external-kv-for-shared-kv-attention.md`.
+
+E93-3 is now gated on E95. E93-4 remains gated on E93-3.
+
+### E95.1: GQA API extension
+
+- [ ] T95.1.1 Add `WithExternalKV` option to GroupedQueryAttention  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+  File: `layers/attention/grouped_query_attention.go`
+  Add a `WithExternalKV()` functional option that sets an `externalKV bool` field. When set, `Forward` expects `inputs[1]` and `inputs[2]` to be pre-computed K and V tensors respectively, skips `wk.Forward`/`wv.Forward`, and does not instantiate `wk`, `wv`, `k_norm` parameters. Q, q_norm, w_out, RoPE for Q, attention math, and output projection remain unchanged. Default off; existing callers unchanged.
+  AC: new option compiles. Unit test exercises external-KV mode: build a GQA with `WithExternalKV()`, pass matching-shape K/V via inputs[1]/[2], compare output with a reference GQA that computed K/V internally from an equivalent setup. Shapes match exactly.
+
+- [ ] T95.1.2 Expose K/V as output ports from every GQA layer  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T95.1.1
+  File: `layers/attention/grouped_query_attention.go`
+  Every GQA layer already computes K and V (either from internal projection or external input). Expose them as additional output nodes so a downstream shared layer can read them. Options: (a) return K/V via `Outputs()` alongside the attention output, or (b) add `KPort()` and `VPort()` accessors. Choose (b) for clarity; the attention output stays the primary node.
+  AC: `KPort()`, `VPort()` return valid node references. Downstream nodes can wire them as inputs. Unit test builds two GQA layers, connects layer 0's KPort/VPort to layer 1's external-KV inputs, runs forward, confirms layer 1's K/V equals layer 0's K/V.
+
+### E95.2: Graph node wiring
+
+- [ ] T95.2.1 Add kv_reuse_node to inference  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T95.1.2
+  File: `inference/kv_reuse_node.go` (new)
+  Thin graph node that takes a donor layer's K (or V) port as input and passes it through unchanged. Exists to make the donor→shared edge explicit in the graph (for readability, impact tracing, and CUDA graph capture). If the donor's K/V can be wired directly without a pass-through node, skip this file and document the direct wiring approach in ADR-087 Implementation notes.
+  AC: node compiles, unit test verifies pass-through semantics, or (alternative) ADR-087 updated to note direct wiring works without a dedicated node.
+
+- [ ] T95.2.2 Donor resolution helper in inference  Owner: TBD  Est: 45m  verifies: [UC-001]
+  Deps: none (can run parallel with T95.1.1-T95.2.1)
+  File: `inference/kv_donor.go` (new)
+  Pure function `ResolveKVDonor(layerIdx int, firstSharedIdx int, layerTypes []LayerType) int` returns the donor layer index for a shared layer. Walks backward from `layerIdx-1` to 0 finding the nearest layer `j < firstSharedIdx` with `layerTypes[j] == layerTypes[layerIdx]`. Panics if no donor exists (caller bug). `LayerType` enum is `Sliding` or `Global`.
+  AC: table-driven test covers 35-layer Gemma 4 pattern (layer 20 sliding -> donor 18; layer 24 global -> donor 19; layer 25 sliding -> donor 23; etc.). Also tests edge cases: layerIdx < firstSharedIdx panics, empty layerTypes panics.
+
+### E95.3: Non-regression tests for shared infra
+
+- [ ] T95.3.1 Architecture smoke tests: Llama 3, Gemma 3, Mistral  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T95.1.1
+  Run existing tests for `inference/arch_llama.go`, `inference/arch_gemma.go`, and any Mistral architecture that uses GroupedQueryAttention. Confirm no behavior change (external-KV mode is default-off). If any test requires updating because it inspected GQA internals, minimize the change and document it.
+  AC: `go test ./inference/... -count=1 -race` clean. `go test ./layers/attention/... -count=1 -race` clean.
+
+- [ ] T95.3.2 Architecture smoke tests: Qwen 2, Phi, DeepSeek  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T95.1.1
+  Same as T95.3.1 for `arch_qwen*.go`, `arch_phi*.go`, `arch_deepseek*.go`. DeepSeek uses MLA which may not touch GQA; confirm by reading its builder.
+  AC: tests clean. DeepSeek's MLA path confirmed not affected or explicitly updated.
+
+### E95.4: Lint + vet
+
+- [ ] T95.4.1 Lint and vet after E95 changes  Owner: TBD  Est: 20m  verifies: [infrastructure]
+  Deps: T95.1.1, T95.1.2, T95.2.1, T95.2.2, T95.3.1, T95.3.2
+  AC: `go vet ./...` clean. `golangci-lint run` clean.
+
+### E95 Parallel Tracks
+
+| Track | Tasks | Description | Dependencies |
+|-------|-------|-------------|-------------|
+| A: API | T95.1.1-T95.1.2 | GQA external-KV mode + K/V port accessors | None |
+| B: Wiring | T95.2.1 | kv_reuse_node or direct wiring | A |
+| C: Donor | T95.2.2 | ResolveKVDonor helper | None (pure function) |
+| D: Non-regression | T95.3.1-T95.3.2 | Other architectures still green | A |
+| E: Lint | T95.4.1 | Final vet + lint | A, B, C, D |
+
+### E95 Waves
+
+#### Wave E95-1: Foundations (3 agents)
+Parallel at start. Track A builds the GQA extension; Track C writes the pure donor helper independently; non-regression tests can be pre-staged.
+
+- [ ] Agent 1: T95.1.1 (WithExternalKV option)
+- [ ] Agent 2: T95.1.2 (K/V output ports) — can start after Agent 1's types are committed; worktree isolation relaxes the constraint
+- [ ] Agent 3: T95.2.2 (ResolveKVDonor pure function)
+
+Coordinator note: T95.1.1 and T95.1.2 edit the same file. Run Agent 1 first, then Agent 2 in a second mini-wave if merge conflicts become painful; or run both in parallel worktrees and resolve on merge.
+
+#### Wave E95-2: Wiring + non-regression (3 agents)
+Deps: Wave E95-1.
+
+- [ ] Agent 1: T95.2.1 (kv_reuse_node or direct wiring decision)
+- [ ] Agent 2: T95.3.1 (Llama/Gemma3/Mistral smoke)
+- [ ] Agent 3: T95.3.2 (Qwen/Phi/DeepSeek smoke)
+
+#### Wave E95-3: Lint (1 agent)
+Deps: Wave E95-2.
+
+- [ ] Agent 1: T95.4.1
+
+After E95 lands, E93-3 resumes with the external-KV API available and becomes a clean HF-faithful transcription.
 
 ---
 
@@ -1667,6 +1755,26 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-13 (late night): E95 added, E93-3 gated on external-KV plumbing
+
+- Second Wave E93-3 spawn stopped on a ZERO-STUB call: `layers/attention/
+  grouped_query_attention.go` has no API to skip K/V projection or accept
+  external K/V tensors, but HF transformers Gemma 4 semantics require it
+  for shared-KV layers (HF `modeling_gemma4.py` lines 1148-1226).
+- Three options evaluated: (A) donor-weight swap at construction, (B)
+  first-class external-KV graph input, (C) ignore sharing. User chose B
+  for architectural cleanliness: K/V sharing becomes a reusable graph
+  concept that generalizes to future shared-KV architectures.
+- New epic E95 "External K/V Input Path for GroupedQueryAttention" added
+  with 7 tasks across 3 waves (API extension, wiring, non-regression,
+  lint). ADR-087 records the decision.
+- E93-3 deps updated: now gated on E95 completion. E93-4 remains gated
+  on E93-3.
+- Agent work from second E93-3 spawn (GGUF metadata dump program,
+  verified layer-type bool array + shared_kv_layers=20 count + per-layer
+  ffn lengths matching HF boundary at 15) was not committed; findings
+  captured in devlog and this plan entry.
 
 ### 2026-04-13 (night): ADR-086 wiring questions resolved
 
