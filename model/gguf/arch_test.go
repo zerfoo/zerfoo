@@ -764,6 +764,58 @@ func TestExtractModelConfig_Gemma4(t *testing.T) {
 		}
 	})
 
+	t.Run("routes dense to gemma4", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":        "gemma4",
+			"gemma4.embedding_length":     uint32(4096),
+			"gemma4.block_count":          uint32(48),
+			"gemma4.attention.head_count": uint32(32),
+		}
+		cfg, err := ExtractModelConfig(&File{Metadata: meta})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Architecture != "gemma4" {
+			t.Errorf("Architecture = %q, want gemma4 (dense)", cfg.Architecture)
+		}
+	})
+
+	t.Run("routes edge variant via PLE metadata", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":                    "gemma4",
+			"gemma4.embedding_length":                 uint32(1536),
+			"gemma4.block_count":                      uint32(35),
+			"gemma4.attention.head_count":             uint32(8),
+			"gemma4.embedding_length_per_layer_input": uint32(256),
+			"gemma4.attention.shared_kv_layers":       uint32(10),
+		}
+		cfg, err := ExtractModelConfig(&File{Metadata: meta})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Architecture != "gemma4e" {
+			t.Errorf("Architecture = %q, want gemma4e", cfg.Architecture)
+		}
+	})
+
+	t.Run("routes MoE variant via expert_count", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":        "gemma4",
+			"gemma4.embedding_length":     uint32(3072),
+			"gemma4.block_count":          uint32(36),
+			"gemma4.attention.head_count": uint32(24),
+			"gemma4.expert_count":         uint32(128),
+			"gemma4.expert_used_count":    uint32(8),
+		}
+		cfg, err := ExtractModelConfig(&File{Metadata: meta})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Architecture != "gemma4moe" {
+			t.Errorf("Architecture = %q, want gemma4moe", cfg.Architecture)
+		}
+	})
+
 	t.Run("explicit vocab overrides default", func(t *testing.T) {
 		meta := map[string]any{
 			"general.architecture":         "gemma4",

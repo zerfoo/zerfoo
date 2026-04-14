@@ -999,12 +999,12 @@ New code needed:
 
 #### E92.5: Integration Testing and Validation
 
-- [ ] T92.5.1 Download Gemma 4 E2B Q4_K_M GGUF for CI testing  Owner: TBD  Est: 30m  verifies: [infrastructure]  BLOCKED: awaiting public Gemma 4 GGUF availability
+- [x] T92.5.1 Download Gemma 4 E2B Q4_K_M GGUF for CI testing  Owner: TBD  Est: 30m  verifies: [infrastructure]  2026-04-13
   Smallest variant (~1.5GB Q4_K_M) for fast CI testing.
   Store path in test as `GEMMA4_GGUF_PATH` env var (skip if not set).
-  AC: GGUF file available on dev machine.
+  AC: GGUF file available on dev machine. ✓ Q4_K_M (2.9GB) at ~/.cache/zerfoo/models/ from unsloth/gemma-4-E2B-it-GGUF; Q8_0 via Ollama symlink.
 
-- [ ] T92.5.2 End-to-end inference test: load GGUF + generate text  Owner: TBD  Est: 1h  verifies: [UC-001]  BLOCKED: depends on T92.5.1
+- [ ] T92.5.2 End-to-end inference test: load GGUF + generate text  Owner: TBD  Est: 1h  verifies: [UC-001]  BLOCKED: gemma4e builder tensor-name mismatch — see docs/devlog.md 2026-04-13. Needs builder rework to match canonical GGUF tensors (shared per_layer_token_embd + per-layer proj, inp_gate, layer_output_scale, post_attention_norm, post_ffw_norm, post_norm).
   Deps: T92.2.1, T92.5.1
   File: tests/integration/gemma4_test.go
   Load Gemma 4 E2B GGUF, generate 50 tokens, verify coherent output.

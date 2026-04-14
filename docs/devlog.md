@@ -2,6 +2,40 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-13: Gemma 4 E2B e2e inference — builder tensor-name mismatch (T92.5.2)
+
+**Type:** investigation
+**Tags:** gemma4, inference, gguf, e92, blocker
+
+**Problem:** TestGemma4E2B_EndToEnd fails at graph-build on unsloth
+`gemma-4-E2B-it-Q4_K_M.gguf` with: `layer 0: missing PLE weight: missing
+tensor "model.layers.0.ple_embedding.weight"`. Arch routing to `gemma4e`
+works; 601 tensors load; config extraction populates PLE/KV-sharing fields.
+
+**Root cause:** zerfoo's `arch_gemma4_edge.go` assumes a per-layer PLE
+embedding table `model.layers.N.ple_embedding.weight`. The real Gemma 4
+edge GGUFs (Google/unsloth conversion) use a **single shared** PLE table
+`per_layer_token_embd.weight` plus per-layer projection tensors
+`blk.N.proj.weight`, `per_layer_model_proj.weight`, and
+`per_layer_proj_norm.weight`. Additional per-layer tensors not yet
+consumed by the builder: `blk.N.inp_gate.weight`,
+`blk.N.layer_output_scale.weight`, `blk.N.post_attention_norm.weight`,
+`blk.N.post_ffw_norm.weight`, `blk.N.post_norm.weight`.
+
+**Fix:** N/A yet — requires restructuring the gemma4e builder to match
+the canonical Gemma 4 edge architecture (shared PLE embedding + per-layer
+projection, input gate, output scale, three additional norms per block).
+T92.5.2 is blocked until the builder is updated. Progress landed:
+sub-variant routing (gemma4 → gemma4e/gemma4moe from metadata
+fingerprint), canonical GGUF key extraction (earlier today), and a
+skip-on-missing-env-var integration test harness.
+
+**Impact:** E92 Wave E92-4 cannot complete on real GGUFs without builder
+rework. Synthetic-tensor tests (arch_gemma4_test.go) still pass because
+they use zerfoo's invented tensor naming. Recommendation: open a new
+task to realign the edge builder with canonical GGUF tensor names before
+re-attempting T92.5.2.
+
 ## 2026-04-09: BISECTED — PatchTST GPU training OOM/slowdown at large shapes (#373)
 
 **Type:** investigation

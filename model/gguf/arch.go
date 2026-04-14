@@ -430,6 +430,22 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 		}
 	}
 
+	// Route Gemma 4 sub-variant based on metadata fingerprint.
+	// Canonical llama.cpp GGUFs declare arch=gemma4 for all variants; zerfoo
+	// needs the specific builder ("gemma4" dense, "gemma4moe", "gemma4e" edge).
+	if cfg.Architecture == "gemma4" {
+		switch {
+		case cfg.PLEHiddenSize > 0 || cfg.KVSharedLayers > 0:
+			cfg.Architecture = "gemma4e"
+			slog.Info("detected Gemma 4 edge variant from PLE/KV-sharing metadata",
+				"ple_hidden_size", cfg.PLEHiddenSize, "kv_shared_layers", cfg.KVSharedLayers)
+		case cfg.NumExperts > 0:
+			cfg.Architecture = "gemma4moe"
+			slog.Info("detected Gemma 4 MoE variant from expert_count metadata",
+				"num_experts", cfg.NumExperts)
+		}
+	}
+
 	// Detect the actual architecture — e.g. Mistral models that declare "llama".
 	cfg.Architecture = DetectActualArchitecture(f, cfg.Architecture)
 
