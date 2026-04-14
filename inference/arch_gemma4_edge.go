@@ -451,7 +451,7 @@ func buildGemma4EdgeGraph(
 		gateActivated := builder.AddNode(gelu, gateOut)
 
 		// Per-layer PLE slice: [B, S, pleDim], combined per HF line 1693-1696.
-		sliceNode, err := newPLESliceNode[float32](proxy, pleProducer, pleProjNormGain, rmsEps, i)
+		sliceNode, err := newPLESliceNode[float32](proxy, ops, pleProducer, pleProjNormGain, rmsEps, i)
 		if err != nil {
 			return nil, nil, fmt.Errorf("layer %d: pleSlice: %w", i, err)
 		}
