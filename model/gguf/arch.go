@@ -367,12 +367,12 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 			cfg.SlidingHeadDim = int(v)
 		}
 	}
-	// Derive AttentionKEqV from key_length == value_length when both present.
-	if keyLen, ok := f.GetUint32(prefix + "attention.key_length"); ok {
-		if valLen, ok2 := f.GetUint32(prefix + "attention.value_length"); ok2 && keyLen == valLen {
-			cfg.AttentionKEqV = true
-		}
-	}
+	// AttentionKEqV is an explicit metadata flag meaning K and V share the
+	// same projection weights. Do NOT derive it from key_length ==
+	// value_length -- equal shapes is not equivalent to shared weights.
+	// Google's Gemma 4 E2B config.json declares attention_k_eq_v=false
+	// despite key_length == value_length == 256. Only set from an explicit
+	// key below.
 	if v, ok := f.GetFloat32(prefix + "rope.global.dimension_fraction"); ok {
 		cfg.GlobalPartialRotaryFactor = v
 	}
@@ -423,7 +423,12 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 			cfg.SlidingNumKVHeads = cfg.NumKVHeads
 		}
 		if cfg.SlidingWindowPattern == 0 {
-			cfg.SlidingWindowPattern = 6
+			// Gemma 4 E2B pattern is 4 sliding + 1 full, repeating
+			// (sliding_window_pattern = 5). Google's official config.json
+			// declares this explicitly. The canonical GGUF key
+			// "gemma4.attention.sliding_window_pattern" is read earlier;
+			// this default only fires when the key is absent.
+			cfg.SlidingWindowPattern = 5
 		}
 		if cfg.VocabSize == 0 {
 			cfg.VocabSize = 262144

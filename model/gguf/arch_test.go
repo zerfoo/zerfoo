@@ -597,8 +597,8 @@ func TestExtractModelConfig_Gemma4(t *testing.T) {
 			t.Error("AttentionKEqV = false, want true")
 		}
 		// Gemma 4 defaults.
-		if cfg.SlidingWindowPattern != 6 {
-			t.Errorf("SlidingWindowPattern = %d, want 6 (default)", cfg.SlidingWindowPattern)
+		if cfg.SlidingWindowPattern != 5 {
+			t.Errorf("SlidingWindowPattern = %d, want 5 (Gemma 4 default: 4 sliding + 1 full)", cfg.SlidingWindowPattern)
 		}
 		if cfg.VocabSize != 262144 {
 			t.Errorf("VocabSize = %d, want 262144 (default)", cfg.VocabSize)
@@ -697,8 +697,8 @@ func TestExtractModelConfig_Gemma4(t *testing.T) {
 			t.Error("DoubleWideMLP = false, want true for E2B")
 		}
 		// Verify defaults still apply.
-		if cfg.SlidingWindowPattern != 6 {
-			t.Errorf("SlidingWindowPattern = %d, want 6 (default)", cfg.SlidingWindowPattern)
+		if cfg.SlidingWindowPattern != 5 {
+			t.Errorf("SlidingWindowPattern = %d, want 5 (Gemma 4 default: 4 sliding + 1 full)", cfg.SlidingWindowPattern)
 		}
 		if cfg.VocabSize != 262144 {
 			t.Errorf("VocabSize = %d, want 262144 (default)", cfg.VocabSize)
@@ -771,8 +771,8 @@ func TestExtractModelConfig_Gemma4(t *testing.T) {
 		if cfg.SlidingHeadDim != 256 {
 			t.Errorf("SlidingHeadDim = %d, want 256 (from attention.key_length_swa)", cfg.SlidingHeadDim)
 		}
-		if !cfg.AttentionKEqV {
-			t.Error("AttentionKEqV = false, want true (derived from key_length == value_length)")
+		if cfg.AttentionKEqV {
+			t.Error("AttentionKEqV = true, want false (equal key/value dims do not imply shared weights; official config declares attention_k_eq_v=false)")
 		}
 		if cfg.KVSharedLayers != 10 {
 			t.Errorf("KVSharedLayers = %d, want 10 (from attention.shared_kv_layers)", cfg.KVSharedLayers)
