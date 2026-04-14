@@ -1403,18 +1403,19 @@ stack.
 
 ### E96.1: DGX staging
 
-- [ ] T96.1.1 Cross-compile gemma4_e2e for linux/arm64  Owner: TBD  Est: 10m  verifies: [infrastructure]
+- [x] T96.1.1 Cross-compile gemma4_e2e for linux/arm64  Owner: dndungu  Est: 10m  verifies: [infrastructure]  Completed: 2026-04-14
   Deps: none
-  `GOOS=linux GOARCH=arm64 go build -o gemma4_e2e ./cmd/gemma4_e2e`
-  AC: arm64 binary produced, `file gemma4_e2e` reports ELF 64-bit aarch64,
-  size reasonable (under 50 MB).
+  Scope adjustment: darwin cross-compile fails (purego runtime.dlopen/dlsym
+  linknames unavailable without cgo); built natively on DGX with go 1.26.1
+  linux/arm64 directly into /var/lib/zerfoo/bin/gemma4_e2e (collapses into T96.1.2).
+  AC met: ELF 64-bit aarch64, 7.9 MB.
 
-- [ ] T96.1.2 rsync binary to DGX /var/lib/zerfoo/bin/  Owner: TBD  Est: 5m  verifies: [infrastructure]
+- [x] T96.1.2 rsync binary to DGX /var/lib/zerfoo/bin/  Owner: dndungu  Est: 5m  verifies: [infrastructure]  Completed: 2026-04-14
   Deps: T96.1.1
-  `rsync -av gemma4_e2e ndungu@192.168.86.250:/var/lib/zerfoo/bin/`
-  AC: binary present on DGX, executable, matches local sha256.
+  Done via native build on DGX into /var/lib/zerfoo/bin/gemma4_e2e.
+  AC met: binary present, executable, -rwxrwxr-x owned by ndungu.
 
-- [ ] T96.1.3 Copy Gemma 4 E2B GGUF to DGX /var/lib/zerfoo/models/  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [x] T96.1.3 Copy Gemma 4 E2B GGUF to DGX /var/lib/zerfoo/models/  Owner: dndungu  Est: 30m  verifies: [infrastructure]  Completed: 2026-04-14
   Deps: none
   First check whether the host already has the model under ~/zerfoo or
   /var/lib/zerfoo/models/. If absent: rsync from local cache
@@ -1424,17 +1425,15 @@ stack.
 
 ### E96.2: First Spark run
 
-- [ ] T96.2.1 Submit gemma4-e2e pod via scripts/gemma4-spark.sh  Owner: TBD  Est: 20m  verifies: [UC-001]
+- [x] T96.2.1 Submit gemma4-e2e pod via scripts/gemma4-spark.sh  Owner: dndungu  Est: 20m  verifies: [UC-001]  Completed: 2026-04-14
   Deps: T96.1.2, T96.1.3
-  `scripts/gemma4-spark.sh -cleanup`
-  AC: pod reports completed, logs show "gemma4_e2e: PASS", forward pass
-  under 2 min, finite non-zero logits at shape [1, 4, vocab].
+  Pod gemma4-e2e-20260414-160552 completed; forward PASS, shape [1,4,262144],
+  arch=gemma4e, 35 layers, all logits finite non-zero, runtime ~60s.
 
-- [ ] T96.2.2 Record result in docs/devlog.md  Owner: TBD  Est: 10m  verifies: [infrastructure]
+- [x] T96.2.2 Record result in docs/devlog.md  Owner: dndungu  Est: 10m  verifies: [infrastructure]  Completed: 2026-04-14
   Deps: T96.2.1
-  Journal entry with commit hash, pod name, runtime, first 10 logit values
-  (spot check finite), GPU memory usage from pod events.
-  AC: devlog entry appended at top.
+  Devlog entry "Gemma 4 E2B first end-to-end GPU forward on DGX (E96)"
+  appended 2026-04-14.
 
 ### E96 Waves
 

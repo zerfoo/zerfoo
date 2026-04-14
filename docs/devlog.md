@@ -2,6 +2,36 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-14: Gemma 4 E2B first end-to-end GPU forward on DGX (E96)
+
+**Type:** finding
+**Tags:** gemma4, gemma4e, spark, dgx, integration, e2e
+
+**Problem:** T93.4.1 left the forward-pass assertions gated behind a Spark
+harness because the 2B-param CPU forward exceeded test timeouts. E96 staged
+the binary + GGUF on the DGX host and ran the first true end-to-end pass.
+
+**Fix:** Darwin cross-compile of `cmd/gemma4_e2e` fails (purego's
+`runtime.dlopen`/`dlsym` linknames are unavailable in pure non-cgo cross
+builds). Switched to a native build on the DGX (go 1.26.1 linux/arm64)
+directly into `/var/lib/zerfoo/bin/gemma4_e2e` (7.9M ELF). Created
+`/var/lib/zerfoo/models/` (needed sudo; chown ndungu), rsynced
+`gemma-4-E2B-it-Q4_K_M.gguf` (2.9G). Submitted via
+`scripts/gemma4-spark.sh`; pod `gemma4-e2e-20260414-160552` completed on
+the DGX in ~60s (image pull + load + forward).
+
+**Impact:** First confirmed GPU forward of the canonical PLE + shared-KV
+Gemma 4 edge builder.
+
+- arch=gemma4e, layers=35, hidden=1536, vocab=262144, tensors=601
+- PLE detected (ple_hidden_size=256, kv_shared_layers=20)
+- Dequantization path upgraded `model.embed_tokens.weight` Q4->Q8
+- Forward output shape [1, 4, 262144], all logits finite non-zero, PASS
+- Runs on Spark `nvidia.com/gpu: 1`, memory:16Gi, cpu:"4" cgroup limits
+
+Closes E96.1 (T96.1.1-3) and E96.2 (T96.2.1-2). Leaves deferred T93.4.2
+(50-token generation) + T93.4.3 (Ollama parity) to E97.
+
 ## 2026-04-14: Gemma 4 E2B canonical rewrite landed (T93.3.x) + integration harness (T93.4.1)
 
 **Type:** finding
