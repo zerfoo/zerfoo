@@ -1147,7 +1147,7 @@ edge builder to match the canonical architecture.
 
 #### E93.2: Tensor mapping and config
 
-- [ ] T93.2.1 Add Gemma 4 edge tensor names to load_gguf name mapper  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T93.2.1 Add Gemma 4 edge tensor names to load_gguf name mapper  Owner: TBD  Est: 1h  verifies: [UC-001]  2026 04 13 (maps added to model/gguf/arch.go; consumed by inference/gguf.go via MapTensorName)
   Deps: T93.1.1
   File: `inference/load_gguf.go`
   Map GGUF names to zerfoo-canonical names:
@@ -1164,7 +1164,7 @@ edge builder to match the canonical architecture.
   all target names. Unit test added to `inference/load_gguf_test.go` verifying
   the mapping on a synthetic tensor-header fixture.
 
-- [ ] T93.2.2 Extend ModelConfig for edge-specific flags if needed  Owner: TBD  Est: 30m  verifies: [UC-001]
+- [x] T93.2.2 Extend ModelConfig for edge-specific flags if needed  Owner: TBD  Est: 30m  verifies: [UC-001]  2026 04 13 (NO new fields; existing PLEHiddenSize/KVSharedLayers/DoubleWideMLP/UseGELUFFN cover edge variant. Builder will branch on tensor presence for input_gate, output_scale, and extra norms.)
   Deps: T93.1.1
   File: `model/gguf/arch.go` and `model/gguf/arch_test.go`
   Evaluate whether runtime flags (e.g., `HasInputGate`, `HasOutputScale`) are
@@ -1173,7 +1173,7 @@ edge builder to match the canonical architecture.
   AC: Either no change (documented why in commit message) or new fields
   extracted from canonical GGUF keys with passing unit tests.
 
-- [ ] T93.2.3 Lint and vet after mapping changes  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T93.2.3 Lint and vet after mapping changes  Owner: TBD  Est: 15m  verifies: [infrastructure]  2026 04 13
   Deps: T93.2.1, T93.2.2
   AC: `go vet ./...` clean. `golangci-lint run` clean.
 
@@ -1266,9 +1266,9 @@ All deps-free research for this epic.
 #### Wave E93-2: Foundations (3 agents)
 Deps: Wave E93-1. Different files, no shared code.
 
-- [ ] Agent 1: T93.2.1 (tensor name mapper in load_gguf.go)
-- [ ] Agent 2: T93.2.2 (ModelConfig audit in arch.go)
-- [ ] Agent 3: T93.2.3 (lint + vet after Agents 1 and 2 land)
+- [x] Agent 1: T93.2.1 (tensor name mapper in load_gguf.go)  2026 04 13
+- [x] Agent 2: T93.2.2 (ModelConfig audit in arch.go)  2026 04 13
+- [x] Agent 3: T93.2.3 (lint + vet after Agents 1 and 2 land)  2026 04 13
 
 #### Wave E93-3: Builder rewrite (1 agent)
 Deps: Wave E93-2. All changes on one tightly coupled file; sequential avoids
