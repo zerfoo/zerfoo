@@ -2,6 +2,91 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-14: T98.2.1 dynamic instrumentation -- bug is UPSTREAM of GQA layer 0
+
+**Type:** investigation
+**Tags:** gemma4, gemma4e, cuda, e98, t98.2.1
+
+**Problem:** Localize where in the gemma4e CUDA prefill graph the illegal memory
+access first occurs. Prior static analysis ruled out missing tensor uploads but
+left three open hypotheses; we needed runtime evidence.
+
+**Approach:** Added `ZERFOO_GQA_DEBUG=1`-gated logging (layers/attention/
+grouped_query_attention.go) at GQA Forward entry and after Q/K/V projections.
+Logged storage type, GPU device pointer, and length without dereferencing
+(no D2H of suspect memory). Built the instrumented binary on DGX, submitted
+pod gemma4-e2e-20260414-224220 via Spark with `-mode generate -device cuda
+-prompt "The quick brown fox" -steps 5`.
+
+**Findings:**
+
+1. GQA layer 0 input is a valid GPU tensor:
+   `shape=[1 5 1536] storage=*tensor.GPUStorage[float32]
+    gpuPtr=0xe9eb00016900 gpuLen=7680`. The storage type, address, and length
+   are well-formed (high address consistent with GB10 unified memory).
+2. The very FIRST cudaMemcpy after that — triggered by the Q projection's
+   matmul fallback path calling `t.Data() -> GPUStorage.TrySlice()` on the
+   input — fails with "illegal memory access". Same for K and V.
+3. Each TrySlice failure makes the matmul return CPU storage (qProj, kProj,
+   vProj all `*tensor.CPUStorage[float32]` with `gpuPtr=0x0`).
+4. qNorm then fails the same way — but this is a downstream artifact: once
+   CUDA raises illegal-memory-access, it is sticky on the device until the
+   process exits. The qNorm error in the user-facing message is not the
+   first failure; it's the first one that wasn't swallowed by `Slice()`'s
+   warning fallback.
+
+**Conclusion:** The illegal memory access is raised BEFORE GQA layer 0 runs.
+The pre-GQA pipeline for gemma4e is:
+
+```
+Input -> Embedding (with sqrt(hidden) scale)
+      -> pleCombinedProducer (gemma4e-specific; runs MulScalar + MatMul on PLE
+         tables and stores result in p.tokenPLE / p.modelProj for later
+         consumption by per-layer pleSliceNode)
+      -> RMSNorm (input_layernorm)
+      -> GQA layer 0   <-- first place we observe broken state
+```
+
+Hypothesis (a) qNorm headDim/hiddenSize stride mismatch is now invalidated:
+the failure is upstream of qNorm and the sliding-vs-global path.
+Hypothesis (b) KVReuseNode is invalidated: layer 0 is a donor, not consumer.
+
+**New leading hypothesis:** `pleCombinedProducer.Forward` (inference/
+gemma4_edge_ple_nodes.go:106) issues GPU operations whose intermediate buffers
+either (i) overflow the engine pool such that subsequent allocations alias and
+free the RMSNorm output backing the GQA input, or (ii) corrupt CUDA state via
+a malformed kernel argument. Note the producer returns `hidden` unchanged but
+caches GPU tensors in `p.tokenPLE`/`p.modelProj` whose lifetime is the entire
+forward — a pattern not used by gemma3.
+
+**Next steps for next session:**
+1. Add the same instrumentation to (a) embedding output, (b) PLE producer
+   output (`p.tokenPLE`, `p.modelProj`, returned hidden), and (c) RMSNorm
+   output. Determine which of these is the LAST tensor whose pointer can be
+   read successfully via cudaMemcpy.
+2. If RMSNorm output reads OK but GQA input doesn't, the buffer is being
+   freed between the two -- look for use-after-free in the engine pool's
+   reference counting around the PLE producer's intermediates.
+3. Bisect: temporarily make `pleCombinedProducer.Forward` a no-op (return
+   `hidden` immediately, with stub p.tokenPLE/p.modelProj) and see if GQA
+   layer 0 still fails. If it now succeeds, the bug is inside PLE producer.
+
+**Artifacts:**
+- branch: e98-t98.2.1-gqa-debug-instr (commit c139b842)
+- pod: gemma4-e2e-20260414-224220
+- relevant log lines:
+  ```
+  [GQA_DBG] layer=0 input shape=[1 5 1536] storage=*tensor.GPUStorage[float32]
+            gpuPtr=0xe9eb00016900 gpuLen=7680
+  WARNING: GPUStorage.TrySlice: cudaMemcpy failed: an illegal memory access
+           was encountered; returning zero slice of length 7680
+  [GQA_DBG] layer=0 qProj shape=[1 5 2048] storage=*tensor.CPUStorage[float32]
+            gpuPtr=0x0 gpuLen=0
+  ... (kProj/vProj same pattern)
+  Generate: prefill forward: node[4] GroupedQueryAttention: qNorm:
+            cudaMemcpy failed: an illegal memory access was encountered
+  ```
+
 ## 2026-04-14: T98.2.1 static analysis -- upload path covers EmbeddedFrozen, narrows suspect
 
 **Type:** investigation
