@@ -442,12 +442,15 @@ func TestBuildGemma4Graph_KEqV(t *testing.T) {
 // --- Gemma 4 Edge variant tests (E4B, E2B) ---
 
 // makeGemma4_E4BTestTensors creates tensors for the Gemma 4 E4B edge variant
-// with PLE (Per-Layer Embeddings) and KV-shared layers.
+// using the canonical post-mapping layout (ADR-086):
+//   - Shared PLE table, projection, and norm at model.* level.
+//   - Per-block input_gate, ple_layer_proj, post_layernorm, layer_output_scale.
 func makeGemma4_E4BTestTensors(cfg *gguf.ModelConfig) map[string]*tensor.TensorNumeric[float32] {
 	tensors := makeGemma4_31BTestTensors(cfg)
 
 	hidden := cfg.HiddenSize
 	pleHidden := cfg.PLEHiddenSize
+	totalPLE := cfg.NumLayers * pleHidden
 
 	fill := func(shape []int) *tensor.TensorNumeric[float32] {
 		size := 1
@@ -461,20 +464,61 @@ func makeGemma4_E4BTestTensors(cfg *gguf.ModelConfig) map[string]*tensor.TensorN
 		t, _ := tensor.New(shape, data)
 		return t
 	}
+	ones := func(shape []int) *tensor.TensorNumeric[float32] {
+		size := 1
+		for _, d := range shape {
+			size *= d
+		}
+		data := make([]float32, size)
+		for i := range data {
+			data[i] = 1.0
+		}
+		t, _ := tensor.New(shape, data)
+		return t
+	}
+	zeros := func(shape []int) *tensor.TensorNumeric[float32] {
+		size := 1
+		for _, d := range shape {
+			size *= d
+		}
+		t, _ := tensor.New(shape, make([]float32, size))
+		return t
+	}
 
+	// Shared PLE tensors.
+	tensors["model.ple_embed_tokens.weight"] = fill([]int{cfg.VocabSize, totalPLE})
+	tensors["model.ple_model_proj.weight"] = fill([]int{totalPLE, hidden})
+	tensors["model.ple_proj_norm.weight"] = zeros([]int{pleHidden}) // Gemma uses (1+gain); 0 gain => identity.
+
+	// Remove k_proj/v_proj/k_norm for shared layers (canonical layout skips them).
+	firstSharedIdx := cfg.NumLayers - cfg.KVSharedLayers
+	if firstSharedIdx < 0 {
+		firstSharedIdx = 0
+	}
 	for i := 0; i < cfg.NumLayers; i++ {
 		prefix := "model.layers." + itoa(i) + "."
-		// PLE embedding weight: [vocab, ple_hidden_size].
-		tensors[prefix+"ple.weight"] = fill([]int{cfg.VocabSize, pleHidden})
-		// PLE projection weight: [hidden_size, ple_hidden_size] (GGUF convention: out, in).
-		tensors[prefix+"ple_proj.weight"] = fill([]int{hidden, pleHidden})
+		if i >= firstSharedIdx {
+			delete(tensors, prefix+"self_attn.k_proj.weight")
+			delete(tensors, prefix+"self_attn.v_proj.weight")
+			delete(tensors, prefix+"self_attn.k_norm.weight")
+		}
+		// Per-block PLE sub-block tensors.
+		// GGUF post-mapping convention stores weights as [out, in]; the loader
+		// flips to [in, out] for the framework. Fixtures author [out, in] to
+		// match the real GGUF loader path.
+		tensors[prefix+"input_gate.weight"] = fill([]int{pleHidden, hidden})
+		tensors[prefix+"ple_layer_proj.weight"] = fill([]int{hidden, pleHidden})
+		tensors[prefix+"post_layernorm.weight"] = ones([]int{hidden})
+		tensors[prefix+"layer_output_scale.weight"] = ones([]int{1})
 	}
 
 	return tensors
 }
 
 // makeGemma4_E2BTestTensors creates tensors for the Gemma 4 E2B edge variant
-// with PLE, KV-shared layers, and double-wide MLP.
+// using the canonical post-mapping layout (ADR-086): canonical PLE at
+// model.* level plus per-block input_gate, ple_layer_proj, post_layernorm,
+// layer_output_scale. E2B uses double-wide MLP.
 func makeGemma4_E2BTestTensors(cfg *gguf.ModelConfig) map[string]*tensor.TensorNumeric[float32] {
 	hidden := cfg.HiddenSize
 	headDim := cfg.HiddenSize / cfg.NumHeads
@@ -482,6 +526,7 @@ func makeGemma4_E2BTestTensors(cfg *gguf.ModelConfig) map[string]*tensor.TensorN
 		headDim = cfg.HeadDim
 	}
 	pleHidden := cfg.PLEHiddenSize
+	totalPLE := cfg.NumLayers * pleHidden
 	inter := cfg.IntermediateSize
 	if cfg.DoubleWideMLP {
 		inter = cfg.IntermediateSize * 2
@@ -511,35 +556,58 @@ func makeGemma4_E2BTestTensors(cfg *gguf.ModelConfig) map[string]*tensor.TensorN
 		t, _ := tensor.New(shape, data)
 		return t
 	}
+	zeros := func(shape []int) *tensor.TensorNumeric[float32] {
+		size := 1
+		for _, d := range shape {
+			size *= d
+		}
+		t, _ := tensor.New(shape, make([]float32, size))
+		return t
+	}
 
 	tensors := make(map[string]*tensor.TensorNumeric[float32])
 	tensors["model.embed_tokens.weight"] = fill([]int{cfg.VocabSize, hidden})
 	tensors["model.norm.weight"] = ones([]int{hidden})
 
+	// Shared PLE tensors (ADR-086).
+	tensors["model.ple_embed_tokens.weight"] = fill([]int{cfg.VocabSize, totalPLE})
+	tensors["model.ple_model_proj.weight"] = fill([]int{totalPLE, hidden})
+	tensors["model.ple_proj_norm.weight"] = zeros([]int{pleHidden})
+
+	firstSharedIdx := cfg.NumLayers - cfg.KVSharedLayers
+	if firstSharedIdx < 0 {
+		firstSharedIdx = 0
+	}
+
 	kvDim := headDim * cfg.NumKVHeads
 	for i := 0; i < cfg.NumLayers; i++ {
 		prefix := "model.layers." + itoa(i) + "."
 
-		// Standard Gemma 4 layer tensors.
 		tensors[prefix+"input_layernorm.weight"] = ones([]int{hidden})
 		tensors[prefix+"self_attn.q_proj.weight"] = fill([]int{hidden, hidden})
-		tensors[prefix+"self_attn.k_proj.weight"] = fill([]int{kvDim, hidden})
-		tensors[prefix+"self_attn.v_proj.weight"] = fill([]int{kvDim, hidden})
 		tensors[prefix+"self_attn.o_proj.weight"] = fill([]int{hidden, hidden})
 		tensors[prefix+"post_attention_layernorm.weight"] = ones([]int{hidden})
 		tensors[prefix+"pre_feedforward_layernorm.weight"] = ones([]int{hidden})
 		tensors[prefix+"post_feedforward_layernorm.weight"] = ones([]int{hidden})
 		tensors[prefix+"self_attn.q_norm.weight"] = ones([]int{headDim})
-		tensors[prefix+"self_attn.k_norm.weight"] = ones([]int{headDim})
+
+		// Shared layers skip k_proj/v_proj/k_norm (HF modeling_gemma4.py 1167).
+		if i < firstSharedIdx {
+			tensors[prefix+"self_attn.k_proj.weight"] = fill([]int{kvDim, hidden})
+			tensors[prefix+"self_attn.v_proj.weight"] = fill([]int{kvDim, hidden})
+			tensors[prefix+"self_attn.k_norm.weight"] = ones([]int{headDim})
+		}
 
 		// Double-wide MLP.
 		tensors[prefix+"mlp.gate_proj.weight"] = fill([]int{inter, hidden})
 		tensors[prefix+"mlp.up_proj.weight"] = fill([]int{inter, hidden})
 		tensors[prefix+"mlp.down_proj.weight"] = fill([]int{hidden, inter})
 
-		// PLE tensors.
-		tensors[prefix+"ple.weight"] = fill([]int{cfg.VocabSize, pleHidden})
-		tensors[prefix+"ple_proj.weight"] = fill([]int{hidden, pleHidden})
+		// PLE sub-block (per-layer).
+		tensors[prefix+"input_gate.weight"] = fill([]int{pleHidden, hidden})
+		tensors[prefix+"ple_layer_proj.weight"] = fill([]int{hidden, pleHidden})
+		tensors[prefix+"post_layernorm.weight"] = ones([]int{hidden})
+		tensors[prefix+"layer_output_scale.weight"] = ones([]int{1})
 	}
 
 	return tensors
@@ -622,7 +690,7 @@ func TestBuildGemma4EdgeGraph_E2B_DoubleWideMLP(t *testing.T) {
 		Architecture:         "gemma4e",
 		VocabSize:            32,
 		HiddenSize:           16,
-		NumLayers:            2,
+		NumLayers:            4,
 		NumHeads:             4,
 		NumKVHeads:           2,
 		IntermediateSize:     32,
@@ -677,27 +745,31 @@ func TestBuildGemma4EdgeGraph_KVSharing(t *testing.T) {
 	}
 	tensors := makeGemma4_E4BTestTensors(cfg)
 
-	// Verify that layers 0 and 1 share the same K/V tensors (from layer 0).
-	kLayer0 := tensors["model.layers.0.self_attn.k_proj.weight"]
-	vLayer0 := tensors["model.layers.0.self_attn.v_proj.weight"]
-	kLayer1 := tensors["model.layers.1.self_attn.k_proj.weight"]
-	vLayer1 := tensors["model.layers.1.self_attn.v_proj.weight"]
-
-	// In the tensor map, each layer has its own weights. But the builder should
-	// load K/V from the source layer. Verify the builder resolves KV correctly
-	// by checking that the source tensors exist and the build succeeds.
-	if kLayer0 == nil || vLayer0 == nil {
-		t.Fatal("source layer 0 K/V tensors missing")
+	// In the canonical layout (ADR-086, ADR-087), the last KVSharedLayers
+	// layers do not own k_proj/v_proj/k_norm tensors -- they reuse K/V at
+	// runtime via KVReuseNode from the nearest non-shared layer of the same
+	// attention type. With NumLayers=4 and KVSharedLayers=2, layers 0..1 are
+	// donors and layers 2..3 are shared consumers.
+	for i := 0; i < 2; i++ {
+		prefix := "model.layers." + itoa(i) + "."
+		if tensors[prefix+"self_attn.k_proj.weight"] == nil {
+			t.Fatalf("donor layer %d k_proj.weight missing", i)
+		}
+		if tensors[prefix+"self_attn.v_proj.weight"] == nil {
+			t.Fatalf("donor layer %d v_proj.weight missing", i)
+		}
 	}
-	if kLayer1 == nil || vLayer1 == nil {
-		t.Fatal("layer 1 K/V tensors missing (expected for tensor map, builder uses layer 0's)")
-	}
-
-	// Layers 2-3 share KV from layer 2.
-	kLayer2 := tensors["model.layers.2.self_attn.k_proj.weight"]
-	vLayer2 := tensors["model.layers.2.self_attn.v_proj.weight"]
-	if kLayer2 == nil || vLayer2 == nil {
-		t.Fatal("source layer 2 K/V tensors missing")
+	for i := 2; i < 4; i++ {
+		prefix := "model.layers." + itoa(i) + "."
+		if _, exists := tensors[prefix+"self_attn.k_proj.weight"]; exists {
+			t.Fatalf("shared layer %d unexpectedly has k_proj.weight", i)
+		}
+		if _, exists := tensors[prefix+"self_attn.v_proj.weight"]; exists {
+			t.Fatalf("shared layer %d unexpectedly has v_proj.weight", i)
+		}
+		if _, exists := tensors[prefix+"self_attn.k_norm.weight"]; exists {
+			t.Fatalf("shared layer %d unexpectedly has k_norm.weight", i)
+		}
 	}
 
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
