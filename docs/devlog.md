@@ -2,6 +2,41 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-14: Gemma 4 E2B canonical rewrite landed (T93.3.x) + integration harness (T93.4.1)
+
+**Type:** finding
+**Tags:** gemma4, ple, shared-kv, integration, spark
+
+**Problem:** 2026-04-13 `TestGemma4E2B_EndToEnd` failed with "missing tensor:
+model.layers.0.ple_embedding.weight" because the builder expected per-layer
+PLE embeddings; the canonical unsloth/Google GGUFs pack all 35 per-layer
+slices into a single `per_layer_token_embd` table. ADR-086 adopted the
+canonical layout. E95 added the external-KV primitives (WithExternalKV,
+KPort/VPort, kv_reuse_node, ResolveKVDonor) required to model shared-KV
+layers 20-34 without weight duplication.
+
+**Fix:** Wave E93-3 (PR #465) rewrote `inference/arch_gemma4_edge.go` for
+the canonical shared-PLE + per-block proj + shared-KV layout (~940 lines
+added). Also surfaced a private-layer-reimpl architectural-test failure in
+the first CI run (private `rmsNormLastDim` in `gemma4_edge_ple_nodes.go`);
+refactored to delegate to `layers/normalization.NewRMSNormFromParam`.
+
+Wave E93-4 (T93.4.1) hit a second constraint: a 2B-parameter CPU forward
+pass exceeds reasonable test timeouts (> 5 min, OOM-killed at ~2 min during
+tensor unpacking). Rather than keep a broken CI test, the forward-pass
+portion of `TestGemma4E2B_EndToEnd` is now gated behind
+`GEMMA4_RUN_FORWARD=1` and delivered as a standalone binary under
+`cmd/gemma4_e2e/` submitted to Spark on DGX via
+`docs/bench/manifests/gemma4-e2e.yaml` + `scripts/gemma4-spark.sh`. The CPU
+test continues to exercise LoadGGUF + BuildArchGraph (the layer that
+ADR-086 was actually about).
+
+**Impact:** T92.5.2 is unblocked on the framework side; actual GPU
+verification requires one-time DGX staging (binary + GGUF under
+`/var/lib/zerfoo/`) and a Spark submission. T93.4.2 (50-token generation)
+and T93.4.3 (Ollama parity) remain follow-ups — both require tokenizer
+integration and an external comparison harness beyond T93.4.1's scope.
+
 ## 2026-04-13 (very late evening): Retraction confirmed via Google's official config.json
 
 **Type:** investigation

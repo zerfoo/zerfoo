@@ -1,0 +1,75 @@
+# Gemma 4 E2B end-to-end integration pod manifest (T93.4.1).
+#
+# Submit via scripts/gemma4-spark.sh, which substitutes ${RUN_ID} and
+# ${GGUF_PATH} before POSTing to Spark's /api/v1/pods endpoint.
+#
+# Prerequisites on the DGX host:
+#   1. /var/lib/zerfoo/bin/gemma4_e2e is a linux/arm64 binary built from
+#      cmd/gemma4_e2e/main.go. Build via:
+#         GOOS=linux GOARCH=arm64 go build -o gemma4_e2e ./cmd/gemma4_e2e
+#      then scp or rsync to the host's /var/lib/zerfoo/bin/.
+#   2. The GGUF file is accessible at the path supplied via ${GGUF_PATH}
+#      (e.g. /var/lib/zerfoo/models/gemma-4-E2B-it-Q4_K_M.gguf on the host,
+#      mounted read-only into the pod).
+#
+# Resource caps (cgroups enforced by Podman on the DGX host):
+#   memory 16Gi       (2B Q4_K_M model dequantized to FP32 ~= 8GB; 2x margin)
+#   cpu "4"
+#   nvidia.com/gpu 1  (serialized via SPARK_GPU_MAX=1 on the host)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gemma4-e2e-${RUN_ID}
+  labels:
+    app: integration
+    type: gemma4-e2e
+spec:
+  restartPolicy: Never
+  containers:
+    - name: e2e
+      image: docker.io/library/ubuntu:24.04
+      command:
+        - /var/lib/zerfoo/bin/gemma4_e2e
+      args:
+        - "-gguf"
+        - "${GGUF_PATH}"
+        - "-seq"
+        - "4"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 16Gi
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: zerfoo-bin
+          mountPath: /var/lib/zerfoo/bin
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: zerfoo-models
+          mountPath: /var/lib/zerfoo/models
+          readOnly: true
+  volumes:
+    - name: zerfoo-bin
+      hostPath:
+        path: /var/lib/zerfoo/bin
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: zerfoo-models
+      hostPath:
+        path: /var/lib/zerfoo/models
+        type: Directory
