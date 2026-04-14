@@ -1312,7 +1312,7 @@ E93-3 is now gated on E95. E93-4 remains gated on E93-3.
 
 ### E95.2: Graph node wiring
 
-- [ ] T95.2.1 Add kv_reuse_node to inference  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T95.2.1 Add kv_reuse_node to inference  Owner: TBD  Est: 1h  verifies: [UC-001]  2026 04 13
   Deps: T95.1.2
   File: `inference/kv_reuse_node.go` (new)
   Thin graph node that takes a donor layer's K (or V) port as input and passes it through unchanged. Exists to make the donor→shared edge explicit in the graph (for readability, impact tracing, and CUDA graph capture). If the donor's K/V can be wired directly without a pass-through node, skip this file and document the direct wiring approach in ADR-087 Implementation notes.
@@ -1326,12 +1326,12 @@ E93-3 is now gated on E95. E93-4 remains gated on E93-3.
 
 ### E95.3: Non-regression tests for shared infra
 
-- [ ] T95.3.1 Architecture smoke tests: Llama 3, Gemma 3, Mistral  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T95.3.1 Architecture smoke tests: Llama 3, Gemma 3, Mistral  Owner: TBD  Est: 1h  verifies: [infrastructure]  2026 04 13
   Deps: T95.1.1
   Run existing tests for `inference/arch_llama.go`, `inference/arch_gemma.go`, and any Mistral architecture that uses GroupedQueryAttention. Confirm no behavior change (external-KV mode is default-off). If any test requires updating because it inspected GQA internals, minimize the change and document it.
   AC: `go test ./inference/... -count=1 -race` clean. `go test ./layers/attention/... -count=1 -race` clean.
 
-- [ ] T95.3.2 Architecture smoke tests: Qwen 2, Phi, DeepSeek  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T95.3.2 Architecture smoke tests: Qwen 2, Phi, DeepSeek  Owner: TBD  Est: 1h  verifies: [infrastructure]  2026 04 13
   Deps: T95.1.1
   Same as T95.3.1 for `arch_qwen*.go`, `arch_phi*.go`, `arch_deepseek*.go`. DeepSeek uses MLA which may not touch GQA; confirm by reading its builder.
   AC: tests clean. DeepSeek's MLA path confirmed not affected or explicitly updated.
@@ -1366,9 +1366,9 @@ Coordinator note: T95.1.1 and T95.1.2 edit the same file. Run Agent 1 first, the
 #### Wave E95-2: Wiring + non-regression (3 agents)
 Deps: Wave E95-1.
 
-- [ ] Agent 1: T95.2.1 (kv_reuse_node or direct wiring decision)
-- [ ] Agent 2: T95.3.1 (Llama/Gemma3/Mistral smoke)
-- [ ] Agent 3: T95.3.2 (Qwen/Phi/DeepSeek smoke)
+- [x] Agent 1: T95.2.1 (kv_reuse_node: Option A — layout-bridging node)  2026 04 13
+- [x] Agent 2: T95.3.1 (Llama/Gemma3/Mistral smoke — verification only, no diff)  2026 04 13
+- [x] Agent 3: T95.3.2 (Qwen/Phi/DeepSeek smoke — DeepSeek uses MLA, not GQA)  2026 04 13
 
 #### Wave E95-3: Lint (1 agent)
 Deps: Wave E95-2.
