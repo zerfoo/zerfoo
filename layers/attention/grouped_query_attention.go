@@ -32,18 +32,12 @@ func gqaDebugTensor[T tensor.Numeric](tag string, layerIdx int, t *tensor.Tensor
 	storageType := fmt.Sprintf("%T", t.GetStorage())
 	devPtr := unsafe.Pointer(nil)
 	devLen := 0
-	probe := "skip"
 	if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
 		devPtr = gs.Ptr()
 		devLen = gs.Len()
-		if _, err := gs.TrySlice(); err != nil {
-			probe = "FAIL: " + err.Error()
-		} else {
-			probe = "ok"
-		}
 	}
-	fmt.Fprintf(os.Stderr, "[GQA_DBG] layer=%d %s shape=%v storage=%s gpuPtr=%p gpuLen=%d sync=%s\n",
-		layerIdx, tag, t.Shape(), storageType, devPtr, devLen, probe)
+	fmt.Fprintf(os.Stderr, "[GQA_DBG] layer=%d %s shape=%v storage=%s gpuPtr=%p gpuLen=%d\n",
+		layerIdx, tag, t.Shape(), storageType, devPtr, devLen)
 }
 
 // GroupedQueryAttention implements grouped query attention mechanism.

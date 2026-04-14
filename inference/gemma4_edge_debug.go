@@ -21,19 +21,10 @@ func gemma4EdgeDebugTensor[T tensor.Numeric](tag string, t *tensor.TensorNumeric
 	storageType := fmt.Sprintf("%T", t.GetStorage())
 	devPtr := unsafe.Pointer(nil)
 	devLen := 0
-	probe := "skip"
 	if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
 		devPtr = gs.Ptr()
 		devLen = gs.Len()
-		// Force-sync probe: TrySlice attempts a D2H cudaMemcpy which both
-		// flushes pending kernels and surfaces any sticky CUDA error. This
-		// localizes async kernel faults to the stage that produced them.
-		if _, err := gs.TrySlice(); err != nil {
-			probe = "FAIL: " + err.Error()
-		} else {
-			probe = "ok"
-		}
 	}
-	fmt.Fprintf(os.Stderr, "[GE_DBG] %s shape=%v storage=%s gpuPtr=%p gpuLen=%d sync=%s\n",
-		tag, t.Shape(), storageType, devPtr, devLen, probe)
+	fmt.Fprintf(os.Stderr, "[GE_DBG] %s shape=%v storage=%s gpuPtr=%p gpuLen=%d\n",
+		tag, t.Shape(), storageType, devPtr, devLen)
 }
