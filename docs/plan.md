@@ -1592,73 +1592,136 @@ upload/bridge gap.
   real site.
   AC: new test in `internal/cuda/gpu_storage_test.go` covers both modes.
 
-### E98.2: Fix
+### E98.2: Localize
 
-- [ ] T98.2.1 Fix the identified qNorm/PLE tensor upload gap  Owner: TBD  Est: 2h  verifies: [UC-001]
-  Deps: T98.1.1, T98.1.2
-  Likely suspects (in decreasing order of probability) based on E95 + E96
-  work:
-  a) qNorm gain parameter for `GroupedQueryAttention` is constructed via
-     `graph.NewParameter` but not included in the `UploadWeights` set
-     used by `inference.LoadFile` (see `inference/load_gguf.go:100-115`).
-  b) `KVReuseNode` produces a slice view whose backing storage is the
-     donor layer's K/V output on the CPU side but has not been uploaded
-     to the CUDA arena.
-  c) `pleSliceNode` / `pleCombinedProducer` constants are registered via
-     `graph.ConstantTensors()` but one of the ancillary buffers escapes
-     that path.
-  Fix whichever call site actually triggers from T98.1.2's stack trace.
-  AC: `gemma4_e2e -mode generate -device cuda -steps 5` completes without
-  TrySlice warnings and without illegal memory access.
+- [x] T98.2.1 Dynamic instrumentation localizes bug between PLE and FusedRMSNorm  Owner: dndungu  Est: 2h  verifies: [infrastructure]  Completed: 2026-04-14
+  Deps: T98.1.1
+  Built env-gated `ZERFOO_GQA_DEBUG=1` instrumentation on branch
+  `e98-t98.2.1-gqa-debug-instr`:
+  - `layers/attention/grouped_query_attention.go`: per-layer log at
+    Forward entry + post-Q/K/V projections (storage type, GPU pointer,
+    length).
+  - `inference/gemma4_edge_debug.go` + `gemma4_edge_ple_nodes.go`: same
+    style log on PLE producer's tokenPLE/scaled/modelProj/return-hidden.
+  Outcome: PLE producer intermediates all sync OK. The very next
+  cudaMemcpy (on the GQA layer 0 input, i.e. the FusedRMSNormGPU output)
+  fails with illegal memory access. Two bisect probes ruled in/out:
+  - Skipping the unused `Mul(input, rsqrt)` inside the GPU-fused branch
+    of `rmsNormalize` (rms_helper.go:51): same failure -> ruled OUT.
+  - Bypassing FusedRMSNormGPU to take the multi-step fallback: fails
+    earlier with `cuda error 1` on Mul(input, input) -> the fused path
+    has a critical side effect the fallback misses (likely lazy
+    `tensor.ToGPU(weight)` in gpu_fused_rmsnorm.go:66-69).
+  Full notes: docs/devlog.md "T98.2.1 deeper bisect" and
+  "T98.2.1 dynamic instrumentation" entries 2026-04-14.
 
-- [ ] T98.2.2 Regression unit test for GPU upload of gemma4e builder  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [ ] T98.2.2 Pin the corrupting step inside FusedRMSNormGPU  Owner: TBD  Est: 90m  verifies: [infrastructure]
   Deps: T98.2.1
-  File: `inference/arch_gemma4_edge_test.go` or a new
-  `inference/arch_gemma4_edge_cuda_test.go` (behind `//go:build cuda`).
-  Build the gemma4e graph from synthetic tensors, call the same GPU upload
-  path `inference.LoadFile` uses, assert every Parameter and ConstantTensor
-  is uploaded. The CPU test must exercise the upload-set enumeration
-  without a real GPU (pure accounting check).
+  Add the `gemma4EdgeDebugTensor`-style probe inside
+  `ztensor/compute/gpu_fused_rmsnorm.go` AFTER each of:
+  a) `tensor.ToGPU(weight)` (line 66-69) -- log weight storage type and
+     pointer.
+  b) `e.pool.Alloc(devOut)` (line 80) -- log devOut.
+  c) `e.pool.Alloc(devScales)` (line 86) -- log devScales.
+  d) `e.kernels.RMSNorm(...)` (line 92) -- force-sync TrySlice on devOut
+     to surface async kernel errors.
+  Each log line emits the GPU pointer + a 1-byte cudaMemcpy probe to
+  flush the stream. The first FAIL pinpoints the corrupting step.
+  AC: rerun gemma4e generate on CUDA via Spark with
+  `ZERFOO_GQA_DEBUG=1`; identify which sub-step first reports a sticky
+  CUDA error.
+  Risk: lives in sibling repo (ztensor at
+  /Users/dndungu/Code/zerfoo/ztensor). Cross-repo PR + go.mod bump.
+  Hypothesis: gemma4e input_layernorm.weight ([1536] F32) takes a load
+  path that produces a storage type the GPUStorage check on
+  gpu_fused_rmsnorm.go:66 doesn't recognize, leading to an aliasing
+  ToGPU.
+
+- [ ] T98.2.3 Implement the fix in ztensor  Owner: TBD  Est: 90m  verifies: [UC-001]
+  Deps: T98.2.2
+  Once T98.2.2 names the broken sub-step, fix it in ztensor. Most
+  likely candidates given current evidence:
+  a) `tensor.ToGPU(weight)` aliases an existing GPU buffer instead of
+     copying -- correct by always allocating fresh on first call and
+     caching the result.
+  b) `pool.Alloc` returns an address outside the pool's valid mapped
+     region for buffers of size 30720 bytes -- audit pool bump
+     accounting.
+  c) `kernels.RMSNorm` reads weight out of bounds when weight storage
+     stride doesn't match the kernel's contiguous assumption.
+  AC: branch in ztensor builds; coordinated PR in zerfoo bumps the
+  ztensor go.mod; gemma4e generate on CUDA prefill no longer raises
+  illegal memory access.
+
+- [ ] T98.2.4 Regression test in ztensor for the broken weight/pool
+      path  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T98.2.3
+  Build a reproducer test in ztensor that loads a [1, 5, 1536]
+  GPUStorage input + a [1536] F32 weight, runs FusedRMSNormGPU, and
+  reads back the output -- must succeed without illegal access.
   AC: test would have failed pre-fix; passes post-fix.
 
-- [ ] T98.2.3 Lint + vet + full test sweep  Owner: TBD  Est: 15m  verifies: [infrastructure]
-  Deps: T98.2.1, T98.2.2
-  `go build ./... && go vet ./... && go test ./... -race -timeout 300s`.
-  AC: green.
+- [ ] T98.2.5 Lint + vet + full test sweep  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T98.2.3, T98.2.4
+  `go build ./... && go vet ./... && go test ./... -race -timeout 300s`
+  in both zerfoo and ztensor.
+  AC: green in both repos.
 
 ### E98.3: Close out
 
 - [ ] T98.3.1 Rebuild on DGX and run T97.1.3 (closes deferred task)  Owner: TBD  Est: 20m  verifies: [UC-001]
-  Deps: T98.2.1 merged to main
+  Deps: T98.2.3 merged to main
   Rebuild `/var/lib/zerfoo/bin/gemma4_e2e` on DGX from the fixed main, then
   `scripts/gemma4-spark.sh -mode generate -device cuda -steps 20 -cleanup`.
   AC: pod PASS, decoded text non-degenerate, no NaN/Inf across steps.
   Mark T97.1.3 complete on success and roll up into T97.3.1.
 
-- [ ] T98.3.2 Devlog + plan close-out  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [ ] T98.3.2 Remove debug instrumentation; merge cleanup PR  Owner: TBD  Est: 30m  verifies: [infrastructure]
   Deps: T98.3.1
+  Strip the `ZERFOO_GQA_DEBUG` plumbing once the bug is fixed and
+  verified, OR convert it to a permanent diagnostic flag if useful.
+  Drop:
+  - `inference/gemma4_edge_debug.go`
+  - `gemma4EdgeDebugTensor` calls in `gemma4_edge_ple_nodes.go`
+  - `gqaDebugTensor` calls in `grouped_query_attention.go`
+  AC: branch `e98-t98.2.1-gqa-debug-instr` rebased to main with debug
+  removed; rebase-and-merge to main.
+
+- [ ] T98.3.3 Devlog + plan close-out  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T98.3.2
   Devlog entry with root cause, fix, verification artifacts (pod name,
   decoded text snippet). Mark E98 complete, flip T97.1.3 to [x], and
   evaluate whether T97.3.1 can now close (T97.2.3 remains deferred per the
-  Ollama finding, so E97 closes partial).
+  Ollama finding, so E97 closes partial). Trim E98 from plan into
+  ADR/devlog tiers.
 
 ### E98 Waves
 
-#### Wave E98-1: Triangulate (3 agents)
-- [ ] Agent 1: T98.1.1 (cross-arch repro on DGX)
-- [ ] Agent 2: T98.1.2 (TrySlice stack trace instrumentation)
-- [ ] Agent 3: T98.1.3 (TrySlice unit test)
+#### Wave E98-1: Triangulate (1 agent) -- COMPLETE
+- [x] Agent 1: T98.1.1 (cross-arch repro on DGX). T98.1.2/T98.1.3
+      deferred -- dynamic instrumentation in T98.2.1 superseded the
+      need for ztensor-side stack trace work.
 
-Sync point: after this wave, we know where the bad slice originates.
+#### Wave E98-2: Localize (1 agent then 1 agent)
+- [x] Sub-wave A: T98.2.1 (dynamic instrumentation, completed
+      2026-04-14)
+- [ ] Sub-wave B: T98.2.2 (sub-step probe inside FusedRMSNormGPU --
+      ztensor sibling repo)
 
-#### Wave E98-2: Fix (2 agents)
-Deps: Wave E98-1.
-- [ ] Agent 1: T98.2.1 -> T98.2.2 (fix + regression test, sequential — same files)
-- [ ] Agent 2: T98.2.3 (lint/vet/test sweep, can start once T98.2.1 commits)
+Sync point: after Sub-wave B, we know which kernel/alloc/upload step
+inside FusedRMSNormGPU corrupts CUDA state.
 
-#### Wave E98-3: Verify + Close (1 agent)
-Deps: Wave E98-2 + PR merged to main.
-- [ ] Agent 1: T98.3.1 -> T98.3.2
+#### Wave E98-3: Fix + verify (3 agents)
+Deps: Wave E98-2.
+- [ ] Agent 1: T98.2.3 (the fix in ztensor)
+- [ ] Agent 2: T98.2.4 (regression test in ztensor; can start in
+      parallel once Agent 1 names the broken function)
+- [ ] Agent 3: T98.2.5 (lint/vet/test sweep across both repos; runs
+      after Agents 1 + 2 commit)
+
+#### Wave E98-4: DGX verify + close (1 agent)
+Deps: Wave E98-3 + ztensor PR merged + zerfoo go.mod bump merged.
+- [ ] Agent 1: T98.3.1 -> T98.3.2 -> T98.3.3
 
 ### E98 Risk Register
 
@@ -2055,6 +2118,39 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-14 (later): E98.T98.2.1 dynamic instrumentation localizes bug to FusedRMSNormGPU
+
+- **T98.2.1 complete.** Built env-gated `ZERFOO_GQA_DEBUG=1` probes in
+  `layers/attention/grouped_query_attention.go`,
+  `inference/gemma4_edge_debug.go`, and `gemma4_edge_ple_nodes.go` on
+  branch `e98-t98.2.1-gqa-debug-instr`. Each probe logs storage type,
+  GPU pointer, and (in earlier iterations) a force-sync TrySlice that
+  surfaces async kernel errors.
+- **Localization result.** PLE producer intermediates
+  (tokenPLE/scaled/modelProj/return-hidden) all sync OK on CUDA. The
+  next probe -- the GQA layer 0 input, which is the FusedRMSNormGPU
+  output -- fails with illegal memory access. So the corruption is
+  inside `ztensor/compute/gpu_fused_rmsnorm.go`'s sequence of
+  weight-upload + pool-alloc + RMSNorm kernel.
+- **Bisect probes.**
+  a) Skipping the unused `Mul(input, rsqrt)` inside the GPU-fused
+     branch of `rmsNormalize`: same failure -> ruled OUT.
+  b) Bypassing FusedRMSNormGPU to take the multi-step fallback: fails
+     earlier with `cuda error 1` on Mul(input, input) -> the fused
+     path has a critical side effect the fallback misses (likely the
+     lazy `tensor.ToGPU(weight)` at gpu_fused_rmsnorm.go:66-69).
+- **Plan restructure.** E98.2 expanded from 3 tasks to 5: T98.2.1
+  ([x]), T98.2.2 (sub-step probe in ztensor), T98.2.3 (the fix),
+  T98.2.4 (regression test), T98.2.5 (sweep). E98.3 grew T98.3.2
+  (debug cleanup PR) so E98 closes cleanly. Waves restructured 1/2/3/4
+  -- Wave E98-1 + Sub-wave A of E98-2 are complete.
+- **Cross-repo note.** T98.2.2 onward live in the ztensor sibling
+  repo (`/Users/dndungu/Code/zerfoo/ztensor`); the fix will require a
+  coordinated PR + go.mod bump in zerfoo.
+- **Devlog.** Two new entries 2026-04-14: "T98.2.1 dynamic
+  instrumentation -- bug is UPSTREAM of GQA layer 0" and "T98.2.1
+  deeper bisect -- bug between PLE and RMSNorm".
 
 ### 2026-04-14 (late): E96 shipped; E97-1/E97-2 partial; E98 added for Gemma 4 edge CUDA qNorm bug
 
