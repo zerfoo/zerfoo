@@ -363,7 +363,7 @@ func (n *layerOutputScaleNode[T]) Forward(ctx context.Context, inputs ...*tensor
 		return nil, fmt.Errorf("Gemma4LayerOutputScale: expected 1 input, got %d", len(inputs))
 	}
 	sData := n.scale.Data()
-	if sData == nil || len(sData) == 0 {
+	if len(sData) == 0 {
 		return nil, fmt.Errorf("Gemma4LayerOutputScale: scale data empty")
 	}
 	return n.engine.MulScalar(ctx, inputs[0], sData[0])
