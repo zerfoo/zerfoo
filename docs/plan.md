@@ -1552,7 +1552,11 @@ upload/bridge gap.
 
 ### E98.1: Isolate
 
-- [ ] T98.1.1 Repro with gemma3:1b GGUF on CUDA via gemma4_e2e generate  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [x] T98.1.1 Repro with gemma3:1b GGUF on CUDA via gemma4_e2e generate  Owner: dndungu  Est: 30m  verifies: [infrastructure]  Completed: 2026-04-14
+  Outcome: gemma3:1b PASSES on CUDA (pod gemma4-e2e-20260414-191451).
+  Bug is gemma4e-specific. Unblocks T98.2.1 via static analysis; T98.1.2
+  and T98.1.3 (ztensor instrumentation in sibling repo) are no longer
+  required for triangulation.
   Deps: none
   Build gemma4_e2e on DGX (already there), fetch a gemma3:1b GGUF locally,
   rsync to /var/lib/zerfoo/models/, submit:
@@ -1565,7 +1569,11 @@ upload/bridge gap.
   Risk: Ollama gemma3:1b image is ~815MB; GGUF may need to be fetched from
   HF (google/gemma-3-1b-it-GGUF). Allow extra 15m.
 
-- [ ] T98.1.2 Instrument GPUStorage.TrySlice to dump caller frames  Owner: TBD  Est: 45m  verifies: [infrastructure]
+- [ ] T98.1.2 Instrument GPUStorage.TrySlice to dump caller frames  Owner: TBD  Est: 45m  verifies: [infrastructure]  DEFERRED 2026-04-14
+  Deferred after T98.1.1 confirmed the bug is gemma4e-specific. Also lives
+  in sibling repo (ztensor), which would require a cross-repo PR + go.mod
+  bump. Re-open only if static analysis on `inference/arch_gemma4_edge.go`
+  doesn't produce a clear root cause.
   Deps: none (parallel with T98.1.1)
   File: `internal/cuda/gpu_storage.go` (or the ztensor equivalent that owns
   `GPUStorage.TrySlice`). Locate the warning log site, add opt-in runtime
@@ -1574,7 +1582,9 @@ upload/bridge gap.
   AC: rerunning gemma4_e2e generate on CUDA emits stack traces identifying
   which gemma4e builder call path slices a zero-sized GPU tensor.
 
-- [ ] T98.1.3 Unit test: TrySlice returning zero does not silently succeed  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [ ] T98.1.3 Unit test: TrySlice returning zero does not silently succeed  Owner: TBD  Est: 30m  verifies: [infrastructure]  DEFERRED 2026-04-14
+  Deferred with T98.1.2. Lives in ztensor. Revisit only if T98.2.1's
+  static analysis fails to find the root cause.
   Deps: none (parallel)
   Cover the current behavior -- warning then zero slice -- and propose a
   stricter mode (ZERFOO_TRY_SLICE_STRICT=1) that returns an error instead.

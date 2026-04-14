@@ -2,6 +2,43 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-14: T98.1.1 Gemma 4 edge CUDA qNorm bug is arch-specific (gemma3:1b PASSES)
+
+**Type:** investigation
+**Tags:** gemma4, gemma4e, gemma3, cuda, qnorm, e98
+
+**Problem:** Need to know whether the qNorm illegal memory access from
+T97.1.3 is (a) specific to the gemma4e builder or (b) a generic issue in
+`inference.LoadFile`'s CUDA upload path.
+
+**Repro:** Copied Ollama's gemma3:1b blob
+(`sha256-7cd4618c1faf...`, 778M, already on DGX at
+`/usr/share/ollama/.ollama/models/blobs/`) into
+`/var/lib/zerfoo/models/gemma3-1b-it-Q4_K_M.gguf`. Submitted pod
+`gemma4-e2e-20260414-191451` with
+`-mode generate -device cuda -steps 10`. Required a one-line fix first:
+`cmd/gemma4_e2e/main.go` rejected `arch=gemma3` in generate mode at its
+own guard before even calling `m.Generate`; relaxed in commit d4f8ec6f.
+
+**Result:** gemma3:1b **PASS** on CUDA. Output:
+`"\n\nThis is a very that.---"` (weak greedy text from a 1B model at
+temp=0, but valid). No TrySlice warnings, no illegal memory access, CUDA
+graph captured 184/185 instructions. Loaded as arch=gemma3, 26 layers,
+hidden=1152, vocab=262144.
+
+**Impact:** Bug is gemma4e-specific. Focus shifts to
+`inference/arch_gemma4_edge.go` and the gemma4e-only paths --
+`SetQKNormWeights`, `KVReuseNode`, `pleSliceNode`, `pleCombinedProducer`.
+Ztensor instrumentation (T98.1.2/T98.1.3) is no longer required for
+triangulation; re-evaluate if static analysis on the gemma4e builder
+doesn't produce a clear root cause.
+
+**Next:** Check whether any tensor created in the gemma4e builder bypasses
+both `graph.Parameter` and `graph.ConstantTensors` registration (since
+`inference.LoadFile` uploads to CUDA arena from only those two sources).
+Prime suspects: `qNormW` stored via `SetQKNormWeights` (raw, non-wrapped),
+`pleProducer` outputs, and `KVReuseNode` donor slices.
+
 ## 2026-04-14: T97.1.3 Gemma 4 edge generate on CUDA -- illegal memory access in qNorm
 
 **Type:** investigation
