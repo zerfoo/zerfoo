@@ -1299,6 +1299,240 @@ depends on generation).
 
 ---
 
+## E94: AltUp and Laurel Primitives for Gemma 4 Edge
+
+### Context
+
+Wave E93-3 could not proceed because Gemma 4 edge is the Gemma 3N
+architecture extended, and its per-block forward pass uses two
+primitives that do not exist in zerfoo:
+
+1. **AltUp (Alternating Updates)**: 4 parallel residual streams per
+   block, routed and updated each layer via `altup_router`,
+   `altup_predict_coef`, `altup_correct_coef`, plus global
+   `altup_proj` and `altup_unembd_proj` for stream entry/exit.
+2. **Laurel**: an auxiliary gated branch parallel to attention,
+   computed as `laurel_post_norm(laurel_r(laurel_l(cur)))` and fused
+   with the attention output as `(cur + laurel_out) / sqrt(2)`.
+
+Neither primitive, nor the additional tensors they require, is present
+in zerfoo. Full finding and canonical forward-pass pseudocode are in
+`docs/devlog.md` 2026-04-13 (evening). Ground truth:
+`https://raw.githubusercontent.com/ggml-org/llama.cpp/master/src/models/gemma3n-iswa.cpp`.
+
+### Approach
+
+1. Document the full Gemma 4 edge tensor set and forward pass, now
+   including AltUp and Laurel, in `docs/gemma4-edge-architecture.md`.
+   Write ADR-087 recording the decision to adopt AltUp + Laurel.
+2. Extend `model/gguf/arch.go` tensor-name maps (gemma4eTensorNameMap
+   and gemma4eGlobalTensorMap) with the 9 additional per-block tensors
+   and 2 new global tensors, plus unit tests.
+3. Build `layers/altup/` (router, predict, correct, project-back) and
+   `layers/laurel/` as reusable primitives with full unit-test coverage
+   against synthetic tensors. Use Engine[T] for all math.
+4. Verify that `LoadGGUF` on a real unsloth/gemma-4-E2B-it-Q4_K_M.gguf
+   surfaces all required tensors under zerfoo-canonical names.
+
+Once E94 lands, unblock E93-3 (the builder rewrite) with all primitives
+and tensor mappings in place.
+
+### Acceptance Criteria
+
+- `docs/gemma4-edge-architecture.md` contains the complete tensor
+  inventory (including AltUp and Laurel) and a forward-pass description
+  that matches llama.cpp/gemma3n-iswa.cpp.
+- ADR-087 is Accepted and cross-references ADR-086 (which stands for the
+  shared-PLE decision).
+- `gemma4eTensorNameMap` covers all per-block AltUp + Laurel +
+  per_layer_post_norm tensors. `gemma4eGlobalTensorMap` covers altup_proj
+  and altup_unembd_proj. Unit tests cover every new mapping.
+- `layers/altup/` exports `NewRouter`, `NewPredict`, `NewCorrect`,
+  `NewProjectBack` (or equivalent names chosen during implementation).
+  Each has table-driven unit tests with synthetic inputs. Coverage
+  target: 90 percent.
+- `layers/laurel/` exports a `NewLaurel` (or equivalent) primitive with
+  `(cur + laurel_out) / sqrt(2)` fusion captured in a helper and a test.
+- On a real GGUF, all 9 per-block + 2 global AltUp/Laurel tensors load
+  under zerfoo-canonical names verified by an ad-hoc integration script
+  or a new loader test.
+- `go vet ./...` and `golangci-lint run` clean.
+- `go test ./...` clean (no regressions in existing packages).
+
+### Work Breakdown
+
+#### E94.1: Architecture documentation and ADR
+
+- [ ] T94.1.1 Extend docs/gemma4-edge-architecture.md with AltUp + Laurel  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+  File: `docs/gemma4-edge-architecture.md`
+  Add sections: "AltUp 4-stream residual" (router, predict, correct,
+  project-back tensor names and shapes), "Laurel auxiliary branch"
+  (laurel_l, laurel_r, laurel_post_norm), and a revised per-block
+  forward-pass description that matches gemma3n-iswa.cpp. Update the
+  zerfoo-canonical name table with the new names (see T94.2.1 proposal
+  below).
+  AC: Doc includes every tensor listed in the devlog entry for 2026-04-13
+  (evening). Forward-pass description is consistent with llama.cpp
+  gemma3n-iswa.cpp at master.
+
+- [ ] T94.1.2 Write ADR-087 AltUp + Laurel adoption  Owner: TBD  Est: 30m  verifies: [UC-001]
+  Deps: T94.1.1
+  File: `docs/adr/087-gemma4-altup-laurel.md`
+  Record the decision to adopt AltUp + Laurel from the llama.cpp
+  Gemma 3N lineage as the canonical wiring for Gemma 4 edge. Cross-ref
+  ADR-086 (still valid for the shared-PLE decision). Alternatives:
+  drop edge support, re-quantize to a zerfoo-flavored layout. Rejected.
+  AC: ADR file created with Status: Accepted. Plan links to it. ADR-086
+  gets a short "Superseded in part by ADR-087 for forward-pass wiring"
+  note.
+
+#### E94.2: Tensor-name mapping extension
+
+- [ ] T94.2.1 Extend gemma4eTensorNameMap with AltUp + Laurel block tensors  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T94.1.1
+  File: `model/gguf/arch.go`
+  Add suffix-level mappings:
+  - `altup_router.weight`           -> `altup.router.weight`
+  - `altup_router_norm.weight`      -> `altup.router_norm.weight`
+  - `altup_predict_coef.weight`     -> `altup.predict_coef.weight`
+  - `altup_correct_coef.weight`     -> `altup.correct_coef.weight`
+  - `altup_correct_scale.weight`    -> `altup.correct_scale.weight`
+  - `laurel_l.weight`               -> `laurel.laurel_l.weight`
+  - `laurel_r.weight`               -> `laurel.laurel_r.weight`
+  - `laurel_post_norm.weight`       -> `laurel.post_norm.weight`
+  - `per_layer_post_norm.weight`    -> `ple_post_norm.weight`
+  Also reconsider the existing `layer_output_scale.weight` mapping; if
+  llama.cpp confirms it is the AltUp `correct_scale`, update the target
+  name to `altup.correct_scale.weight` (or keep both as aliases).
+  Add table-driven unit tests in `model/gguf/arch_test.go` covering
+  every new mapping under arch=gemma4e.
+  AC: Tests pass. Test `TestMapTensorName_Gemma4Edge` extended.
+
+- [ ] T94.2.2 Extend gemma4eGlobalTensorMap with AltUp globals  Owner: TBD  Est: 30m  verifies: [UC-001]
+  Deps: T94.1.1
+  File: `model/gguf/arch.go`
+  Add:
+  - `altup_proj.weight`         -> `model.altup_proj.weight`
+  - `altup_unembd_proj.weight`  -> `model.altup_unembd_proj.weight`
+  Add unit tests in `arch_test.go`.
+  AC: Tests pass.
+
+- [ ] T94.2.3 Verify real-GGUF mapping surfaces all tensors  Owner: TBD  Est: 30m  verifies: [UC-001]
+  Deps: T94.2.1, T94.2.2
+  Script in `tests/integration/gemma4_test.go` (or a new `*_test.go`
+  under `inference/` guarded by `GEMMA4_GGUF_PATH`) iterates every
+  required zerfoo-canonical name and asserts presence. Keep the test
+  skippable when the env var is unset.
+  AC: Skip-clean without env var. With env var: all 11 new tensor names
+  present in the loaded tensor map.
+
+#### E94.3: Layer primitives
+
+- [ ] T94.3.1 Build layers/altup/ router  Owner: TBD  Est: 2h  verifies: [UC-001]
+  Deps: T94.1.2
+  Files: `layers/altup/router.go`, `layers/altup/router_test.go`
+  Implement the router that takes the active prediction stream and the
+  router weights plus norm, producing routing coefficients. Keep the
+  forward pass pure Engine[T] calls. Table-driven tests with synthetic
+  inputs verifying output shapes and numerical stability (no NaN on
+  small random inputs).
+  AC: Tests pass. Coverage at least 90 percent on new file.
+
+- [ ] T94.3.2 Build layers/altup/ predict  Owner: TBD  Est: 2h  verifies: [UC-001]
+  Deps: T94.3.1
+  Files: `layers/altup/predict.go`, `layers/altup/predict_test.go`
+  Implement the predict update that advances the 4 streams using
+  `altup_predict_coef`. Document tensor shapes and dims in doc comments.
+  AC: Tests pass. Shapes verified against expected dims from
+  gemma3n-iswa.cpp notes. Coverage 90 percent on new file.
+
+- [ ] T94.3.3 Build layers/altup/ correct  Owner: TBD  Est: 2h  verifies: [UC-001]
+  Deps: T94.3.1
+  Files: `layers/altup/correct.go`, `layers/altup/correct_test.go`
+  Implement the correct update using `altup_correct_coef`. Includes the
+  scalar `altup_correct_scale` multiplication on the first prediction
+  stream (reuse or extend zerfoo scalar-mul helpers).
+  AC: Tests pass. Coverage 90 percent on new file.
+
+- [ ] T94.3.4 Build layers/altup/ project-back  Owner: TBD  Est: 1h  verifies: [UC-001]
+  Deps: T94.3.1
+  Files: `layers/altup/project_back.go`, `layers/altup/project_back_test.go`
+  Implement the final `altup_unembd_proj` path that collapses the 4
+  streams back to a single hidden vector before the output norm.
+  AC: Tests pass. Coverage 90 percent on new file.
+
+- [ ] T94.3.5 Build layers/laurel/ primitive  Owner: TBD  Est: 2h  verifies: [UC-001]
+  Deps: T94.1.2
+  Files: `layers/laurel/laurel.go`, `layers/laurel/laurel_test.go`
+  Implement `Laurel(cur) = laurel_post_norm(laurel_r(laurel_l(cur)))`
+  and the `(cur + laurel_out) / sqrt(2)` fusion as a helper the edge
+  builder can call. Tests cover both the raw Laurel output and the
+  fusion.
+  AC: Tests pass. Coverage 90 percent on new files.
+
+#### E94.4: Quality gates
+
+- [ ] T94.4.1 Run go vet and golangci-lint after primitives land  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T94.3.1, T94.3.2, T94.3.3, T94.3.4, T94.3.5, T94.2.1, T94.2.2
+  AC: `go vet ./...` clean. `golangci-lint run` clean. No new
+  warnings introduced by new files.
+
+- [ ] T94.4.2 Full go test ./... run  Owner: TBD  Est: 15m  verifies: [infrastructure]
+  Deps: T94.4.1
+  AC: `go test ./... -race -timeout 120s` clean. No regressions in
+  existing packages.
+
+### E94 Parallel Tracks
+
+| Track | Tasks | Description | Dependencies |
+|-------|-------|-------------|-------------|
+| A: Docs | T94.1.1, T94.1.2 | Architecture extension + ADR-087 | None |
+| B: Mapping | T94.2.1, T94.2.2, T94.2.3 | Tensor-name map extension + verify | A (T94.1.1) |
+| C: AltUp | T94.3.1, T94.3.2, T94.3.3, T94.3.4 | AltUp primitive family | A (T94.1.2) |
+| D: Laurel | T94.3.5 | Laurel primitive | A (T94.1.2) |
+| E: QA | T94.4.1, T94.4.2 | vet, lint, full test | B, C, D |
+
+### E94 Waves
+
+#### Wave E94-1: Docs and ADR (2 agents)
+Agents run in parallel; Agent 2 depends on Agent 1's doc for final
+formatting but can start drafting from the devlog entry.
+
+- [ ] Agent 1: T94.1.1 (architecture doc extension)
+- [ ] Agent 2: T94.1.2 (ADR-087)
+
+#### Wave E94-2: Foundations (3 agents)
+Deps: Wave E94-1. Three tasks, different subsections of two files.
+
+- [ ] Agent 1: T94.2.1 (block-level tensor map)
+- [ ] Agent 2: T94.2.2 (global tensor map)
+- [ ] Agent 3: T94.2.3 (real-GGUF mapping verification script)
+
+#### Wave E94-3: Primitives (5 agents)
+Deps: Wave E94-1 (needs ADR-087 for API decisions). All primitive files
+are independent of each other; worktree isolation handles any shared
+test helpers.
+
+- [ ] Agent 1: T94.3.1 (altup router)
+- [ ] Agent 2: T94.3.2 (altup predict)
+- [ ] Agent 3: T94.3.3 (altup correct)
+- [ ] Agent 4: T94.3.4 (altup project-back)
+- [ ] Agent 5: T94.3.5 (laurel)
+
+#### Wave E94-4: QA (1 agent)
+Deps: Wave E94-2 and Wave E94-3.
+
+- [ ] Agent 1: T94.4.1 -> T94.4.2
+
+### Relationship to E93
+
+Once E94 completes, Wave E93-3 (T93.3.1-4) becomes executable as
+originally scoped. Update the Wave E93-3 BLOCKED note when E94
+finishes. E94 adds no new tasks to E93; it adds the prerequisite
+primitive library that E93-3's single-file rewrite will call into.
+
+---
+
 ## Backlog
 
 ### Community and DevRel
@@ -1669,6 +1903,22 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-13 (late evening): E94 added -- AltUp and Laurel primitives for Gemma 4 edge
+
+- Added E94 (11 tasks, 4 waves) providing the layer primitives and
+  tensor-name mapping extensions that Wave E93-3 needs.
+- Wave E94-1: architecture doc extension + ADR-087 (AltUp + Laurel
+  adoption; cross-refs ADR-086 for shared PLE which still stands).
+- Wave E94-2: extend `gemma4eTensorNameMap` and `gemma4eGlobalTensorMap`
+  with 9 per-block + 2 global tensor names, plus real-GGUF verification.
+- Wave E94-3: five parallel primitive builds (altup router, predict,
+  correct, project-back; laurel).
+- Wave E94-4: vet/lint + full test suite.
+- Wave E93-3 remains BLOCKED in the plan with an explicit dependency on
+  E94 completion. E93-4 gated on E93-3 as before.
+- No ADRs created in this planning pass; T94.1.2 creates ADR-087 during
+  execution.
 
 ### 2026-04-13 (evening): E93 added -- gemma4e builder rework
 
