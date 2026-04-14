@@ -27,17 +27,29 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MANIFEST_TEMPLATE="${REPO_ROOT}/docs/bench/manifests/gemma4-e2e.yaml"
 
 GGUF_PATH="/var/lib/zerfoo/models/gemma-4-E2B-it-Q4_K_M.gguf"
+MODE="forward"
+PROMPT="The quick brown fox"
+STEPS="50"
+SEQ="4"
+DEVICE="cpu"
 CLEANUP=0
 
 usage() {
   cat >&2 <<USAGE
-Usage: $0 [-gguf /path/to/model.gguf] [-cleanup]
+Usage: $0 [-gguf PATH] [-mode forward|generate] [-prompt TEXT]
+          [-steps N] [-seq N] [-device cpu|cuda] [-cleanup]
 
 Submits docs/bench/manifests/gemma4-e2e.yaml to Spark at \${SPARK_HOST}
 (currently ${SPARK_HOST}), polls until the pod terminates, prints logs,
 and exits with the pod's success/failure status.
 
-Default GGUF path: ${GGUF_PATH}
+Defaults:
+  -gguf   ${GGUF_PATH}
+  -mode   ${MODE}
+  -prompt ${PROMPT}
+  -steps  ${STEPS}
+  -seq    ${SEQ}
+  -device ${DEVICE}
 USAGE
   exit 2
 }
@@ -45,6 +57,11 @@ USAGE
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -gguf)     GGUF_PATH="$2"; shift 2 ;;
+    -mode)     MODE="$2"; shift 2 ;;
+    -prompt)   PROMPT="$2"; shift 2 ;;
+    -steps)    STEPS="$2"; shift 2 ;;
+    -seq)      SEQ="$2"; shift 2 ;;
+    -device)   DEVICE="$2"; shift 2 ;;
     -cleanup)  CLEANUP=1; shift ;;
     -h|--help) usage ;;
     *) echo "unknown arg: $1" >&2; usage ;;
@@ -60,6 +77,11 @@ MANIFEST_RENDERED="$(
   sed \
     -e "s|\${RUN_ID}|${RUN_ID}|g" \
     -e "s|\${GGUF_PATH}|${GGUF_PATH}|g" \
+    -e "s|\${MODE}|${MODE}|g" \
+    -e "s|\${PROMPT}|${PROMPT}|g" \
+    -e "s|\${STEPS}|${STEPS}|g" \
+    -e "s|\${SEQ}|${SEQ}|g" \
+    -e "s|\${DEVICE}|${DEVICE}|g" \
     "${MANIFEST_TEMPLATE}"
 )"
 

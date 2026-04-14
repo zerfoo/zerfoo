@@ -1472,19 +1472,22 @@ run against Spark on DGX.
   and asserts non-empty, non-degenerate output. Forward path (E96) unchanged.
   AC met: `-mode=generate -prompt "..." -steps 50` wired; local build+vet+tests green.
 
-- [ ] T97.1.2 Add generate mode to Spark manifest  Owner: TBD  Est: 20m  verifies: [infrastructure]
+- [x] T97.1.2 Add generate mode to Spark manifest  Owner: dndungu  Est: 20m  verifies: [infrastructure]  Completed: 2026-04-14
   Deps: T97.1.1
-  File: `docs/bench/manifests/gemma4-e2e.yaml`
-  Parameterize args so the submit script picks mode=forward (E96) or
-  mode=generate (E97). Add a second manifest `gemma4-generate.yaml` if
-  substitution gets messy.
-  AC: `scripts/gemma4-spark.sh -mode generate -prompt "..."` submits a
-  pod that runs the generation path.
+  File: `docs/bench/manifests/gemma4-e2e.yaml`, `scripts/gemma4-spark.sh`
+  Parameterized both: manifest accepts ${MODE}, ${PROMPT}, ${STEPS}, ${SEQ},
+  ${DEVICE}; script exposes flags with safe defaults (forward/cpu).
+  AC met: `scripts/gemma4-spark.sh -mode generate -device cuda -prompt "..."`
+  submits and runs the generation path on DGX.
 
-- [ ] T97.1.3 Run generation on DGX and record result  Owner: TBD  Est: 30m  verifies: [UC-001]
+- [ ] T97.1.3 Run generation on DGX and record result  Owner: TBD  Est: 30m  verifies: [UC-001]  BLOCKED 2026-04-14 by qNorm CUDA bug
   Deps: T97.1.2, T96.2.1
-  AC: pod completes; decoded text non-degenerate (not all same token); no
-  NaN/Inf across all 50 steps; devlog entry with output.
+  Blocker: pod gemma4-e2e-20260414-164140 failed with
+  `GroupedQueryAttention: qNorm: cudaMemcpy failed: an illegal memory access`
+  during prefill. Infrastructure (binary, manifest, script) verified end-to-end;
+  blocker is in the gemma4e CUDA Q-projection RMSNorm path.
+  Follow-up: file a bug epic; reproduce with gemma3:1b on CUDA to isolate; trace
+  qNorm gain tensor registration in inference/arch_gemma4_edge.go.
 
 ### E97.2: Ollama parity
 
