@@ -2,6 +2,93 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-13 (evening): Gemma 4 edge uses AltUp + Laurel — E93-3 blocked, ADR-086 incomplete
+
+**Type:** investigation
+**Tags:** gemma4, gemma3n, altup, laurel, architecture, e93, blocker
+
+**Problem:** Wave E93-3 agent stopped while attempting to rewrite
+`inference/arch_gemma4_edge.go`. After reading the docs and fetching
+llama.cpp's `src/models/gemma3n-iswa.cpp` (Gemma 4 edge is the direct
+successor of Gemma 3N and shares the same builder family there), the
+agent discovered that the canonical forward pass uses two major
+architectural mechanisms not documented in `docs/gemma4-edge-architecture.md`
+or ADR-086:
+
+1. **AltUp (Alternating Updates)**: a 4-way parallel residual-stream
+   mechanism. Each block holds 4 predicted residual streams; one is
+   designated the "active prediction" for attention/FFN, and all 4 are
+   updated each block via an AltUp router plus `altup_predict_coef` and
+   `altup_correct_coef`. PLE is injected only into the "first prediction"
+   stream, scaled by what zerfoo currently calls `layer_output_scale`
+   (actually `altup_correct_scale`).
+2. **Laurel**: an auxiliary gated branch parallel to attention.
+   `laurel_out = laurel_post_norm(laurel_r(laurel_l(cur)))`, then
+   `attn_laurel = (cur + laurel_out) / sqrt(2)` feeds the FFN path.
+
+**Root cause:** Tensor-dump-based reverse engineering missed the AltUp
+and Laurel tensors because they appear with family-specific names
+(`altup_router`, `altup_predict_coef`, `altup_correct_coef`,
+`altup_proj`, `altup_unembd_proj`, `laurel_l`, `laurel_r`,
+`laurel_post_norm`) that I did not enumerate in the earlier tensor walk.
+The tensors I cataloged (`inp_gate`, `layer_output_scale`, `post_norm`,
+per-layer `proj`, shared PLE table) are all real, but they live *inside*
+the AltUp + Laurel pipeline, not in a simpler pre/post attention
+residual as sketched in step 5 of `docs/gemma4-edge-architecture.md`.
+
+**Canonical per-block forward pass (from llama.cpp `gemma3n-iswa.cpp`):**
+
+```
+per_layer_inp = per_layer_proj_norm(per_layer_model_proj(
+                  per_layer_tok_embd[token_id]))[layer slice]
+for il in 0..num_layers:
+  active = predictions[altup_active_idx]
+  cur = attn_norm(active)
+  laurel_out = laurel_post_norm(laurel_r(laurel_l(cur)))
+  # shared KV: if il < num_layers - shared_kv_layers compute K,V;
+  # else reuse the cached K,V from il - (num_layers - shared_kv_layers)
+  cur = attn(Q, K, V, rope_global or rope_swa per pattern)
+  cur = attn_post_norm(cur)
+  cur = cur + active
+  attn_laurel = (cur + laurel_out) / sqrt(2)
+  cur = ffn_norm(attn_laurel)
+  cur = gelu_glu(ffn_gate, ffn_up, ffn_down)(cur)   # Gemma uses GELU
+  cur = ffn_post_norm(cur)
+  # AltUp update (all 4 streams):
+  predictions = altup_update(predictions, cur, altup_router,
+                             altup_predict_coef, altup_correct_coef)
+  # PLE injection into first prediction stream only:
+  fp = predictions[0] * altup_correct_scale
+  fp = gelu(per_layer_inp_gate(fp))
+  fp = fp * per_layer_inp[il]            # elementwise multiply
+  fp = per_layer_post_norm(per_layer_proj(fp))
+  predictions[0] = fp
+output = altup_project_back(predictions)  # via altup_unembd_proj
+logits = lm_head(output_norm(output))
+```
+
+**Fix:** N/A yet. Wave E93-3 is BLOCKED because a faithful rewrite
+requires:
+1. Two new layer primitives: `layers/altup/` (router + predict + correct)
+   and `layers/laurel/` (gated branch).
+2. A revised tensor-name mapper in `model/gguf/arch.go` covering 9
+   additional per-block tensors and 2 new global tensors.
+3. An updated architecture doc (`docs/gemma4-edge-architecture.md`) and a
+   new or superseding ADR that specifies AltUp + Laurel wiring.
+4. A builder loop that tracks 4 parallel residual streams, not 1.
+
+**Impact:**
+- `TestGemma4E2B_EndToEnd` remains BLOCKED (T92.5.2 still blocked).
+- E93 plan needs to be extended with at least four new tasks
+  (tensor-map extension, AltUp primitive, Laurel primitive, full-tensor
+  synthetic fixtures) before the builder rewrite can start.
+- ADR-086's shared-PLE-plus-per-layer-proj decision still stands; only
+  the forward-pass sketch was incomplete. A follow-up ADR-087 (or an
+  extension to ADR-086) should document AltUp + Laurel adoption.
+
+**Ground truth reference:**
+https://raw.githubusercontent.com/ggml-org/llama.cpp/master/src/models/gemma3n-iswa.cpp
+
 ## 2026-04-13: Gemma 4 E2B e2e inference — builder tensor-name mismatch (T92.5.2)
 
 **Type:** investigation
