@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/generate"
@@ -18,6 +19,26 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
 )
+
+// gqaDebug is enabled by ZERFOO_GQA_DEBUG=1; logs storage type + GPU device
+// pointer at GQA Forward entry and after Q/K/V projections to localize the
+// stage where CUDA state goes bad in gemma4e prefill (E98.T98.2.1).
+var gqaDebug = os.Getenv("ZERFOO_GQA_DEBUG") == "1"
+
+func gqaDebugTensor[T tensor.Numeric](tag string, layerIdx int, t *tensor.TensorNumeric[T]) {
+	if !gqaDebug || t == nil {
+		return
+	}
+	storageType := fmt.Sprintf("%T", t.GetStorage())
+	devPtr := unsafe.Pointer(nil)
+	devLen := 0
+	if gs, ok := t.GetStorage().(*tensor.GPUStorage[T]); ok {
+		devPtr = gs.Ptr()
+		devLen = gs.Len()
+	}
+	fmt.Fprintf(os.Stderr, "[GQA_DBG] layer=%d %s shape=%v storage=%s gpuPtr=%p gpuLen=%d\n",
+		layerIdx, tag, t.Shape(), storageType, devPtr, devLen)
+}
 
 // GroupedQueryAttention implements grouped query attention mechanism.
 type GroupedQueryAttention[T tensor.Numeric] struct {
@@ -451,6 +472,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 
 	input := inputs[0] // (batch_size, seq_len, model_dim)
 	gqa.outputShape = input.Shape()
+	gqaDebugTensor("input", gqa.LayerIndex, input)
 
 	var (
 		externalK *tensor.TensorNumeric[T]
@@ -511,10 +533,12 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		if err != nil {
 			return nil, err
 		}
+		gqaDebugTensor("qProj", gqa.LayerIndex, qProj)
 		kProj, err = gqa.wk.Forward(ctx, input)
 		if err != nil {
 			return nil, err
 		}
+		gqaDebugTensor("kProj", gqa.LayerIndex, kProj)
 		if gqa.kEqV {
 			vProj = kProj
 		} else {
@@ -523,6 +547,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 				return nil, err
 			}
 		}
+		gqaDebugTensor("vProj", gqa.LayerIndex, vProj)
 	}
 
 	// Cache projected Q, K, V for backward pass
