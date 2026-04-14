@@ -343,6 +343,7 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	}
 
 	// Extract Gemma 4 per-layer attention fields.
+	// Prefer zerfoo-legacy keys, then fall back to canonical llama.cpp keys.
 	if v, ok := f.GetUint32(prefix + "attention.global.head_count_kv"); ok {
 		cfg.GlobalNumKVHeads = int(v)
 	}
@@ -355,21 +356,47 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	if v, ok := f.GetUint32(prefix + "attention.sliding.key_length"); ok {
 		cfg.SlidingHeadDim = int(v)
 	}
+	// Canonical (llama.cpp) Gemma 4 keys.
+	if cfg.GlobalHeadDim == 0 {
+		if v, ok := f.GetUint32(prefix + "attention.key_length"); ok {
+			cfg.GlobalHeadDim = int(v)
+		}
+	}
+	if cfg.SlidingHeadDim == 0 {
+		if v, ok := f.GetUint32(prefix + "attention.key_length_swa"); ok {
+			cfg.SlidingHeadDim = int(v)
+		}
+	}
+	// Derive AttentionKEqV from key_length == value_length when both present.
+	if keyLen, ok := f.GetUint32(prefix + "attention.key_length"); ok {
+		if valLen, ok2 := f.GetUint32(prefix + "attention.value_length"); ok2 && keyLen == valLen {
+			cfg.AttentionKEqV = true
+		}
+	}
 	if v, ok := f.GetFloat32(prefix + "rope.global.dimension_fraction"); ok {
 		cfg.GlobalPartialRotaryFactor = v
 	}
 	if v, ok := f.GetString(prefix + "attention.k_eq_v"); ok && v == "true" {
 		cfg.AttentionKEqV = true
 	}
-	// Also check for boolean metadata.
 	if v, ok := f.GetUint32(prefix + "attention.k_eq_v"); ok && v == 1 {
 		cfg.AttentionKEqV = true
 	}
 	if v, ok := f.GetUint32(prefix + "kv_shared_layers"); ok {
 		cfg.KVSharedLayers = int(v)
 	}
+	if cfg.KVSharedLayers == 0 {
+		if v, ok := f.GetUint32(prefix + "attention.shared_kv_layers"); ok {
+			cfg.KVSharedLayers = int(v)
+		}
+	}
 	if v, ok := f.GetUint32(prefix + "ple.hidden_size"); ok {
 		cfg.PLEHiddenSize = int(v)
+	}
+	if cfg.PLEHiddenSize == 0 {
+		if v, ok := f.GetUint32(prefix + "embedding_length_per_layer_input"); ok {
+			cfg.PLEHiddenSize = int(v)
+		}
 	}
 	if v, ok := f.GetString(prefix + "mlp.double_wide"); ok && v == "true" {
 		cfg.DoubleWideMLP = true
@@ -377,9 +404,24 @@ func ExtractModelConfig(f *File) (*ModelConfig, error) {
 	if v, ok := f.GetUint32(prefix + "mlp.double_wide"); ok && v == 1 {
 		cfg.DoubleWideMLP = true
 	}
+	// Gemma 4 canonical sliding window pattern and SWA RoPE base.
+	if v, ok := f.GetUint32(prefix + "attention.sliding_window_pattern"); ok {
+		cfg.SlidingWindowPattern = int(v)
+	}
+	if cfg.LocalRopeTheta == 0 {
+		if v, ok := f.GetFloat32(prefix + "rope.freq_base_swa"); ok {
+			cfg.LocalRopeTheta = float64(v)
+		}
+	}
 
-	// Gemma 4 defaults: SlidingWindowPattern=6, vocabulary=262144.
+	// Gemma 4 defaults and per-layer fallbacks.
 	if strings.HasPrefix(arch, "gemma4") {
+		if cfg.GlobalNumKVHeads == 0 {
+			cfg.GlobalNumKVHeads = cfg.NumKVHeads
+		}
+		if cfg.SlidingNumKVHeads == 0 {
+			cfg.SlidingNumKVHeads = cfg.NumKVHeads
+		}
 		if cfg.SlidingWindowPattern == 0 {
 			cfg.SlidingWindowPattern = 6
 		}

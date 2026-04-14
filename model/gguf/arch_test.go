@@ -711,6 +711,59 @@ func TestExtractModelConfig_Gemma4(t *testing.T) {
 		}
 	})
 
+	t.Run("canonical llama.cpp keys (unsloth E2B)", func(t *testing.T) {
+		meta := map[string]any{
+			"general.architecture":                         "gemma4",
+			"gemma4.embedding_length":                      uint32(1536),
+			"gemma4.block_count":                           uint32(35),
+			"gemma4.attention.head_count":                  uint32(8),
+			"gemma4.attention.head_count_kv":               uint32(1),
+			"gemma4.feed_forward_length":                   uint32(8192),
+			"gemma4.context_length":                        uint32(32768),
+			"gemma4.attention.key_length":                  uint32(256),
+			"gemma4.attention.value_length":                uint32(256),
+			"gemma4.attention.key_length_swa":              uint32(256),
+			"gemma4.attention.value_length_swa":            uint32(256),
+			"gemma4.attention.shared_kv_layers":            uint32(10),
+			"gemma4.attention.sliding_window_pattern":      uint32(5),
+			"gemma4.embedding_length_per_layer_input":      uint32(256),
+			"gemma4.rope.freq_base":                        float32(1000000.0),
+			"gemma4.rope.freq_base_swa":                    float32(10000.0),
+		}
+		f := &File{Metadata: meta}
+		cfg, err := ExtractModelConfig(f)
+		if err != nil {
+			t.Fatalf("ExtractModelConfig: %v", err)
+		}
+		if cfg.GlobalHeadDim != 256 {
+			t.Errorf("GlobalHeadDim = %d, want 256 (from attention.key_length)", cfg.GlobalHeadDim)
+		}
+		if cfg.SlidingHeadDim != 256 {
+			t.Errorf("SlidingHeadDim = %d, want 256 (from attention.key_length_swa)", cfg.SlidingHeadDim)
+		}
+		if !cfg.AttentionKEqV {
+			t.Error("AttentionKEqV = false, want true (derived from key_length == value_length)")
+		}
+		if cfg.KVSharedLayers != 10 {
+			t.Errorf("KVSharedLayers = %d, want 10 (from attention.shared_kv_layers)", cfg.KVSharedLayers)
+		}
+		if cfg.PLEHiddenSize != 256 {
+			t.Errorf("PLEHiddenSize = %d, want 256 (from embedding_length_per_layer_input)", cfg.PLEHiddenSize)
+		}
+		if cfg.SlidingWindowPattern != 5 {
+			t.Errorf("SlidingWindowPattern = %d, want 5 (from attention.sliding_window_pattern)", cfg.SlidingWindowPattern)
+		}
+		if cfg.LocalRopeTheta != 10000.0 {
+			t.Errorf("LocalRopeTheta = %v, want 10000 (from rope.freq_base_swa)", cfg.LocalRopeTheta)
+		}
+		if cfg.GlobalNumKVHeads != 1 {
+			t.Errorf("GlobalNumKVHeads = %d, want 1 (fallback to NumKVHeads)", cfg.GlobalNumKVHeads)
+		}
+		if cfg.SlidingNumKVHeads != 1 {
+			t.Errorf("SlidingNumKVHeads = %d, want 1 (fallback to NumKVHeads)", cfg.SlidingNumKVHeads)
+		}
+	})
+
 	t.Run("explicit vocab overrides default", func(t *testing.T) {
 		meta := map[string]any{
 			"general.architecture":         "gemma4",
