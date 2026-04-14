@@ -1338,7 +1338,7 @@ E93-3 is now gated on E95. E93-4 remains gated on E93-3.
 
 ### E95.4: Lint + vet
 
-- [ ] T95.4.1 Lint and vet after E95 changes  Owner: TBD  Est: 20m  verifies: [infrastructure]
+- [x] T95.4.1 Lint and vet after E95 changes  Owner: TBD  Est: 20m  verifies: [infrastructure]  2026 04 13
   Deps: T95.1.1, T95.1.2, T95.2.1, T95.2.2, T95.3.1, T95.3.2
   AC: `go vet ./...` clean. `golangci-lint run` clean.
 
@@ -1373,7 +1373,7 @@ Deps: Wave E95-1.
 #### Wave E95-3: Lint (1 agent)
 Deps: Wave E95-2.
 
-- [ ] Agent 1: T95.4.1
+- [x] Agent 1: T95.4.1  2026 04 13
 
 After E95 lands, E93-3 resumes with the external-KV API available and becomes a clean HF-faithful transcription.
 
