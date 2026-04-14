@@ -52,6 +52,36 @@ func TestMapTensorName_Gemma(t *testing.T) {
 	}
 }
 
+func TestMapTensorName_Gemma4Edge(t *testing.T) {
+	tests := []struct {
+		name string
+		gguf string
+		want string
+	}{
+		{"token embed", "token_embd.weight", "model.embed_tokens.weight"},
+		{"output norm", "output_norm.weight", "model.norm.weight"},
+		{"PLE table", "per_layer_token_embd.weight", "model.ple_embed_tokens.weight"},
+		{"PLE model proj", "per_layer_model_proj.weight", "model.ple_model_proj.weight"},
+		{"PLE proj norm", "per_layer_proj_norm.weight", "model.ple_proj_norm.weight"},
+		{"attn q", "blk.5.attn_q.weight", "model.layers.5.self_attn.q_proj.weight"},
+		{"post attn norm", "blk.5.post_attention_norm.weight", "model.layers.5.post_attention_layernorm.weight"},
+		{"pre FFN norm", "blk.5.ffn_norm.weight", "model.layers.5.pre_feedforward_layernorm.weight"},
+		{"post FFN norm", "blk.5.post_ffw_norm.weight", "model.layers.5.post_feedforward_layernorm.weight"},
+		{"post block norm", "blk.5.post_norm.weight", "model.layers.5.post_layernorm.weight"},
+		{"per-layer PLE proj", "blk.5.proj.weight", "model.layers.5.ple_layer_proj.weight"},
+		{"input gate", "blk.5.inp_gate.weight", "model.layers.5.input_gate.weight"},
+		{"output scale", "blk.5.layer_output_scale.weight", "model.layers.5.layer_output_scale.weight"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MapTensorName("gemma4e", tt.gguf)
+			if got != tt.want {
+				t.Errorf("MapTensorName(gemma4e, %q) = %q, want %q", tt.gguf, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMapTensorName_Phi3_QKV(t *testing.T) {
 	tests := []struct {
 		gguf string

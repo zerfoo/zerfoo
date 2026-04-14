@@ -666,6 +666,41 @@ var globalTensorMap = map[string]string{
 	"output.weight":      "lm_head.weight",
 }
 
+// gemma4eGlobalTensorMap adds the shared Per-Layer Embedding (PLE) tensors
+// that Gemma 4 edge variants ship in addition to the standard globals.
+// See docs/gemma4-edge-architecture.md and docs/adr/086-gemma4-edge-ple-architecture.md.
+var gemma4eGlobalTensorMap = map[string]string{
+	"token_embd.weight":            "model.embed_tokens.weight",
+	"output_norm.weight":           "model.norm.weight",
+	"output.weight":                "lm_head.weight",
+	"per_layer_token_embd.weight":  "model.ple_embed_tokens.weight",
+	"per_layer_model_proj.weight":  "model.ple_model_proj.weight",
+	"per_layer_proj_norm.weight":   "model.ple_proj_norm.weight",
+}
+
+// gemma4eTensorNameMap extends gemma3TensorNameMap with the per-block
+// tensors introduced by Gemma 4 edge: PLE per-layer projection, input gate,
+// output scale, and the additional post_norm.
+var gemma4eTensorNameMap = map[string]string{
+	"attn_norm.weight":           "input_layernorm.weight",
+	"attn_q.weight":              "self_attn.q_proj.weight",
+	"attn_k.weight":              "self_attn.k_proj.weight",
+	"attn_v.weight":              "self_attn.v_proj.weight",
+	"attn_output.weight":         "self_attn.o_proj.weight",
+	"attn_q_norm.weight":         "self_attn.q_norm.weight",
+	"attn_k_norm.weight":         "self_attn.k_norm.weight",
+	"post_attention_norm.weight": "post_attention_layernorm.weight",
+	"ffn_norm.weight":            "pre_feedforward_layernorm.weight",
+	"post_ffw_norm.weight":       "post_feedforward_layernorm.weight",
+	"post_norm.weight":           "post_layernorm.weight",
+	"ffn_gate.weight":            "mlp.gate_proj.weight",
+	"ffn_up.weight":              "mlp.up_proj.weight",
+	"ffn_down.weight":            "mlp.down_proj.weight",
+	"proj.weight":                "ple_layer_proj.weight",
+	"inp_gate.weight":            "input_gate.weight",
+	"layer_output_scale.weight":  "layer_output_scale.weight",
+}
+
 // MapTensorName converts a GGUF tensor name to the Zerfoo/HuggingFace canonical name.
 // The arch parameter selects architecture-specific name mappings (e.g., "gemma3"
 // uses different norm names than "llama").
@@ -718,7 +753,12 @@ func MapTensorName(arch string, ggufName string) string {
 		return ggufName
 	}
 
-	// Check global names first.
+	// Check global names first. Gemma 4 edge has extra PLE globals.
+	if arch == "gemma4e" {
+		if mapped, ok := gemma4eGlobalTensorMap[ggufName]; ok {
+			return mapped
+		}
+	}
 	if mapped, ok := globalTensorMap[ggufName]; ok {
 		return mapped
 	}
@@ -734,8 +774,11 @@ func MapTensorName(arch string, ggufName string) string {
 
 	// Select architecture-specific name map.
 	nameMap := tensorNameMap
-	if arch == "gemma3" || arch == "gemma3n" {
+	switch arch {
+	case "gemma3", "gemma3n":
 		nameMap = gemma3TensorNameMap
+	case "gemma4e":
+		nameMap = gemma4eTensorNameMap
 	}
 
 	if mapped, ok := nameMap[suffix]; ok {
