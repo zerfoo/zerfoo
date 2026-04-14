@@ -1128,7 +1128,7 @@ edge builder to match the canonical architecture.
 
 #### E93.1: Research and decision record
 
-- [ ] T93.1.1 Document canonical Gemma 4 edge architecture  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T93.1.1 Document canonical Gemma 4 edge architecture  Owner: TBD  Est: 1h  verifies: [UC-001]  2026 04 13
   Read unsloth GGUF metadata, llama.cpp Gemma 4 graph builder, and Google's
   Gemma 4 technical report. Produce `docs/gemma4-edge-architecture.md` listing
   every tensor, its shape, its role in the forward pass, and its position in
@@ -1136,7 +1136,7 @@ edge builder to match the canonical architecture.
   AC: New doc exists. Every tensor observed in the real GGUF (verified via
   tensor dump) is categorized and annotated.
 
-- [ ] T93.1.2 Create ADR for PLE sharing model  Owner: TBD  Est: 30m  verifies: [UC-001]
+- [x] T93.1.2 Create ADR for PLE sharing model  Owner: TBD  Est: 30m  verifies: [UC-001]  2026 04 13
   Deps: T93.1.1
   File: `docs/adr/086-gemma4-edge-ple-architecture.md` (next number; confirm
   by listing `docs/adr/`).
@@ -1261,7 +1261,7 @@ edge builder to match the canonical architecture.
 #### Wave E93-1: Research (1 agent)
 All deps-free research for this epic.
 
-- [ ] Agent 1: T93.1.1 + T93.1.2 (architecture doc + ADR)
+- [x] Agent 1: T93.1.1 + T93.1.2 (architecture doc + ADR)  2026 04 13
 
 #### Wave E93-2: Foundations (3 agents)
 Deps: Wave E93-1. Different files, no shared code.
