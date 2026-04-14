@@ -1668,6 +1668,28 @@ Task details removed during /tidy --apply. See git history for full lists.
 
 ## Progress Log
 
+### 2026-04-13 (night): ADR-086 wiring questions resolved
+
+- Confirmed llama.cpp has NO Gemma 4 builder (no `LLM_ARCH_GEMMA4`, no
+  `gemma4` commits in `git log --all`); only `gemma3n-iswa.cpp` exists
+  and is the wrong architecture.
+- HuggingFace transformers `src/transformers/models/gemma4/modeling_gemma4.py`
+  is the canonical reference. ADR-086 updated with line-numbered
+  citations answering all three open wiring questions (PLE combiner at
+  lines 1401-1408, post_norm + layer_output_scale at lines 1337/1410,
+  shared_kv_layers at lines 1149-1226).
+- Bonus finding: HF gates `use_double_wide_mlp` on `is_kv_shared_layer`
+  (boundary layer 20) but the unsloth GGUF's `feed_forward_length`
+  per-layer array shows the boundary at layer 15. Builder must trust
+  per-layer tensor shapes over scalar config.
+- Wave E93-3 is fully unblocked. Next /apply spawns the builder agent
+  with these citations as ground truth.
+- Also deferred: DRY refactor across arch_gemma4.go / _edge.go / _moe.go.
+  3-5 shared helpers identified (attention classification, RoPE+GQA,
+  embedding init, final norm+head, post-attn fused block). Scheduled
+  after E93-4 stabilizes the edge builder (two-stable-implementations-
+  before-abstraction rule).
+
 ### 2026-04-13 (late late evening): E94 retracted, E93-3 unblocked
 
 - Direct tensor dump of the unsloth Gemma 4 E2B Q4_K_M GGUF returned
