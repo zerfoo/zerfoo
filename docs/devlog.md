@@ -2,6 +2,64 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-13 (very late evening): Retraction confirmed via Google's official config.json
+
+**Type:** investigation
+**Tags:** gemma4, architecture, confirmation, google, bugfix-followup
+
+**Problem:** Validate the retraction of E94 by pulling Google's official
+`config.json` for Gemma 4 E2B from `huggingface.co/google/gemma-4-E2B-it`
+rather than relying solely on the unsloth Q4_K_M quant.
+
+**Root cause / findings:** The official config has NO altup, laurel,
+router, predict_coef, correct_coef, or per_layer_post_norm fields.
+Confirmed architecture for Gemma 4 E2B (text tower):
+
+- `architectures: [Gemma4ForConditionalGeneration]` (multimodal: text + audio + vision)
+- `model_type: gemma4`, text uses `model_type: gemma4_text`
+- 35 hidden layers, hidden_size 1536, head_dim 256
+- num_attention_heads 8, num_key_value_heads 1, num_kv_shared_layers 20
+- hidden_size_per_layer_input 256 (PLE)
+- use_double_wide_mlp true (E2B variant flag)
+- hidden_activation `gelu_pytorch_tanh`
+- final_logit_softcapping 30.0
+- sliding_window 512, sliding_window_pattern 5 (4 sliding + 1 full, repeating,
+  NOT 6 as the earlier extractor defaulted)
+- Global attention uses rope_theta 1,000,000 with partial_rotary_factor 0.25
+  ("proportional" rope_type), sliding uses rope_theta 10,000 ("default")
+- attention_k_eq_v false
+- tie_word_embeddings true
+- Vision and audio encoders present in the multimodal config; text-only
+  inference can ignore them.
+
+**Fix required (follow-up, not urgent yet):**
+1. **attention_k_eq_v bug in commit 8213a7e6.** `model/gguf/arch.go`
+   extraction derives `AttentionKEqV = true` when `key_length ==
+   value_length`. That derivation is WRONG. Equal dims mean equal shapes,
+   not shared weights. Google's official config declares
+   `attention_k_eq_v: false` for E2B despite key_length == value_length.
+   The extractor should read the explicit boolean key instead of deriving.
+2. **sliding_window_pattern default.** `model/gguf/arch.go` defaults
+   Gemma 4 to 6 when the GGUF doesn't carry the key; Google's E2B uses 5.
+   Either read the GGUF key explicitly (already wired) or change the
+   default to 5 for gemma4.
+3. **Global attention head dim.** Official config reports
+   `global_head_dim: 512` distinct from sliding's `head_dim: 256`. The
+   unsloth GGUF's attn_k/attn_v shapes are uniform `[1536, 256]` across
+   all blocks, suggesting global layers either reuse sliding K/V via the
+   shared_kv mechanism or the GGUF does not store the global 512-dim
+   projections separately. Needs verification against the actual Gemma 4
+   llama.cpp builder during T93.3.1.
+
+**Impact:**
+- E94 retraction stands, confirmed by authoritative source.
+- E93-3 (builder rewrite) remains unblocked. The three open wiring
+  questions in ADR-086 should be resolved using the official config and
+  llama.cpp's Gemma 4 builder (distinct from gemma3n-iswa.cpp).
+- Add a small follow-up task to the plan for the attention_k_eq_v
+  extractor bug and sliding_window_pattern default (both from commit
+  8213a7e6).
+
 ## 2026-04-13 (late evening): Retraction — Gemma 4 edge does NOT use AltUp or Laurel
 
 **Type:** investigation
