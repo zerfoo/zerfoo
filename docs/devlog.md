@@ -2,7 +2,66 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-13 (late evening): Retraction — Gemma 4 edge does NOT use AltUp or Laurel
+
+**Type:** investigation
+**Tags:** gemma4, gemma3n, altup, laurel, correction, e93, e94
+
+**Problem:** The prior devlog entry (2026-04-13 evening) claimed Gemma 4
+edge uses AltUp (4 parallel residual streams) and Laurel (auxiliary
+gated branch), based on the assumption that Gemma 4 edge inherits the
+Gemma 3N architecture as implemented in llama.cpp's
+`src/models/gemma3n-iswa.cpp`. This triggered the creation of a large
+prerequisite epic (E94) to build those primitives. The assumption was
+wrong.
+
+**Root cause:** A direct exhaustive dump of
+`~/.cache/zerfoo/models/gemma-4-E2B-it-Q4_K_M.gguf` (unsloth release)
+returns exactly 23 unique tensor names and zero matches for any of:
+`altup`, `laurel`, `router`, `predict_coef`, `correct_coef`,
+`per_layer_post`. The complete tensor set is precisely the simpler
+layout cataloged in `docs/gemma4-edge-architecture.md`:
+token_embd, output_norm, rope_freqs, per_layer_token_embd (shared PLE),
+per_layer_model_proj, per_layer_proj_norm, and per block {attn_norm,
+attn_q/k/v, attn_q_norm, attn_k_norm, attn_output, post_attention_norm,
+ffn_norm, ffn_gate, ffn_up, ffn_down, post_ffw_norm, post_norm,
+inp_gate, proj, layer_output_scale}.
+
+The previous agent fetched `gemma3n-iswa.cpp` (a Gemma 3N-specific
+builder) and reasoned by analogy that Gemma 4 edge must share the same
+wiring. That was an unjustified leap. llama.cpp likely has a distinct
+builder for Gemma 4 edge, or the existing gemma3n-iswa builder handles
+both with branches on tensor presence. Either way, zerfoo's target is
+the tensors that actually exist in the GGUF, and those do not include
+AltUp or Laurel.
+
+**Fix:** N/A in code yet. Planned action:
+1. Delete epic E94 (no primitives needed). Mark its 11 issues as
+   superseded rather than open (Project #2).
+2. Unblock Wave E93-3 at its original scope. The 3 open wiring
+   questions in ADR-086 (PLE combiner, post_norm + layer_output_scale
+   position, shared_kv_layers semantics) stand but can be resolved by
+   reading the correct llama.cpp source for Gemma 4 (not Gemma 3N).
+3. Append a "Retracted" note to the prior devlog entry.
+
+**Impact:**
+- E94 wave definitions and 11 GitHub issues (#443..#454) should be
+  marked superseded; sync manifest should drop them on next sync.
+- E93-3 becomes executable again with the same plan that landed in
+  commit `9483e581` minus the E94 dependency. The eventual rewrite
+  of `inference/arch_gemma4_edge.go` still needs to resolve the three
+  open wiring questions against llama.cpp, but the primitive surface
+  is smaller than E94 implied.
+- Risk going forward: if Google ships a future Gemma 4 quant (e.g.
+  E4B with a different conversion) that *does* include AltUp/Laurel
+  tensors, we revisit. For now, build to the tensors we have.
+
 ## 2026-04-13 (evening): Gemma 4 edge uses AltUp + Laurel — E93-3 blocked, ADR-086 incomplete
+
+**RETRACTED 2026-04-13 late evening.** See entry above. The claim that
+Gemma 4 edge uses AltUp and Laurel was incorrect. The original
+architecture cataloged in `docs/gemma4-edge-architecture.md` is the
+right target.
 
 **Type:** investigation
 **Tags:** gemma4, gemma3n, altup, laurel, architecture, e93, blocker
