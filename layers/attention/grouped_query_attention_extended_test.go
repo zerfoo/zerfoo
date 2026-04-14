@@ -2,6 +2,7 @@ package attention
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -957,4 +958,169 @@ func TestBuildGroupQueryAttention_MissingParams(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGroupedQueryAttention_SetExternalKV_FromParams verifies that
+// SetExternalKV(true) on a GQA constructed via NewGroupedQueryAttentionFromParams
+// nils wk/wv, enables external-KV Forward semantics, and produces numerically
+// identical outputs to a standard internal-KV GQA when fed the same
+// pre-computed K/V tensors. This closes the API gap left by E95 where
+// WithExternalKV only worked via the NewGroupedQueryAttention constructor.
+func TestGroupedQueryAttention_SetExternalKV_FromParams(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	batchSize := 2
+	seqLen := 5
+	modelDim := 16
+	numQueryHeads := 4
+	numKeyValueHeads := 2
+	headDim := modelDim / numQueryHeads
+	kvDim := numKeyValueHeads * headDim
+
+	// Reference: internal-KV GQA built via FromParams.
+	wqRef, err := core.NewDense[float32]("wq_ref", engine, ops, modelDim, modelDim)
+	if err != nil {
+		t.Fatalf("NewDense wq_ref: %v", err)
+	}
+	wkRef, err := core.NewDense[float32]("wk_ref", engine, ops, modelDim, kvDim)
+	if err != nil {
+		t.Fatalf("NewDense wk_ref: %v", err)
+	}
+	wvRef, err := core.NewDense[float32]("wv_ref", engine, ops, modelDim, kvDim)
+	if err != nil {
+		t.Fatalf("NewDense wv_ref: %v", err)
+	}
+	woRef, err := core.NewDense[float32]("wo_ref", engine, ops, modelDim, modelDim)
+	if err != nil {
+		t.Fatalf("NewDense wo_ref: %v", err)
+	}
+	ropeRef, err := embeddings.NewRotaryPositionalEmbedding[float32](
+		context.Background(), engine, headDim, seqLen, embeddings.WithRotaryBase(10000.0))
+	if err != nil {
+		t.Fatalf("NewRotaryPositionalEmbedding ref: %v", err)
+	}
+	gqaInternal, err := NewGroupedQueryAttentionFromParams[float32](
+		engine, ops, modelDim, numQueryHeads, numKeyValueHeads,
+		wqRef, wkRef, wvRef, woRef, ropeRef)
+	if err != nil {
+		t.Fatalf("NewGroupedQueryAttentionFromParams internal: %v", err)
+	}
+
+	// Under-test: FromParams layer with SetExternalKV(true).
+	wqEx, err := core.NewDense[float32]("wq_ex", engine, ops, modelDim, modelDim)
+	if err != nil {
+		t.Fatalf("NewDense wq_ex: %v", err)
+	}
+	wkEx, err := core.NewDense[float32]("wk_ex", engine, ops, modelDim, kvDim)
+	if err != nil {
+		t.Fatalf("NewDense wk_ex: %v", err)
+	}
+	wvEx, err := core.NewDense[float32]("wv_ex", engine, ops, modelDim, kvDim)
+	if err != nil {
+		t.Fatalf("NewDense wv_ex: %v", err)
+	}
+	woEx, err := core.NewDense[float32]("wo_ex", engine, ops, modelDim, modelDim)
+	if err != nil {
+		t.Fatalf("NewDense wo_ex: %v", err)
+	}
+	ropeEx, err := embeddings.NewRotaryPositionalEmbedding[float32](
+		context.Background(), engine, headDim, seqLen, embeddings.WithRotaryBase(10000.0))
+	if err != nil {
+		t.Fatalf("NewRotaryPositionalEmbedding ex: %v", err)
+	}
+	gqaExternal, err := NewGroupedQueryAttentionFromParams[float32](
+		engine, ops, modelDim, numQueryHeads, numKeyValueHeads,
+		wqEx, wkEx, wvEx, woEx, ropeEx)
+	if err != nil {
+		t.Fatalf("NewGroupedQueryAttentionFromParams external: %v", err)
+	}
+
+	gqaExternal.SetExternalKV(true)
+
+	if !gqaExternal.ExternalKV() {
+		t.Fatalf("ExternalKV() = false, want true after SetExternalKV(true)")
+	}
+	if gqaExternal.wk != nil {
+		t.Fatalf("SetExternalKV(true) must nil wk")
+	}
+	if gqaExternal.wv != nil {
+		t.Fatalf("SetExternalKV(true) must nil wv")
+	}
+	if gqaExternal.kNorm != nil {
+		t.Fatalf("SetExternalKV(true) must nil kNorm")
+	}
+
+	// Share Q and output weights so only the K/V source differs.
+	copyDenseWeights(t, gqaExternal.wq, gqaInternal.wq)
+	copyDenseWeights(t, gqaExternal.wo, gqaInternal.wo)
+
+	inp, err := tensor.New[float32]([]int{batchSize, seqLen, modelDim}, nil)
+	if err != nil {
+		t.Fatalf("input tensor: %v", err)
+	}
+	for i := range inp.Data() {
+		inp.Data()[i] = float32(i%13) / 10.0
+	}
+
+	ctx := context.Background()
+	outInternal, err := gqaInternal.Forward(ctx, inp)
+	if err != nil {
+		t.Fatalf("internal Forward: %v", err)
+	}
+	kProj := gqaInternal.kProj
+	vProj := gqaInternal.vProj
+	if kProj == nil || vProj == nil {
+		t.Fatalf("internal GQA did not cache kProj/vProj")
+	}
+
+	outExternal, err := gqaExternal.Forward(ctx, inp, kProj, vProj)
+	if err != nil {
+		t.Fatalf("external Forward: %v", err)
+	}
+
+	if len(outInternal.Shape()) != len(outExternal.Shape()) {
+		t.Fatalf("shape rank mismatch: %v vs %v", outInternal.Shape(), outExternal.Shape())
+	}
+	for i, d := range outInternal.Shape() {
+		if outExternal.Shape()[i] != d {
+			t.Fatalf("shape mismatch at axis %d: %v vs %v", i, outInternal.Shape(), outExternal.Shape())
+		}
+	}
+
+	const tol = 1e-5
+	for i := range outInternal.Data() {
+		if math.Abs(float64(outInternal.Data()[i]-outExternal.Data()[i])) > tol {
+			t.Fatalf("output mismatch at %d: internal=%f external=%f",
+				i, outInternal.Data()[i], outExternal.Data()[i])
+		}
+	}
+}
+
+// TestGroupedQueryAttention_SetExternalKV_RejectsKEqV verifies SetExternalKV
+// panics if called after SetKEqV, matching the WithExternalKV/SetKEqV mutual
+// exclusivity contract.
+func TestGroupedQueryAttention_SetExternalKV_RejectsKEqV(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	wq, _ := core.NewDense[float32]("wq", engine, ops, 16, 16)
+	wk, _ := core.NewDense[float32]("wk", engine, ops, 16, 8)
+	wv, _ := core.NewDense[float32]("wv", engine, ops, 16, 8)
+	wo, _ := core.NewDense[float32]("wo", engine, ops, 16, 16)
+	rope, _ := embeddings.NewRotaryPositionalEmbedding[float32](
+		context.Background(), engine, 4, 64, embeddings.WithRotaryBase(10000.0))
+
+	gqa, err := NewGroupedQueryAttentionFromParams[float32](engine, ops, 16, 4, 2, wq, wk, wv, wo, rope)
+	if err != nil {
+		t.Fatalf("FromParams: %v", err)
+	}
+	gqa.SetKEqV(true)
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic when SetExternalKV is called on kEqV GQA")
+		}
+	}()
+	gqa.SetExternalKV(true)
 }
