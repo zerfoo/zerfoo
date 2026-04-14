@@ -326,6 +326,29 @@ func (gqa *GroupedQueryAttention[T]) SetKEqV(v bool) {
 	gqa.kEqV = v
 }
 
+// SetExternalKV configures the layer to read K/V from Forward inputs[1]/[2]
+// instead of projecting from its own wk/wv weights. When enabled, wk, wv, and
+// kNorm are cleared (the shared-KV layer does not use them per ADR-087 and
+// HuggingFace transformers modeling_gemma4.py line 1167 "Layers sharing kv
+// states don't need any weight matrices"). Mutually exclusive with kEqV.
+//
+// This setter is the FromParams-path counterpart to the WithExternalKV
+// constructor option: builders that load weights from GGUF construct GQA via
+// NewGroupedQueryAttentionFromParams with wk=nil, wv=nil (or disposable wk/wv),
+// then invoke SetExternalKV(true) to flip the forward path. Idempotent;
+// passing false re-enables internal projection iff wk/wv are still populated.
+func (gqa *GroupedQueryAttention[T]) SetExternalKV(v bool) {
+	if v && gqa.kEqV {
+		panic("GroupedQueryAttention: SetExternalKV is mutually exclusive with SetKEqV")
+	}
+	gqa.externalKV = v
+	if v {
+		gqa.wk = nil
+		gqa.wv = nil
+		gqa.kNorm = nil
+	}
+}
+
 // ExternalKV reports whether this layer was configured with WithExternalKV.
 func (gqa *GroupedQueryAttention[T]) ExternalKV() bool {
 	return gqa.externalKV

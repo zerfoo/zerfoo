@@ -7,6 +7,7 @@ import (
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
@@ -17,18 +18,38 @@ import (
 )
 
 // buildGemma4EdgeGraph constructs a computation graph for the Gemma 4 edge
-// variants (E4B and E2B) from pre-loaded GGUF tensors. It extends the dense
-// Gemma 4 builder with three features:
+// variants (E2B and E4B) from pre-loaded GGUF tensors. Per ADR-086 and ADR-087
+// it implements the canonical HuggingFace transformers modeling_gemma4.py
+// layout:
 //
-//  1. Per-Layer Embeddings (PLE): Each layer adds a per-layer token embedding
-//     projected to hidden_size before the input layernorm.
-//  2. KV-Shared Layers: Groups of consecutive layers share K/V weight
-//     projections to reduce parameter count.
-//  3. Double-Wide MLP: The E2B variant uses IntermediateSize*2 for the FFN.
+//   1. Per-Layer Embeddings (PLE). Shared `model.ple_embed_tokens.weight`
+//      [vocab, numLayers*pleDim] and `model.ple_model_proj.weight`
+//      [hidden, numLayers*pleDim] are computed once per forward, sliced per
+//      layer, combined via the shared `model.ple_proj_norm.weight` [pleDim]
+//      RMSNorm, and scaled by 1/sqrt(2). Per-block `input_gate`
+//      (hidden->pleDim), `ple_layer_proj` (pleDim->hidden), `post_layernorm`
+//      (hidden), and `layer_output_scale` [1] weights complete the sub-block.
 //
-// The architecture is:
+//   2. Shared-KV attention. The last `KVSharedLayers` layers skip their own
+//      wk/wv/k_norm and reuse the K/V activations from the nearest non-shared
+//      layer of the same attention type (sliding vs global), wired through
+//      `KVReuseNode` into a consumer GQA configured with
+//      `SetExternalKV(true)`.
 //
-//	Embed*sqrt(d) -> [PLE+Add -> RMSNorm -> GQA(KV-shared) -> PostNorm -> FusedAdd+RMSNorm -> FFN(GELU,double?) -> FusedNorm+Add] x N -> RMSNorm -> LMHead(tied)
+//   3. Dual-RoPE hybrid attention: global layers (every
+//      `SlidingWindowPattern`-th) use `RopeTheta`; sliding layers use
+//      `LocalRopeTheta` and a per-layer sliding window.
+//
+// Per-layer flow (canonical post-mapping names):
+//
+//	input_layernorm -> GQA (donor or shared-via-KVReuseNode)
+//	  -> post_attention_layernorm
+//	  -> fusedAddRMSNorm(pre_feedforward_layernorm, +pre-attn residual)
+//	  -> FFN (GELU, intermediate = gate_proj.Shape()[0])
+//	  -> fusedNormAdd(post_feedforward_layernorm, +pre-FFN residual)
+//	  -> PLE block: input_gate -> GELU -> * per_layer_inputs[i]
+//	       -> ple_layer_proj -> post_layernorm -> + residual
+//	  -> layer_output_scale (scalar broadcast)
 func buildGemma4EdgeGraph(
 	tensors map[string]*tensor.TensorNumeric[float32],
 	cfg *gguf.ModelConfig,
@@ -53,8 +74,29 @@ func buildGemma4EdgeGraph(
 	if err != nil {
 		return nil, nil, err
 	}
-
 	finalNormWeight, err := tl.Lookup("model.norm.weight")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pleDim := cfg.PLEHiddenSize
+	if pleDim <= 0 {
+		return nil, nil, fmt.Errorf("gemma4-edge: PLEHiddenSize must be positive (got %d)", pleDim)
+	}
+
+	pleEmbed, err := tl.Lookup("model.ple_embed_tokens.weight")
+	if err != nil {
+		return nil, nil, fmt.Errorf("gemma4-edge: %w", err)
+	}
+	pleModelProjRaw, err := tl.Lookup("model.ple_model_proj.weight")
+	if err != nil {
+		return nil, nil, fmt.Errorf("gemma4-edge: %w", err)
+	}
+	pleProjNormGain, err := tl.Lookup("model.ple_proj_norm.weight")
+	if err != nil {
+		return nil, nil, fmt.Errorf("gemma4-edge: %w", err)
+	}
+	pleModelProj, err := tw("model.ple_model_proj.weight", pleModelProjRaw)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -63,71 +105,51 @@ func buildGemma4EdgeGraph(
 	builder := graph.NewBuilder[float32](proxy)
 	input := builder.Input([]int{1, 1})
 
-	// Embedding lookup with sqrt(hidden_size) scaling (Gemma family convention).
-	scale := float32(math.Sqrt(float64(cfg.HiddenSize)))
-	embNode := newEmbeddingNode(proxy, embedWeight, scale)
+	// Main embedding: lookup and scale by sqrt(hidden_size) (Gemma convention).
+	hiddenScale := float32(math.Sqrt(float64(cfg.HiddenSize)))
+	embNode := newEmbeddingNode(proxy, embedWeight, hiddenScale)
 	hidden := builder.AddNode(embNode, input)
+
+	// PLE combined producer: caches token-PLE and model-projection tensors
+	// for consumption by per-layer pleSliceNode. Forward returns the hidden
+	// input unchanged so downstream nodes keep a well-formed data edge.
+	pleProducer, err := newPLECombinedProducer[float32](proxy, pleEmbed, pleModelProj,
+		cfg.NumLayers, pleDim, cfg.HiddenSize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gemma4-edge: %w", err)
+	}
+	hidden = builder.AddNode(pleProducer, input, hidden)
 
 	defaultHeadDim := cfg.HiddenSize / cfg.NumHeads
 	if cfg.HeadDim > 0 {
 		defaultHeadDim = cfg.HeadDim
 	}
 
-	// Determine FFN intermediate size (double-wide for E2B variant).
-	intermediateSize := cfg.IntermediateSize
-	if cfg.DoubleWideMLP {
-		intermediateSize = cfg.IntermediateSize * 2
+	// Classify layers upfront for ResolveKVDonor.
+	layerTypes := make([]LayerType, cfg.NumLayers)
+	for i := 0; i < cfg.NumLayers; i++ {
+		if cfg.SlidingWindowPattern > 0 && (i+1)%cfg.SlidingWindowPattern == 0 {
+			layerTypes[i] = LayerTypeGlobal
+		} else {
+			layerTypes[i] = LayerTypeSliding
+		}
 	}
+	firstSharedIdx := cfg.NumLayers - cfg.KVSharedLayers
+	if firstSharedIdx < 0 {
+		firstSharedIdx = 0
+	}
+	donorGQA := make(map[int]*attention.GroupedQueryAttention[float32], cfg.NumLayers)
+	donorKVGeom := make(map[int][2]int, cfg.NumLayers) // donorIdx -> [numKVHeads, headDim]
 
 	for i := 0; i < cfg.NumLayers; i++ {
 		prefix := fmt.Sprintf("model.layers.%d.", i)
+		isGlobal := layerTypes[i] == LayerTypeGlobal
+		isShared := cfg.KVSharedLayers > 0 && i >= firstSharedIdx
 
-		// --- Per-Layer Embeddings (PLE) ---
-		// PLE adds a per-layer token embedding projected to hidden_size
-		// before the input layernorm.
-		if cfg.PLEHiddenSize > 0 {
-			// Look up PLE embedding weight for this layer.
-			var pleWeight *tensor.TensorNumeric[float32]
-			pleWeight, err = tl.Lookup(prefix + "ple.weight")
-			if err != nil {
-				// Try alternate naming convention.
-				pleWeight, err = tl.Lookup(prefix + "ple_embedding.weight")
-				if err != nil {
-					return nil, nil, fmt.Errorf("layer %d: missing PLE weight: %w", i, err)
-				}
-			}
-
-			// PLE embedding lookup (no scaling, unlike the main embedding).
-			pleEmbNode := newEmbeddingNode(proxy, pleWeight, 0)
-			pleEmb := builder.AddNode(pleEmbNode, input)
-
-			// Project PLE embedding to hidden_size.
-			pleProjW, err := tl.Lookup(prefix + "ple_proj.weight")
-			if err != nil {
-				return nil, nil, fmt.Errorf("layer %d: missing PLE projection weight: %w", i, err)
-			}
-			pleProjWT, err := tw(prefix+"ple_proj.weight", pleProjW)
-			if err != nil {
-				return nil, nil, err
-			}
-			pleProj := core.NewDenseFromParams(
-				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"ple_proj.weight", pleProjWT)), nil,
-			)
-			pleProjOut := builder.AddNode(pleProj, pleEmb)
-
-			// Add PLE projection to hidden state.
-			pleAdd := &elementwiseAddNode[float32]{engine: proxy}
-			hidden = builder.AddNode(pleAdd, hidden, pleProjOut)
-		}
-
-		// Determine if this is a global or sliding layer.
-		isGlobal := cfg.SlidingWindowPattern > 0 && (i+1)%cfg.SlidingWindowPattern == 0
-
-		// Select per-layer attention configuration.
+		// Per-layer attention configuration.
 		var numKVHeads, headDim int
 		var ropeTheta float64
 		var partialRotaryFactor float32
-
 		if isGlobal {
 			numKVHeads = cfg.GlobalNumKVHeads
 			if numKVHeads == 0 {
@@ -153,7 +175,6 @@ func buildGemma4EdgeGraph(
 			} else {
 				ropeTheta = cfg.RopeTheta
 			}
-			// Sliding layers use full RoPE.
 		}
 
 		// --- Input LayerNorm ---
@@ -169,23 +190,8 @@ func buildGemma4EdgeGraph(
 		}
 		normed := builder.AddNode(inputNorm, hidden)
 
-		// --- Self-Attention (GQA) with optional KV sharing ---
-		// For KV-shared layers, load K/V weights from the source layer.
-		kvPrefix := prefix
-		if cfg.KVSharedLayers > 0 {
-			kvSourceLayer := (i / cfg.KVSharedLayers) * cfg.KVSharedLayers
-			kvPrefix = fmt.Sprintf("model.layers.%d.", kvSourceLayer)
-		}
-
+		// --- Q / O projections (always present) ---
 		qW, err := tl.Lookup(prefix + "self_attn.q_proj.weight")
-		if err != nil {
-			return nil, nil, err
-		}
-		kW, err := tl.Lookup(kvPrefix + "self_attn.k_proj.weight")
-		if err != nil {
-			return nil, nil, err
-		}
-		vW, err := tl.Lookup(kvPrefix + "self_attn.v_proj.weight")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -193,16 +199,7 @@ func buildGemma4EdgeGraph(
 		if err != nil {
 			return nil, nil, err
 		}
-
 		qWT, err := tw(prefix+"self_attn.q_proj.weight", qW)
-		if err != nil {
-			return nil, nil, err
-		}
-		kWT, err := tw(kvPrefix+"self_attn.k_proj.weight", kW)
-		if err != nil {
-			return nil, nil, err
-		}
-		vWT, err := tw(kvPrefix+"self_attn.v_proj.weight", vW)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -210,19 +207,39 @@ func buildGemma4EdgeGraph(
 		if err != nil {
 			return nil, nil, err
 		}
-
 		wq := core.NewDenseFromParams(
 			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.q_proj.weight", qWT)), nil,
-		)
-		wk := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, pw.Wrap(kvPrefix+"self_attn.k_proj.weight", kWT)), nil,
-		)
-		wv := core.NewDenseFromParams(
-			core.NewLinearFromParam(proxy, pw.Wrap(kvPrefix+"self_attn.v_proj.weight", vWT)), nil,
 		)
 		wo := core.NewDenseFromParams(
 			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.o_proj.weight", oWT)), nil,
 		)
+
+		// --- K / V projections: only for non-shared (donor) layers ---
+		var wk, wv *core.Dense[float32]
+		if !isShared {
+			kW, err := tl.Lookup(prefix + "self_attn.k_proj.weight")
+			if err != nil {
+				return nil, nil, err
+			}
+			vW, err := tl.Lookup(prefix + "self_attn.v_proj.weight")
+			if err != nil {
+				return nil, nil, err
+			}
+			kWT, err := tw(prefix+"self_attn.k_proj.weight", kW)
+			if err != nil {
+				return nil, nil, err
+			}
+			vWT, err := tw(prefix+"self_attn.v_proj.weight", vW)
+			if err != nil {
+				return nil, nil, err
+			}
+			wk = core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.k_proj.weight", kWT)), nil,
+			)
+			wv = core.NewDenseFromParams(
+				core.NewLinearFromParam(proxy, pw.Wrap(prefix+"self_attn.v_proj.weight", vWT)), nil,
+			)
+		}
 
 		// RoPE with per-layer theta and optional partial rotation.
 		ropeOpts := []embeddings.RotaryPositionalEmbeddingOption{
@@ -246,18 +263,11 @@ func buildGemma4EdgeGraph(
 			return nil, nil, fmt.Errorf("layer %d gqa: %w", i, err)
 		}
 		gqa.LayerIndex = i
-
-		// Sliding window attention for non-global layers.
 		if !isGlobal && cfg.SlidingWindow > 0 {
 			gqa.SlidingWindowSize = cfg.SlidingWindow
 		}
 
-		// K=V optimization for global layers.
-		if isGlobal && cfg.AttentionKEqV {
-			gqa.SetKEqV(true)
-		}
-
-		// Q/K norms (always on for Gemma 4).
+		// Q norm is present on every layer; K norm only on donor layers.
 		qNormW, err := tl.Lookup(prefix + "self_attn.q_norm.weight")
 		if err != nil {
 			return nil, nil, err
@@ -268,22 +278,56 @@ func buildGemma4EdgeGraph(
 		if err != nil {
 			return nil, nil, err
 		}
-		kNormW, err := tl.Lookup(prefix + "self_attn.k_norm.weight")
-		if err != nil {
-			return nil, nil, err
-		}
-		kNorm, err := normalization.NewRMSNormFromParam[float32](
-			proxy, ops, rmsEps, pw.Wrap(prefix+"self_attn.k_norm.weight", kNormW),
-		)
-		if err != nil {
-			return nil, nil, err
-		}
-		gqa.SetQKNorms(qNorm, kNorm)
-		gqa.SetQKNormWeights(qNormW, kNormW, rmsEps)
 
-		attnOut := builder.AddNode(gqa, normed)
+		var attnOut graph.Node[float32]
+		if isShared {
+			gqa.SetExternalKV(true)
+			gqa.SetQKNorms(qNorm, nil)
+			gqa.SetQKNormWeights(qNormW, nil, rmsEps)
 
-		// --- Post-Attention Norm (Gemma 4 always has post-norms) ---
+			donorIdx := ResolveKVDonor(i, firstSharedIdx, layerTypes)
+			donor, ok := donorGQA[donorIdx]
+			if !ok {
+				return nil, nil, fmt.Errorf("layer %d: donor GQA for index %d not registered", i, donorIdx)
+			}
+			geom, ok := donorKVGeom[donorIdx]
+			if !ok {
+				return nil, nil, fmt.Errorf("layer %d: donor geometry for index %d not registered", i, donorIdx)
+			}
+			donorKVHeads, donorHeadDim := geom[0], geom[1]
+			kReuse, err := NewKVReuseNode[float32](proxy, donor.KPort(), donorKVHeads, donorHeadDim, true)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d: K reuse: %w", i, err)
+			}
+			vReuse, err := NewKVReuseNode[float32](proxy, donor.VPort(), donorKVHeads, donorHeadDim, false)
+			if err != nil {
+				return nil, nil, fmt.Errorf("layer %d: V reuse: %w", i, err)
+			}
+			kIn := builder.AddNode(kReuse)
+			vIn := builder.AddNode(vReuse)
+			attnOut = builder.AddNode(gqa, normed, kIn, vIn)
+		} else {
+			if isGlobal && cfg.AttentionKEqV {
+				gqa.SetKEqV(true)
+			}
+			kNormW, err := tl.Lookup(prefix + "self_attn.k_norm.weight")
+			if err != nil {
+				return nil, nil, err
+			}
+			kNorm, err := normalization.NewRMSNormFromParam[float32](
+				proxy, ops, rmsEps, pw.Wrap(prefix+"self_attn.k_norm.weight", kNormW),
+			)
+			if err != nil {
+				return nil, nil, err
+			}
+			gqa.SetQKNorms(qNorm, kNorm)
+			gqa.SetQKNormWeights(qNormW, kNormW, rmsEps)
+			donorGQA[i] = gqa
+			donorKVGeom[i] = [2]int{numKVHeads, headDim}
+			attnOut = builder.AddNode(gqa, normed)
+		}
+
+		// --- Post-Attention Norm ---
 		postAttnNormW, err := tl.Lookup(prefix + "post_attention_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
@@ -296,13 +340,13 @@ func buildGemma4EdgeGraph(
 		}
 		attnOut = builder.AddNode(postAttnNorm, attnOut)
 
-		// --- Fused Residual Add + Pre-FFN LayerNorm ---
+		// --- Fused Residual Add + Pre-FFN LayerNorm (residual = pre-attn hidden) ---
 		preFfnNormW, err := tl.Lookup(prefix + "pre_feedforward_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		fusedNode := &fusedAddRMSNormNode[float32]{engine: proxy, weight: preFfnNormW, eps: rmsEps}
-		normed2 := builder.AddNode(fusedNode, attnOut, hidden)
+		fusedPreFFN := &fusedAddRMSNormNode[float32]{engine: proxy, weight: preFfnNormW, eps: rmsEps}
+		normed2 := builder.AddNode(fusedPreFFN, attnOut, hidden)
 
 		// --- FFN (GELU) ---
 		gateW, err := tl.Lookup(prefix + "mlp.gate_proj.weight")
@@ -317,6 +361,16 @@ func buildGemma4EdgeGraph(
 		if err != nil {
 			return nil, nil, err
 		}
+
+		// Per-layer intermediate size from gate_proj ground truth (the GGUF
+		// loader reverses GGUF's [cols, rows] to zerfoo [rows, cols], so
+		// gate_proj.Shape()[0] is the intermediate dim). This correctly
+		// handles HF/unsloth boundary mismatches in E2B packing.
+		gateShape := gateW.Shape()
+		if len(gateShape) != 2 {
+			return nil, nil, fmt.Errorf("layer %d gate_proj rank %d, want 2", i, len(gateShape))
+		}
+		intermediateSize := gateShape[0]
 
 		ffn, err := core.NewFFN[float32](
 			prefix+"mlp", proxy, ops,
@@ -340,7 +394,6 @@ func buildGemma4EdgeGraph(
 		if err != nil {
 			return nil, nil, err
 		}
-
 		ffnParams := ffn.Parameters()
 		ffnParams[0].Value = gateWT // w1 = gate_proj
 		ffnParams[1].Value = downWT // w2 = down_proj
@@ -348,15 +401,86 @@ func buildGemma4EdgeGraph(
 
 		ffnOut := builder.AddNode(ffn, normed2)
 
-		// --- Fused Post-FFN Norm + Residual Add ---
+		// --- Fused Post-FFN Norm + Residual Add (residual from fusedPreFFN input) ---
 		postFfnNormW, err := tl.Lookup(prefix + "post_feedforward_layernorm.weight")
 		if err != nil {
 			return nil, nil, err
 		}
-		fusedNormAdd := &fusedNormAddNode[float32]{engine: proxy, weight: postFfnNormW, eps: rmsEps}
-		resNode := &residualRefNode[float32]{source: fusedNode}
+		fusedPostFFN := &fusedNormAddNode[float32]{engine: proxy, weight: postFfnNormW, eps: rmsEps}
+		resNode := &residualRefNode[float32]{source: fusedPreFFN}
 		residualRef := builder.AddNode(resNode)
-		hidden = builder.AddNode(fusedNormAdd, ffnOut, residualRef)
+		afterFFN := builder.AddNode(fusedPostFFN, ffnOut, residualRef)
+
+		// --- PLE sub-block (after the standard FFN residual) ---
+		inpGateW, err := tl.Lookup(prefix + "input_gate.weight")
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d: %w", i, err)
+		}
+		pleLayerProjW, err := tl.Lookup(prefix + "ple_layer_proj.weight")
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d: %w", i, err)
+		}
+		postLayerNormW, err := tl.Lookup(prefix + "post_layernorm.weight")
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d: %w", i, err)
+		}
+		layerOutputScaleW, err := tl.Lookup(prefix + "layer_output_scale.weight")
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d: %w", i, err)
+		}
+
+		inpGateWT, err := tw(prefix+"input_gate.weight", inpGateW)
+		if err != nil {
+			return nil, nil, err
+		}
+		pleLayerProjWT, err := tw(prefix+"ple_layer_proj.weight", pleLayerProjW)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		inpGate := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"input_gate.weight", inpGateWT)), nil,
+		)
+		pleLayerProj := core.NewDenseFromParams(
+			core.NewLinearFromParam(proxy, pw.Wrap(prefix+"ple_layer_proj.weight", pleLayerProjWT)), nil,
+		)
+
+		// gelu(input_gate(afterFFN)) -- produces [B, S, pleDim]
+		gateOut := builder.AddNode(inpGate, afterFFN)
+		gelu := activations.NewGelu[float32](proxy, ops)
+		gateActivated := builder.AddNode(gelu, gateOut)
+
+		// Per-layer PLE slice: [B, S, pleDim], combined per HF line 1693-1696.
+		sliceNode, err := newPLESliceNode[float32](proxy, pleProducer, pleProjNormGain, rmsEps, i)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d: pleSlice: %w", i, err)
+		}
+		pleSlice := builder.AddNode(sliceNode)
+
+		// Elementwise multiply gated hidden by per-layer inputs.
+		mulGatePLE := &elementwiseMulNode[float32]{engine: proxy}
+		gated := builder.AddNode(mulGatePLE, gateActivated, pleSlice)
+
+		// Project back to hidden and apply post_layernorm.
+		projected := builder.AddNode(pleLayerProj, gated)
+		postLayerNorm, err := normalization.NewRMSNormFromParam[float32](
+			proxy, ops, rmsEps, pw.Wrap(prefix+"post_layernorm.weight", postLayerNormW),
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+		postNormed := builder.AddNode(postLayerNorm, projected)
+
+		// Add PLE sub-block output to the FFN residual.
+		addRes := &elementwiseAddNode[float32]{engine: proxy}
+		combined := builder.AddNode(addRes, afterFFN, postNormed)
+
+		// --- Layer output scale (scalar broadcast) ---
+		scaleNode, err := newLayerOutputScaleNode[float32](proxy, layerOutputScaleW)
+		if err != nil {
+			return nil, nil, fmt.Errorf("layer %d: %w", i, err)
+		}
+		hidden = builder.AddNode(scaleNode, combined)
 	}
 
 	// --- Final RMSNorm ---
@@ -368,7 +492,7 @@ func buildGemma4EdgeGraph(
 	}
 	normedFinal := builder.AddNode(finalNorm, hidden)
 
-	// --- LM Head (tied to embedding) ---
+	// --- LM Head (tied to embedding, optional softcap) ---
 	lmHead := newLMHeadNode(proxy, embedWeight, cfg.LogitSoftcap)
 	output := builder.AddNode(lmHead, normedFinal)
 
@@ -376,8 +500,6 @@ func buildGemma4EdgeGraph(
 	if err != nil {
 		return nil, nil, fmt.Errorf("build graph: %w", err)
 	}
-
 	g.SetEngineProxy(proxy)
 	return g, embedWeight, nil
 }
-
