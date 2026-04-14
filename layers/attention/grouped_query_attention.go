@@ -102,13 +102,6 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	kOut *tensor.TensorNumeric[T]
 	vOut *tensor.TensorNumeric[T]
 
-	// External K/V override. When set (by task-T95.1.1's WithExternalKV()
-	// API), Forward skips local K/V projection and KPort()/VPort() return
-	// these donor ports directly so further chained sharing is transparent.
-	// Unused by the current layer body; wired by T95.1.1.
-	externalKV    bool
-	extKPortNode  graph.Node[T]
-	extVPortNode  graph.Node[T]
 }
 
 // OpType returns the operation type.
@@ -1436,35 +1429,28 @@ func (p *gqaKVPort[T]) OutputShape() []int {
 var _ graph.Node[float32] = (*gqaKVPort[float32])(nil)
 
 // KPort returns a graph.Node[T] that, when executed, yields the layer's
-// computed K after projection + optional per-head K norm + post-projection
-// RoPE, in shape [batch, numKVHeads, seqLen, headDim]. When the layer is
-// running in external-K/V mode (task-T95.1.1's WithExternalKV()), KPort
-// returns the external donor's K port directly so chained K/V sharing is
-// transparent.
+// most-recently-computed K in shape [batch, numKVHeads, seqLen, headDim].
+// In external-K/V mode, the captured K is whatever tensor was supplied
+// via Forward's inputs[1]; otherwise it is the layer's own projection
+// output after optional per-head K norm and post-projection RoPE.
 //
-// The returned node's Forward must be called AFTER the owner GQA's Forward
-// pass -- the port simply re-exports the cached tensor produced there.
+// Donor -> shared wiring is performed by the caller: at graph-build time
+// the builder wires donor.KPort() as an input producing K, then passes
+// the resulting tensor into the shared layer's Forward via inputs[1].
+// See ADR-087.
+//
+// The returned node's Forward must be called AFTER the owner GQA's
+// Forward pass -- the port re-exports the cached tensor produced there.
 // Calling Forward on the port before the owner has produced K yields a
-// descriptive error (see gqaKVPort.Forward).
-//
-// Downstream consumers (e.g. task-T95.2.1's shared-KV wiring node) should
-// treat the returned node as a read-only K source. The node carries no
+// descriptive error (see gqaKVPort.Forward). The node carries no
 // parameters and has no independent gradient.
 func (gqa *GroupedQueryAttention[T]) KPort() graph.Node[T] {
-	if gqa.externalKV && gqa.extKPortNode != nil {
-		return gqa.extKPortNode
-	}
 	return &gqaKVPort[T]{owner: gqa, selKey: true}
 }
 
-// VPort returns a graph.Node[T] that, when executed, yields the layer's
-// computed V after projection + reshape + transpose, in shape
-// [batch, numKVHeads, seqLen, headDim]. When the layer is running in
-// external-K/V mode, VPort returns the external donor's V port directly.
-// See KPort for semantics and nil-safety contract.
+// VPort returns a graph.Node[T] that yields the layer's most-recently-
+// computed V in shape [batch, numKVHeads, seqLen, headDim]. See KPort
+// for semantics, donor-wiring conventions, and nil-safety contract.
 func (gqa *GroupedQueryAttention[T]) VPort() graph.Node[T] {
-	if gqa.externalKV && gqa.extVPortNode != nil {
-		return gqa.extVPortNode
-	}
 	return &gqaKVPort[T]{owner: gqa, selKey: false}
 }
