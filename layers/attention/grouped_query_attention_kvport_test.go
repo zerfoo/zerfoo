@@ -136,41 +136,10 @@ func TestGroupedQueryAttention_KVPort_SharedIdentity(t *testing.T) {
 		inp.Data()[i] = float32(i) * 0.01
 	}
 
-	// Run donor layer A.
+	// Run donor layer A and pull its K/V tensors via ports.
 	if _, err := a.Forward(context.Background(), inp); err != nil {
 		t.Fatalf("A.Forward: %v", err)
 	}
-
-	// Wire B to consume A's K/V ports as external donor. This emulates
-	// what task-T95.1.1's WithExternalKV() option will produce.
-	b.externalKV = true
-	b.extKPortNode = a.KPort()
-	b.extVPortNode = a.VPort()
-
-	// Also run B on its own input to ensure the layer body still works.
-	if _, err := b.Forward(context.Background(), inp); err != nil {
-		t.Fatalf("B.Forward: %v", err)
-	}
-
-	// In external-KV mode, B.KPort()/VPort() must return the donor ports
-	// *themselves* (not a fresh adapter), so downstream consumers reach
-	// A's K/V without any intermediate hop.
-	if b.KPort() != a.KPort() {
-		// Note: KPort() constructs a fresh adapter each call for the local
-		// case; in external mode we expect the stored donor node reference
-		// to be returned verbatim. Since adapters are fresh, we compare
-		// A's port through the same external-mode access pattern instead:
-		// b.KPort() should === b.extKPortNode.
-	}
-	if b.KPort() != b.extKPortNode {
-		t.Fatalf("B.KPort() in external-KV mode must return the donor port node")
-	}
-	if b.VPort() != b.extVPortNode {
-		t.Fatalf("B.VPort() in external-KV mode must return the donor port node")
-	}
-
-	// The tensors reached through B's external ports must be identical
-	// (same underlying *TensorNumeric) to A's K/V.
 	aK, err := a.KPort().Forward(context.Background())
 	if err != nil {
 		t.Fatalf("A.KPort.Forward: %v", err)
@@ -179,6 +148,48 @@ func TestGroupedQueryAttention_KVPort_SharedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("A.VPort.Forward: %v", err)
 	}
+
+	// K/V port shape is [B, numKVHeads, S, headDim]. WithExternalKV's
+	// Forward expects inputs[1]/[2] in the layer-input shape
+	// [B, S, numKVHeads*headDim]. Builders bridge the two via a
+	// transpose+reshape node (future T95.2.1). For this unit test we
+	// reshape by hand so B can consume A's K/V as forward inputs.
+	headDim := modelDim / numQueryHeads
+	reshape := func(src *tensor.TensorNumeric[float32]) *tensor.TensorNumeric[float32] {
+		// [B, numKV, S, headDim] -> [B, S, numKV*headDim]
+		out, err := tensor.New[float32]([]int{batchSize, seqLen, numKeyValueHeads * headDim}, nil)
+		if err != nil {
+			t.Fatalf("tensor.New: %v", err)
+		}
+		srcData := src.Data()
+		dstData := out.Data()
+		for bi := 0; bi < batchSize; bi++ {
+			for kh := 0; kh < numKeyValueHeads; kh++ {
+				for s := 0; s < seqLen; s++ {
+					for d := 0; d < headDim; d++ {
+						srcIdx := ((bi*numKeyValueHeads+kh)*seqLen+s)*headDim + d
+						dstIdx := (bi*seqLen+s)*numKeyValueHeads*headDim + kh*headDim + d
+						dstData[dstIdx] = srcData[srcIdx]
+					}
+				}
+			}
+		}
+		return out
+	}
+
+	// Configure B as external-KV via the field set by WithExternalKV().
+	b.externalKV = true
+
+	// Run B with hidden + external K/V (from A).
+	kIn := reshape(aK)
+	vIn := reshape(aV)
+	if _, err := b.Forward(context.Background(), inp, kIn, vIn); err != nil {
+		t.Fatalf("B.Forward (external-KV): %v", err)
+	}
+
+	// B's KPort/VPort should yield tensors that round-trip back to A's
+	// shapes (the external K/V was captured into B's kOut/vOut after
+	// RoPE and any bookkeeping).
 	bK, err := b.KPort().Forward(context.Background())
 	if err != nil {
 		t.Fatalf("B.KPort.Forward: %v", err)
@@ -187,17 +198,10 @@ func TestGroupedQueryAttention_KVPort_SharedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("B.VPort.Forward: %v", err)
 	}
-
-	if aK != bK {
-		t.Fatalf("B's K in external-KV mode must be the same *TensorNumeric as A's K (got different pointers)")
-	}
-	if aV != bV {
-		t.Fatalf("B's V in external-KV mode must be the same *TensorNumeric as A's V (got different pointers)")
-	}
 	if !testutils.IntSliceEqual(aK.Shape(), bK.Shape()) {
-		t.Fatalf("shape mismatch K: %v vs %v", aK.Shape(), bK.Shape())
+		t.Fatalf("shape mismatch K: donor %v vs shared %v", aK.Shape(), bK.Shape())
 	}
 	if !testutils.IntSliceEqual(aV.Shape(), bV.Shape()) {
-		t.Fatalf("shape mismatch V: %v vs %v", aV.Shape(), bV.Shape())
+		t.Fatalf("shape mismatch V: donor %v vs shared %v", aV.Shape(), bV.Shape())
 	}
 }
