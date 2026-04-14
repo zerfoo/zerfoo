@@ -46,8 +46,6 @@ spec:
       env:
         - name: LD_LIBRARY_PATH
           value: /usr/local/cuda/lib64
-        - name: ZERFOO_GQA_DEBUG
-          value: "1"
       resources:
         limits:
           memory: 16Gi
