@@ -81,11 +81,57 @@ PLE embedding plus per-layer projection, not per-layer embedding tables.
 - **Builder rewrite cost.** The existing `arch_gemma4_edge.go` is
   effectively scrapped. Synthetic fixtures in `inference/arch_gemma4_test.go`
   must also be rewritten. Budgeted in tasks T93.3.1 and T93.3.2.
-- **Open ambiguities.** Three wiring questions (PLE combiner with
-  `per_layer_model_proj`, position of `post_norm` and `layer_output_scale`,
-  exact `shared_kv_layers` semantics) cannot be resolved from tensor shapes
-  alone and require reading llama.cpp's Gemma 4 graph builder during
-  T93.3.1.
+- **Open ambiguities RESOLVED (2026-04-13) against HuggingFace
+  `transformers/src/transformers/models/gemma4/modeling_gemma4.py`**
+  (llama.cpp has no Gemma 4 builder yet — confirmed no `LLM_ARCH_GEMMA4`
+  symbol, no gemma4 commits. HF transformers is the canonical reference.)
+
+  1. **PLE combiner semantics** — `Gemma4TextDecoderLayer.forward` lines
+     1401-1408: the PLE sub-block runs AFTER the attention+FFN residual as
+     a third sub-block. Sequence: save residual, `per_layer_input_gate`
+     (Linear 1536->256, GGUF `blk.N.inp_gate`), GELU, elementwise multiply
+     with `per_layer_input` (dim 256), `per_layer_projection` (Linear
+     256->1536, GGUF `blk.N.proj`), `post_per_layer_input_norm` (RMSNorm
+     hidden-dim, GGUF `blk.N.post_norm`), add residual. The
+     `per_layer_input` for layer i comes from
+     `Gemma4TextModel.project_per_layer_inputs` (lines 1674-1696):
+     `per_layer_projection = RMSNorm(reshape(per_layer_model_proj(embeds)
+     * hidden_size**-0.5))`, combined with a token-identity PLE slice
+     scaled by `sqrt(256)=16`, then multiplied by
+     `per_layer_input_scale = 1/sqrt(2)`.
+
+  2. **`post_norm` and `layer_output_scale` positions** — `post_norm`
+     (hidden-dim 1536) is `post_per_layer_input_norm` and sits inside the
+     PLE sub-block immediately before its residual add (line 1407). It is
+     NOT a post-attention or post-FFN norm — those exist separately
+     (`post_attention_layernorm` line 1377, `post_feedforward_layernorm`
+     line 1398). `layer_output_scale` (`[1]` scalar) is `self.layer_scalar`
+     (line 1337), a learned per-layer output multiplier applied at the
+     very end of the decoder layer (line 1410: `hidden_states *=
+     self.layer_scalar`) after all sub-blocks.
+
+  3. **`shared_kv_layers=20` semantics** — lines 1149-1226: layers with
+     `N >= first_kv_shared_layer_idx` (=20) are `is_kv_shared_layer=True`.
+     HF does NOT instantiate `k_proj`, `v_proj`, `k_norm`, `v_norm` on
+     these layers (line 1167 comment: "Layers sharing kv states don't
+     need any weight matrices"). The forward path skips K/V projection
+     and pulls from `shared_kv_states[self.kv_shared_layer_index]`, where
+     `kv_shared_layer_index` is the last non-shared layer of the SAME
+     `layer_type` (sliding vs global). `store_full_length_kv=True` on the
+     donor layer stashes full-length K/V before sliding-window Cache
+     truncates. Unsloth's per-layer K/V weights on layers 20-34 in the
+     GGUF are therefore unused by the reference; the zerfoo builder
+     should ignore them and route to the donor layer.
+
+  4. **Double-wide MLP gating** (bonus finding, line 1021):
+     `use_double_wide_mlp = config.use_double_wide_mlp and is_kv_shared_layer`
+     — MLP intermediate doubles (6144 -> 12288) on shared-KV layers only.
+     The unsloth GGUF's `feed_forward_length` per-layer array shows 6144
+     for 0-14 and 12288 for 15-34 (boundary at layer 15, not 20).
+     Boundary mismatch between HF (20) and unsloth (15) must be verified
+     against the actual per-layer tensor shapes during builder
+     implementation; use the GGUF's explicit per-layer `ffn_up`/`ffn_gate`
+     shapes as ground truth rather than the scalar config.
 - **Divergence risk.** If llama.cpp changes its Gemma 4 layout in a future
   version, zerfoo must track it. Mitigation: integration test
   `TestGemma4E2B_EndToEnd` runs against a real GGUF and catches layout
