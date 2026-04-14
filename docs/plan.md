@@ -1299,12 +1299,12 @@ E93-3 is now gated on E95. E93-4 remains gated on E93-3.
 
 ### E95.1: GQA API extension
 
-- [ ] T95.1.1 Add `WithExternalKV` option to GroupedQueryAttention  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+- [x] T95.1.1 Add `WithExternalKV` option to GroupedQueryAttention  Owner: TBD  Est: 1.5h  verifies: [UC-001]  2026 04 13  (PR #462)
   File: `layers/attention/grouped_query_attention.go`
   Add a `WithExternalKV()` functional option that sets an `externalKV bool` field. When set, `Forward` expects `inputs[1]` and `inputs[2]` to be pre-computed K and V tensors respectively, skips `wk.Forward`/`wv.Forward`, and does not instantiate `wk`, `wv`, `k_norm` parameters. Q, q_norm, w_out, RoPE for Q, attention math, and output projection remain unchanged. Default off; existing callers unchanged.
   AC: new option compiles. Unit test exercises external-KV mode: build a GQA with `WithExternalKV()`, pass matching-shape K/V via inputs[1]/[2], compare output with a reference GQA that computed K/V internally from an equivalent setup. Shapes match exactly.
 
-- [ ] T95.1.2 Expose K/V as output ports from every GQA layer  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T95.1.2 Expose K/V as output ports from every GQA layer  Owner: TBD  Est: 1h  verifies: [UC-001]  2026 04 13  (PR #462)
   Deps: T95.1.1
   File: `layers/attention/grouped_query_attention.go`
   Every GQA layer already computes K and V (either from internal projection or external input). Expose them as additional output nodes so a downstream shared layer can read them. Options: (a) return K/V via `Outputs()` alongside the attention output, or (b) add `KPort()` and `VPort()` accessors. Choose (b) for clarity; the attention output stays the primary node.
@@ -1318,7 +1318,7 @@ E93-3 is now gated on E95. E93-4 remains gated on E93-3.
   Thin graph node that takes a donor layer's K (or V) port as input and passes it through unchanged. Exists to make the donor→shared edge explicit in the graph (for readability, impact tracing, and CUDA graph capture). If the donor's K/V can be wired directly without a pass-through node, skip this file and document the direct wiring approach in ADR-087 Implementation notes.
   AC: node compiles, unit test verifies pass-through semantics, or (alternative) ADR-087 updated to note direct wiring works without a dedicated node.
 
-- [ ] T95.2.2 Donor resolution helper in inference  Owner: TBD  Est: 45m  verifies: [UC-001]
+- [x] T95.2.2 Donor resolution helper in inference  Owner: TBD  Est: 45m  verifies: [UC-001]  2026 04 13  (PR #462)
   Deps: none (can run parallel with T95.1.1-T95.2.1)
   File: `inference/kv_donor.go` (new)
   Pure function `ResolveKVDonor(layerIdx int, firstSharedIdx int, layerTypes []LayerType) int` returns the donor layer index for a shared layer. Walks backward from `layerIdx-1` to 0 finding the nearest layer `j < firstSharedIdx` with `layerTypes[j] == layerTypes[layerIdx]`. Panics if no donor exists (caller bug). `LayerType` enum is `Sliding` or `Global`.
@@ -1357,9 +1357,9 @@ E93-3 is now gated on E95. E93-4 remains gated on E93-3.
 #### Wave E95-1: Foundations (3 agents)
 Parallel at start. Track A builds the GQA extension; Track C writes the pure donor helper independently; non-regression tests can be pre-staged.
 
-- [ ] Agent 1: T95.1.1 (WithExternalKV option)
-- [ ] Agent 2: T95.1.2 (K/V output ports) — can start after Agent 1's types are committed; worktree isolation relaxes the constraint
-- [ ] Agent 3: T95.2.2 (ResolveKVDonor pure function)
+- [x] Agent 1: T95.1.1 (WithExternalKV option)  2026 04 13
+- [x] Agent 2: T95.1.2 (K/V output ports)  2026 04 13
+- [x] Agent 3: T95.2.2 (ResolveKVDonor pure function)  2026 04 13
 
 Coordinator note: T95.1.1 and T95.1.2 edit the same file. Run Agent 1 first, then Agent 2 in a second mini-wave if merge conflicts become painful; or run both in parallel worktrees and resolve on merge.
 
