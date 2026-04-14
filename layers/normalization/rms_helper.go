@@ -46,17 +46,14 @@ func rmsNormalize[T tensor.Numeric](
 				if scales != nil {
 					rsqrt = any(scales).(*tensor.TensorNumeric[T])
 				}
-				var normalized *tensor.TensorNumeric[T]
-				if rsqrt != nil {
-					normalized, err = engine.Mul(ctx, input, rsqrt)
-					if err != nil {
-						return zero, err
-					}
-				}
+				// T98.2.1 probe: skip the broadcast Mul to test whether it is the
+				// kernel corrupting CUDA state on the gemma4e prefill path. The
+				// resulting `normalized` is unused by RMSNorm.Forward (only rsqrt
+				// is cached), and Backward recomputes it.
 				return rmsNormalizeResult[T]{
 					output:     any(out).(*tensor.TensorNumeric[T]),
 					rsqrt:      rsqrt,
-					normalized: normalized,
+					normalized: nil,
 				}, nil
 			}
 		}
