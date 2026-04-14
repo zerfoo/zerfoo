@@ -4,6 +4,7 @@ package loss
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -41,6 +42,14 @@ func (cel *CrossEntropyLoss[T]) Parameters() []*graph.Parameter[T] {
 
 // Forward computes the cross-entropy loss.
 // Inputs: predictions (logits as T), targets (labels as T that will be converted to int indices).
+//
+// Numerical stability: loss is computed from logits via a fused log-softmax
+// instead of Log(Softmax(x)). The separated form silently underflows to
+// -Inf on any class whose shifted logit is below the float32 Log domain
+// (~ -87), which then corrupts the averaged loss to +/-Inf or NaN.
+// log_softmax(x)_i = (x_i - max(x)) - log(sum_j exp(x_j - max(x)))
+// never evaluates log of zero even when a class saturates. The softmax
+// tensor itself is still cached for backward via a separate stable pass.
 func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
 		return nil, fmt.Errorf("CrossEntropyLoss expects 2 inputs, got %d", len(inputs))
@@ -74,44 +83,53 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	cel.predictions = predictions // Cache for backward
 	cel.targets = targets         // Cache for backward
 
-	// Apply softmax to predictions
-	// Assuming a Softmax function is available in compute.Engine or as a helper.
-	// For numerical stability, it's often combined with log.
-	// Here, we'll do softmax then log.
-	softmaxOutput, err := cel.engine.Softmax(ctx, predictions, len(predictions.Shape())-1, nil) // Assuming Softmax is available
+	// Cache softmax for backward (engine.Softmax is numerically stable via
+	// max-subtraction; the unstable op is subsequent Log, which we avoid).
+	softmaxOutput, err := cel.engine.Softmax(ctx, predictions, len(predictions.Shape())-1, nil)
 	if err != nil {
 		return nil, err
 	}
+	cel.softmaxOutput = softmaxOutput
 
-	cel.softmaxOutput = softmaxOutput // Cache for backward
-
-	// Take log of softmax output
-	logSoftmaxOutput, err := cel.engine.Log(ctx, softmaxOutput, nil) // Assuming Log is available
-	if err != nil {
-		return nil, err
-	}
-
-	// Gather negative log-probabilities for the target class at each position.
-	// logSoftmaxOutput shape: [batch, classes] or [batch, seq, vocab]
-	// targets shape: [batch] or [batch, seq]
-	// We index the last axis of logSoftmaxOutput using targets.
+	// Fused log-softmax in float64 over each per-position stripe.
+	// This is O(n * classes) and tiny compared to the preceding matmul.
 	pShape := predictions.Shape()
 	lastDim := pShape[len(pShape)-1]
-	logData := logSoftmaxOutput.Data()
-	tgtData := targets.Data()
+	predData := predictions.Data()
 
-	// Number of elements to gather equals the total number of target indices.
 	n := 1
 	for _, d := range targets.Shape() {
 		n *= d
 	}
 
-	// Sum -log(softmax[target]) over all positions and average.
 	ops := cel.engine.Ops()
 	var sumNegLogProb T
 	for i := 0; i < n; i++ {
-		idx := tgtData[i]
-		sumNegLogProb = ops.Sub(sumNegLogProb, logData[i*lastDim+idx])
+		base := i * lastDim
+
+		// max(x) in float64
+		maxF64 := math.Inf(-1)
+		for k := 0; k < lastDim; k++ {
+			xf := numericToFloat64(predData[base+k])
+			if xf > maxF64 {
+				maxF64 = xf
+			}
+		}
+
+		// log-sum-exp of shifted logits
+		var sumExp float64
+		for k := 0; k < lastDim; k++ {
+			sumExp += math.Exp(numericToFloat64(predData[base+k]) - maxF64)
+		}
+		logSumExp := math.Log(sumExp)
+
+		idx := targets.Data()[i]
+		if idx < 0 || idx >= lastDim {
+			return nil, fmt.Errorf("CrossEntropyLoss: target index %d out of range [0, %d)", idx, lastDim)
+		}
+		// log_softmax(x)_idx = (x_idx - max) - logSumExp
+		logSoftTarget := numericToFloat64(predData[base+idx]) - maxF64 - logSumExp
+		sumNegLogProb = ops.Sub(sumNegLogProb, ops.FromFloat64(logSoftTarget))
 	}
 	avgLoss := ops.Div(sumNegLogProb, ops.FromFloat64(float64(n)))
 
@@ -122,6 +140,7 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 
 	return result, nil
 }
+
 
 // Backward computes the gradients for CrossEntropyLoss.
 func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {

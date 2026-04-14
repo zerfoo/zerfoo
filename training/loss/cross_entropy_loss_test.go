@@ -222,3 +222,47 @@ func TestCrossEntropyLoss_Backward_WithoutForward(t *testing.T) {
 		testutils.AssertError(t, err, "Backward pass should fail without Forward being called first")
 	}
 }
+
+// TestCrossEntropyLoss_Forward_LargeLogitsStability verifies that extreme
+// logit magnitudes do not produce NaN/Inf in the forward loss. With the
+// old Log(Softmax(x)) path, any class whose shifted logit is below the
+// float32 Log domain (~ -87) underflows softmax to 0 and pollutes the
+// log tensor with -Inf. The fused log-softmax in Forward never calls
+// Log on a zero softmax probability and so remains finite.
+func TestCrossEntropyLoss_Forward_LargeLogitsStability(t *testing.T) {
+	ctx := context.Background()
+	ops := &numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	cel := NewCrossEntropyLoss[float32](engine)
+
+	// Classes 0 and 1 are heavily suppressed (exp(logit - 100) underflows
+	// to 0 in float32); class 2 dominates. Target class 0 is the WORST
+	// case: it forces log_softmax(x)_0 ~= -100, which the old path
+	// could only report via -Inf due to Log(0).
+	preds, err := tensor.New[float32]([]int{1, 3}, []float32{-50, -60, 100})
+	if err != nil {
+		t.Fatalf("preds: %v", err)
+	}
+	targets, err := tensor.New[float32]([]int{1}, []float32{0})
+	if err != nil {
+		t.Fatalf("targets: %v", err)
+	}
+
+	out, err := cel.Forward(ctx, preds, targets)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	loss := out.Data()[0]
+	if loss != loss { // NaN check
+		t.Fatalf("loss is NaN")
+	}
+	if loss == float32(1e38) || loss == float32(-1e38) {
+		t.Fatalf("loss is Inf-like: %v", loss)
+	}
+	// Expected loss ~= -(-50 - 100 - log(exp(-150) + exp(-160) + exp(0)))
+	//              ~= 150 because log(sumExp) ~= 0.
+	if loss < 140 || loss > 160 {
+		t.Errorf("loss = %v, expected ~150 for this configuration", loss)
+	}
+}
