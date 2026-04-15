@@ -2,6 +2,72 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-15: T98.2.2 FusedRMSNormGPU sub-step probes -- root cause is NULL devIn
+
+**Type:** investigation
+**Tags:** gemma4, gemma4e, cuda, e98, t98.2.2, ztensor
+
+**Problem:** T98.2.1 localized the gemma4e CUDA illegal memory access to
+somewhere inside `FusedRMSNormGPU` on the first RMSNorm after PLE output.
+T98.2.2's job: pin which sub-step (devIn, weight-upload, devOut alloc,
+devScales alloc, or RMSNorm kernel) first corrupts CUDA state.
+
+**Approach:** Added `ZERFOO_GQA_DEBUG=1`-gated probes in
+`ztensor/compute/gpu_fused_rmsnorm.go` (branch
+`e98-t98.2.2-rmsnorm-substep-probe`, commit `e2be434`). Each probe
+force-syncs the stream and issues a 1-byte D2H cudaMemcpy at the pointer,
+logging tag + ptr + byteLen + sync/memcpy errors. Rebuilt gemma4_e2e on
+DGX against the bumped ztensor dep and submitted a 5-step generate on
+cuda via Spark (pod `gemma4-e2e-20260415-010956`).
+
+**Findings:**
+
+```
+[GE_DBG]  ple.return.hidden shape=[1 5 1536] gpuPtr=0xf31b20007900 gpuLen=7680
+[RMS_DBG] entry:devIn          gpuPtr=0x0            bytes=30720 sync=<nil> memcpy=<nil>
+[RMS_DBG] after:weightToGPU    gpuPtr=0x32f020400    bytes=6144  sync=<nil> memcpy=<nil>
+[RMS_DBG] after:allocDevOut    gpuPtr=0xf31b20016900 bytes=30720 sync=<nil> memcpy=<nil>
+[RMS_DBG] after:allocDevScales gpuPtr=0xf31b20000000 bytes=20    sync=<nil> memcpy=<nil>
+[RMS_DBG] after:kernelRMSNorm  gpuPtr=0xf31b20016900 bytes=30720
+          sync=cudaStreamSynchronize failed: an illegal memory access was encountered
+          memcpy=cudaMemcpy failed: an illegal memory access was encountered
+```
+
+1. **Root cause found.** `entry:devIn` reports `gpuPtr=0x0`. The probe's
+   memcpy is `<nil>` because the probe guards `if ptr != nil`, not because
+   the memcpy succeeded. So `getDevicePtr(engine, input)` returned
+   `(nil, noopCleanup, nil)` -- no error, but a nil device pointer.
+2. `getDevicePtr` only returns nil-without-error when the tensor has
+   `GPUStorage[float32]` whose `gs.Ptr()` is nil
+   (`ztensor/compute/gpu_kernels.go:33-38`). So the RMSNorm input is a
+   GPUStorage-wrapped tensor with a NULL device pointer.
+3. Yet the PLE producer's final returned hidden
+   (`ple.return.hidden`) logged `gpuPtr=0xf31b20007900` in the same run.
+   Either (a) the tensor going into RMSNorm is NOT the same as the PLE
+   return, or (b) something between PLE return and RMSNorm call zeroes
+   or swaps the storage.
+4. The RMSNorm kernel then launches with `devIn=0x0`, which is why the
+   kernel raises "illegal memory access" at the first sync point.
+5. Weight upload, devOut alloc, devScales alloc -- all healthy. The
+   existing hypotheses about ToGPU aliasing, pool bump accounting, and
+   weight stride are all ruled OUT. The fix is upstream of FusedRMSNorm,
+   likely in the gemma4-edge graph builder or in a graph-compile step
+   that drops the PLE output's GPU storage when wiring RMSNorm's input
+   slot.
+
+**Fix:** N/A yet -- scoped to T98.2.3. Next: trace how the RMSNorm input
+tensor is constructed between the PLE producer's `hidden` return and the
+GQA's input_layernorm call. Candidates to investigate:
+  a) `inference/arch_gemma4_edge.go` graph wiring of RMSNorm input.
+  b) Graph compile pass that reallocates output buffers (possibly
+     `makeGPUResult` + a zero-length input slot).
+  c) `tensor.GPUStorage[float32]` constructors that take a length but
+     leave Ptr() nil (a "lazy" storage pattern).
+
+**Impact:** T98.2.2 AC met. T98.2.3 scope narrows: the fix lives in
+zerfoo (graph wiring) OR in a ztensor storage constructor, not in
+FusedRMSNormGPU itself. The probes stay in place until T98.3.2 cleanup.
+
 ## 2026-04-14: T98.2.1 deeper bisect -- bug between PLE and RMSNorm; fused-RMSNorm bypass triggers Mul launch failure
 
 **Type:** investigation

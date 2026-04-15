@@ -1615,7 +1615,16 @@ upload/bridge gap.
   Full notes: docs/devlog.md "T98.2.1 deeper bisect" and
   "T98.2.1 dynamic instrumentation" entries 2026-04-14.
 
-- [ ] T98.2.2 Pin the corrupting step inside FusedRMSNormGPU  Owner: TBD  Est: 90m  verifies: [infrastructure]
+- [x] T98.2.2 Pin the corrupting step inside FusedRMSNormGPU  Owner: dndungu  Est: 90m  verifies: [infrastructure]  Completed: 2026-04-15
+  Outcome: probes in ztensor (branch `e98-t98.2.2-rmsnorm-substep-probe`,
+  commit `e2be434`) show `entry:devIn gpuPtr=0x0` on first RMSNorm.
+  `getDevicePtr` returns (nil, noopCleanup, nil) because the input
+  tensor has `GPUStorage[float32]` whose `Ptr()` is NULL. Weight upload
+  and pool allocs are healthy; the kernel fails only because devIn is
+  nil. Fix lives upstream of FusedRMSNormGPU -- either in
+  `inference/arch_gemma4_edge.go` wiring of the RMSNorm input, or in a
+  GPUStorage constructor that leaves Ptr() nil. Full notes: devlog
+  2026-04-15 "T98.2.2 FusedRMSNormGPU sub-step probes".
   Deps: T98.2.1
   Add the `gemma4EdgeDebugTensor`-style probe inside
   `ztensor/compute/gpu_fused_rmsnorm.go` AFTER each of:
@@ -1705,8 +1714,10 @@ upload/bridge gap.
 #### Wave E98-2: Localize (1 agent then 1 agent)
 - [x] Sub-wave A: T98.2.1 (dynamic instrumentation, completed
       2026-04-14)
-- [ ] Sub-wave B: T98.2.2 (sub-step probe inside FusedRMSNormGPU --
-      ztensor sibling repo)
+- [x] Sub-wave B: T98.2.2 (sub-step probe inside FusedRMSNormGPU --
+      ztensor `e98-t98.2.2-rmsnorm-substep-probe` / commit e2be434;
+      completed 2026-04-15). Root cause: RMSNorm input arrives as
+      GPUStorage[float32] with NULL Ptr().
 
 Sync point: after Sub-wave B, we know which kernel/alloc/upload step
 inside FusedRMSNormGPU corrupts CUDA state.
