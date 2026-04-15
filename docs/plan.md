@@ -1228,7 +1228,12 @@ edge builder to match the canonical architecture.
   AC: CPU portion passes (LoadGGUF ok, graph built, arch=gemma4e, 35
   layers); Spark harness files land on main; docs/devlog.md updated.
 
-- [ ] T93.4.2 Add 50-token autoregressive generation test  Owner: TBD  Est: 1.5h  verifies: [UC-001]
+- [x] T93.4.2 Add 50-token autoregressive generation test  Owner: dndungu  Est: 1.5h  verifies: [UC-001]  Completed: 2026-04-15
+  Satisfied by E97.1 + T92.5.3 on DGX: pod `gemma4-e2e-20260415-025542`
+  (20 steps, PASS) and `gemma4-e2e-20260415-164953` (128 steps, 3.85
+  tok/s, 113 bytes non-degenerate). `cmd/gemma4_e2e -mode=generate`
+  wraps the tokenizer + generator path. Closes the E93-4 generation
+  verification gap.
   Deps: T93.4.1
   Deferred to a follow-up epic: requires `model.LoadTokenizerFromGGUF`
   integration into `cmd/gemma4_e2e` and GPU execution via Spark. Scope
@@ -1441,17 +1446,15 @@ stack.
 
 ### E96 Waves
 
-#### Wave E96-1: Staging (2 agents)
-- [ ] Agent 1: T96.1.1 -> T96.1.2 (build + push binary, sequential)
-- [ ] Agent 2: T96.1.3 (copy GGUF, independent)
+#### Wave E96-1: Staging (2 agents) -- COMPLETE 2026-04-14
+- [x] Agent 1: T96.1.1 -> T96.1.2 (build + push binary, sequential)
+- [x] Agent 2: T96.1.3 (copy GGUF, independent)
 
-Prereq: interactive SSH to 192.168.86.250 with ndungu@ creds available on
-the executing host. If automated agents cannot SSH, mark this wave as
-owner=human and run manually.
-
-#### Wave E96-2: Run (1 agent)
+#### Wave E96-2: Run (1 agent) -- COMPLETE 2026-04-14
 Deps: Wave E96-1.
-- [ ] Agent 1: T96.2.1 -> T96.2.2
+- [x] Agent 1: T96.2.1 -> T96.2.2
+
+### E96 STATUS: CLOSED 2026-04-14
 
 ---
 
@@ -1519,24 +1522,28 @@ run against Spark on DGX.
 
 ### E97.3: Close out
 
-- [ ] T97.3.1 Mark T93.4.2 complete when E97.1 lands  Owner: TBD  Est: 5m  verifies: [infrastructure]
+- [x] T97.3.1 Mark T93.4.2 complete when E97.1 lands  Owner: dndungu  Est: 5m  verifies: [infrastructure]  Completed: 2026-04-15
+  E97.1 landed; T93.4.2 flipped to [x] citing E97.1.3 and T92.5.3
+  DGX runs. T93.4.3 remains open against E97.2 (Ollama support).
   Deps: T97.1.3 (T97.2.3 deferred — T93.4.3 stays open against E97.2 until Gemma 4 shows up upstream)
   AC: plan updated; devlog closing entry.
 
 ### E97 Waves
 
-#### Wave E97-1: Generation scaffolding (2 agents)
-- [ ] Agent 1: T97.1.1 (extend binary)
-- [ ] Agent 2: T97.2.1 (Ollama availability research)
+#### Wave E97-1: Generation scaffolding (2 agents) -- COMPLETE 2026-04-14
+- [x] Agent 1: T97.1.1 (extend binary)
+- [x] Agent 2: T97.2.1 (Ollama availability research -- DEFERRED outcome)
 
-#### Wave E97-2: Spark + parity (2 agents)
+#### Wave E97-2: Spark + parity (2 agents) -- PARTIAL
 Deps: Wave E97-1.
-- [ ] Agent 1: T97.1.2 -> T97.1.3
-- [ ] Agent 2: T97.2.2
+- [x] Agent 1: T97.1.2 -> T97.1.3 (unblocked by E98; completed 2026-04-15)
+- [ ] Agent 2: T97.2.2 (DEFERRED — Ollama doesn't support gemma4)
 
-#### Wave E97-3: Close (1 agent)
+#### Wave E97-3: Close (1 agent) -- PARTIAL
 Deps: Wave E97-2.
-- [ ] Agent 1: T97.2.3 -> T97.3.1
+- [ ] Agent 1: T97.2.3 (DEFERRED) -> T97.3.1 (DONE 2026-04-15)
+
+### E97 STATUS: PARTIAL CLOSE -- E97.1 + E97.3.1 complete; E97.2 remains DEFERRED upstream on Ollama gemma4 support.
 
 ---
 
