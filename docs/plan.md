@@ -1480,7 +1480,14 @@ run against Spark on DGX.
   AC met: `scripts/gemma4-spark.sh -mode generate -device cuda -prompt "..."`
   submits and runs the generation path on DGX.
 
-- [ ] T97.1.3 Run generation on DGX and record result  Owner: TBD  Est: 30m  verifies: [UC-001]  BLOCKED 2026-04-14 by qNorm CUDA bug
+- [x] T97.1.3 Run generation on DGX and record result  Owner: dndungu  Est: 30m  verifies: [UC-001]  Completed: 2026-04-15
+  Unblocked by E98 T98.2.3. Verified on pod `gemma4-e2e-20260415-025542`
+  (20 steps, cuda, 48Gi memory, `ZERFOO_DISABLE_CUDA_GRAPH=1`):
+  gemma4_e2e PASS, 40 bytes generated, non-degenerate, no NaN/Inf.
+  First 16Gi run OOM-killed (exit 137) -- fixed by bumping container
+  memory limit to 48Gi in `docs/bench/manifests/gemma4-e2e.yaml`.
+  Output quality is low (base model + greedy + uncaptured graph);
+  quality is tracked separately (E97.2 Ollama parity, DEFERRED).
   Deps: T97.1.2, T96.2.1
   Blocker: pod gemma4-e2e-20260414-164140 failed with
   `GroupedQueryAttention: qNorm: cudaMemcpy failed: an illegal memory access`
@@ -1696,14 +1703,22 @@ upload/bridge gap.
 
 ### E98.3: Close out
 
-- [ ] T98.3.1 Rebuild on DGX and run T97.1.3 (closes deferred task)  Owner: TBD  Est: 20m  verifies: [UC-001]
+- [x] T98.3.1 Rebuild on DGX and run T97.1.3 (closes deferred task)  Owner: dndungu  Est: 20m  verifies: [UC-001]  Completed: 2026-04-15
+  ztensor PR #89 + #91 merged to ztensor main; zerfoo PR #481 merged
+  to zerfoo main (ztensor bump + probe cleanup). DGX rebuilt from
+  main, generate-mode 20-step cuda run on pod
+  `gemma4-e2e-20260415-025542` PASSed. T97.1.3 marked complete.
   Deps: T98.2.3 merged to main
   Rebuild `/var/lib/zerfoo/bin/gemma4_e2e` on DGX from the fixed main, then
   `scripts/gemma4-spark.sh -mode generate -device cuda -steps 20 -cleanup`.
   AC: pod PASS, decoded text non-degenerate, no NaN/Inf across steps.
   Mark T97.1.3 complete on success and roll up into T97.3.1.
 
-- [ ] T98.3.2 Remove debug instrumentation; merge cleanup PR  Owner: TBD  Est: 30m  verifies: [infrastructure]
+- [x] T98.3.2 Remove debug instrumentation; merge cleanup PR  Owner: dndungu  Est: 30m  verifies: [infrastructure]  Completed: 2026-04-15
+  ZERFOO_GQA_DEBUG probes stripped from both repos and merged:
+  ztensor PR #91 (removed `compute/gpu_fused_rmsnorm_debug.go` and the
+  5 probe calls); zerfoo PR #481 (removed `inference/gemma4_edge_debug.go`,
+  `gemma4EdgeDebugTensor` calls, and the `gqaDebugTensor` helper).
   Deps: T98.3.1
   Strip the `ZERFOO_GQA_DEBUG` plumbing once the bug is fixed and
   verified, OR convert it to a permanent diagnostic flag if useful.
@@ -1714,7 +1729,12 @@ upload/bridge gap.
   AC: branch `e98-t98.2.1-gqa-debug-instr` rebased to main with debug
   removed; rebase-and-merge to main.
 
-- [ ] T98.3.3 Devlog + plan close-out  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T98.3.3 Devlog + plan close-out  Owner: dndungu  Est: 15m  verifies: [infrastructure]  Completed: 2026-04-15
+  Devlog entry 2026-04-15 "T98.2.3 fix gemma4e CUDA illegal memory
+  access" records root cause + verification artifact. E98 closed.
+  T97.1.3 flipped to [x]. E97.3 (T97.3.1) closes next. CUDA graph
+  capture + pleCombinedProducer H2D incompatibility filed as a new
+  task (E99, below).
   Deps: T98.3.2
   Devlog entry with root cause, fix, verification artifacts (pod name,
   decoded text snippet). Mark E98 complete, flip T97.1.3 to [x], and
@@ -1748,9 +1768,51 @@ Deps: Wave E98-2.
 - [x] Agent 3: T98.2.5 (build + graph/compute tests green in both
       repos)
 
-#### Wave E98-4: DGX verify + close (1 agent)
+#### Wave E98-4: DGX verify + close (1 agent) -- COMPLETE 2026-04-15
 Deps: Wave E98-3 + ztensor PR merged + zerfoo go.mod bump merged.
-- [ ] Agent 1: T98.3.1 -> T98.3.2 -> T98.3.3
+- [x] Agent 1: T98.3.1 (DGX verify via pod `gemma4-e2e-20260415-025542`)
+      -> T98.3.2 (cleanup via ztensor PR #91 + zerfoo PR #481)
+      -> T98.3.3 (close-out)
+
+### E98 STATUS: CLOSED 2026-04-15
+
+Root cause (`ztensor/graph/graph.go` refcount-release loop releasing
+the upstream tensor of a pass-through node whose output aliased it)
+fixed via the 1-conditional change in ztensor commit `6ecf8db`.
+DGX-verified on gemma4-e2e pod `gemma4-e2e-20260415-025542`:
+gemma4_e2e PASS, 40 bytes non-degenerate output, no NaN/Inf.
+
+## E99: CUDA graph capture + pleCombinedProducer H2D incompatibility (surfaced during T98.3.1)
+
+**Context.** With gemma4e + cuda, the CUDA graph capture region
+includes the `Gemma4PLECombinedProducer` node. The producer performs
+host-side work (gathering token-identity PLE rows into `tokenFlat`)
+and then calls `MulScalar`, which issues a synchronous cudaMemcpy.
+Inside a capture stream that raises
+"cudaMemcpy failed: operation would make the legacy stream depend on
+a capturing blocking stream". Workaround: `ZERFOO_DISABLE_CUDA_GRAPH=1`
+(applied in `docs/bench/manifests/gemma4-e2e.yaml`). E98 unblocked
+everything else; this is a performance task, not a correctness blocker.
+
+### E99.1 Fix capture compatibility
+
+- [ ] T99.1.1 Decide capture strategy for `pleCombinedProducer`  Owner: TBD  Est: 30m  verifies: [infrastructure]
+  Options:
+    a) Exclude the producer from the capture region (partial capture).
+    b) Move its host-side token gather to a GPU kernel so it stays
+       on-device throughout.
+    c) Mark the producer as "uncapturable" in the graph compiler so
+       the capture region auto-splits around it.
+  Deliverable: ADR recommending one approach, with perf estimate.
+
+- [ ] T99.1.2 Implement the chosen strategy  Owner: TBD  Est: 2-4h  verifies: [UC-001]
+  Deps: T99.1.1.
+
+- [ ] T99.1.3 Re-verify gemma4e generate with CUDA graph capture ENABLED  Owner: TBD  Est: 20m  verifies: [UC-001]
+  Deps: T99.1.2
+  AC: gemma4_e2e generate on cuda runs with `ZERFOO_DISABLE_CUDA_GRAPH` unset,
+  graph capture completes, and throughput meets or beats the
+  uncaptured path. Drop the env var from the manifest.
 
 ### E98 Risk Register
 
