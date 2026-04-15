@@ -10,6 +10,15 @@ All benchmarks run on DGX Spark GB10 unless noted. Greedy sampling, 128 output t
 | DeepSeek-R1 1.5B | Q4_K_M | 186 | 168 | **1.11x** | 2026-03-30 |
 | Llama 3.2 3B | Q4_K_M | 92 | 93 | 0.99x | 2026-03-30 |
 | Mistral 7B | Q4_K_M | 44 | 44 | 1.00x | 2026-03-30 |
+| Gemma 4 E2B (edge) | Q4_K_M | 3.85* | N/A | — | 2026-04-15 |
+
+\* Gemma 4 E2B baseline captured on 2026-04-15 (commit `72828131`) with
+CUDA graph capture disabled (E99 blocker: `pleCombinedProducer` H2D
+memcpy incompatibility). This is a correctness baseline, NOT an
+optimized number. Once E99 lands and the graph-capture path is
+enabled, this should rise substantially (Gemma 3 1B with capture is
+241 tok/s). Ollama comparison skipped because Ollama does not
+support the gemma4 architecture yet (E97.2 DEFERRED).
 
 CUDA graph capture: 184/185 instructions (99.5%). Fused kernels: softmax+V multiply, repeat-interleave for GQA, fused AddRMSNorm, fused SwiGLU, fused QKNormRoPE, merged QKV, merged gate+up.
 

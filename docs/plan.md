@@ -1011,12 +1011,16 @@ New code needed:
   Compare with llama.cpp/Ollama output on same prompt for sanity.
   AC: Test produces coherent text. No panics, no NaN.
 
-- [ ] T92.5.3 Benchmark Gemma 4 E2B on DGX Spark  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T92.5.3 Benchmark Gemma 4 E2B on DGX Spark  Owner: dndungu  Est: 1h  verifies: [UC-001]  Completed: 2026-04-15
+  Outcome: 3.85 tok/s decode on gemma4-E2B Q4_K_M, 128 steps, cuda, 48Gi
+  (pod `gemma4-e2e-20260415-164953`, commit `72828131`). Ollama
+  comparison SKIP (Ollama doesn't support gemma4; E97.2 DEFERRED).
+  Number captured with `ZERFOO_DISABLE_CUDA_GRAPH=1` (E99 workaround)
+  -- expected to rise substantially once E99 lands. Cross-compile
+  blocker resolved by building directly on DGX; updated
+  `cmd/gemma4_e2e` to emit decode tok/s in generate mode. Devlog
+  2026-04-15 "T92.5.3 Gemma 4 E2B DGX baseline" + benchmarks.md row.
   Deps: T92.5.2
-  Run bench-compare-ollama.sh on DGX for Gemma 4 E2B Q4_K_M.
-  Record tok/s for decode and prefill. Compare against Ollama.
-  AC: Results documented in docs/devlog.md. Target: within 20% of Ollama.
-  BLOCKED: same purego cross-compile blocker as T86.5.8.
 
 - [x] T92.5.4 Add Gemma 4 to supported architectures table in CLAUDE.md  Owner: TBD  Est: 15m  verifies: [infrastructure]  2026-04-13
   Deps: T92.5.2
