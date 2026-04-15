@@ -244,3 +244,169 @@ func TestLayerNormalization_Backward(t *testing.T) {
 	testutils.AssertEqual(t, len(inputGrads), 1, "Should return one input gradient")
 	testutils.AssertTrue(t, testutils.IntSliceEqual(inputShape, inputGrads[0].Shape()), "Input gradient shape should match input shape")
 }
+
+// TestLayerNormalization_BackwardMixedCPUMatchesEngine proves the
+// float64-internal backward path on CPU produces gradients that agree
+// with the pure engine path to within a tight tolerance, for a workload
+// where both paths are numerically stable. If this test fails, the
+// mixed-precision rewrite introduced a derivation bug.
+func TestLayerNormalization_BackwardMixedCPUMatchesEngine(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	const featureDim = 8
+	const batch = 4
+	shape := []int{batch, featureDim}
+
+	lnMixed, err := NewLayerNormalization[float32](engine, featureDim)
+	if err != nil {
+		t.Fatalf("NewLayerNormalization(mixed) failed: %v", err)
+	}
+	if !lnMixed.useMixedBackward {
+		t.Fatal("expected mixed-precision path to be active for CPU/float32")
+	}
+
+	lnEngine, err := NewLayerNormalization[float32](engine, featureDim)
+	if err != nil {
+		t.Fatalf("NewLayerNormalization(engine) failed: %v", err)
+	}
+	lnEngine.useMixedBackward = false
+
+	inputData := make([]float32, batch*featureDim)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.13
+	}
+	inputMixed, err := tensor.New[float32](shape, append([]float32(nil), inputData...))
+	if err != nil {
+		t.Fatalf("tensor.New input mixed: %v", err)
+	}
+	inputEngine, err := tensor.New[float32](shape, append([]float32(nil), inputData...))
+	if err != nil {
+		t.Fatalf("tensor.New input engine: %v", err)
+	}
+
+	if _, err := lnMixed.Forward(ctx, inputMixed); err != nil {
+		t.Fatalf("Forward mixed: %v", err)
+	}
+	if _, err := lnEngine.Forward(ctx, inputEngine); err != nil {
+		t.Fatalf("Forward engine: %v", err)
+	}
+
+	gradData := make([]float32, batch*featureDim)
+	for i := range gradData {
+		gradData[i] = float32(i%featureDim+1) * 0.017
+	}
+	gradMixed, err := tensor.New[float32](shape, append([]float32(nil), gradData...))
+	if err != nil {
+		t.Fatalf("tensor.New grad mixed: %v", err)
+	}
+	gradEngine, err := tensor.New[float32](shape, append([]float32(nil), gradData...))
+	if err != nil {
+		t.Fatalf("tensor.New grad engine: %v", err)
+	}
+
+	dInputMixed, err := lnMixed.Backward(ctx, types.FullBackprop, gradMixed, inputMixed)
+	if err != nil {
+		t.Fatalf("Backward mixed: %v", err)
+	}
+	dInputEngine, err := lnEngine.Backward(ctx, types.FullBackprop, gradEngine, inputEngine)
+	if err != nil {
+		t.Fatalf("Backward engine: %v", err)
+	}
+
+	const tol = 1e-4
+	for i := range dInputMixed[0].Data() {
+		diff := float64(dInputMixed[0].Data()[i]) - float64(dInputEngine[0].Data()[i])
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > tol {
+			t.Fatalf("dInput[%d] mismatch: mixed=%v engine=%v diff=%v tol=%v",
+				i, dInputMixed[0].Data()[i], dInputEngine[0].Data()[i], diff, tol)
+		}
+	}
+	for i := range lnMixed.gamma.Gradient.Data() {
+		diff := float64(lnMixed.gamma.Gradient.Data()[i]) - float64(lnEngine.gamma.Gradient.Data()[i])
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > tol {
+			t.Fatalf("dGamma[%d] mismatch: mixed=%v engine=%v",
+				i, lnMixed.gamma.Gradient.Data()[i], lnEngine.gamma.Gradient.Data()[i])
+		}
+	}
+	for i := range lnMixed.beta.Gradient.Data() {
+		diff := float64(lnMixed.beta.Gradient.Data()[i]) - float64(lnEngine.beta.Gradient.Data()[i])
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > tol {
+			t.Fatalf("dBeta[%d] mismatch: mixed=%v engine=%v",
+				i, lnMixed.beta.Gradient.Data()[i], lnEngine.beta.Gradient.Data()[i])
+		}
+	}
+}
+
+// TestLayerNormalization_BackwardMixedCPUResistsUnderflow shows the
+// mixed-precision backward produces finite gradients for an input whose
+// activations sit far from zero — the pattern that drove fold-0 to NaN
+// in E9 T9.7 attempts #3-#5. The equivalent float32 engine path on the
+// same input is permitted to diverge; the only claim here is that the
+// mixed path stays finite.
+func TestLayerNormalization_BackwardMixedCPUResistsUnderflow(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	const featureDim = 16
+	shape := []int{1, featureDim}
+	ln, err := NewLayerNormalization[float32](engine, featureDim)
+	if err != nil {
+		t.Fatalf("NewLayerNormalization: %v", err)
+	}
+	if !ln.useMixedBackward {
+		t.Fatal("expected mixed-precision path to be active for CPU/float32")
+	}
+
+	inputData := make([]float32, featureDim)
+	for i := range inputData {
+		inputData[i] = 1e5 + float32(i)*1e-2
+	}
+	input, err := tensor.New[float32](shape, inputData)
+	if err != nil {
+		t.Fatalf("tensor.New input: %v", err)
+	}
+	if _, err := ln.Forward(ctx, input); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+
+	gradData := make([]float32, featureDim)
+	for i := range gradData {
+		gradData[i] = 0.0005
+	}
+	grad, err := tensor.New[float32](shape, gradData)
+	if err != nil {
+		t.Fatalf("tensor.New grad: %v", err)
+	}
+
+	dInput, err := ln.Backward(ctx, types.FullBackprop, grad, input)
+	if err != nil {
+		t.Fatalf("Backward: %v", err)
+	}
+	for i, v := range dInput[0].Data() {
+		if v != v || v > 1e20 || v < -1e20 {
+			t.Fatalf("dInput[%d] non-finite or huge: %v", i, v)
+		}
+	}
+	for i, v := range ln.gamma.Gradient.Data() {
+		if v != v || v > 1e20 || v < -1e20 {
+			t.Fatalf("dGamma[%d] non-finite: %v", i, v)
+		}
+	}
+	for i, v := range ln.beta.Gradient.Data() {
+		if v != v || v > 1e20 || v < -1e20 {
+			t.Fatalf("dBeta[%d] non-finite: %v", i, v)
+		}
+	}
+}

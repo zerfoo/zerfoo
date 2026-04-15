@@ -232,6 +232,10 @@ func TestLayerNormalization_BackwardErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Force the engine-op path so the err-engine's per-op
+			// failure points are actually reachable. The mixed-CPU
+			// backward bypasses engine ops entirely.
+			ln.useMixedBackward = false
 			data := make([]float32, dim*dim)
 			for i := range data {
 				data[i] = float32(i+1) * 0.1
