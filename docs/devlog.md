@@ -2,6 +2,56 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-15: T98.2.3 fix gemma4e CUDA illegal memory access -- pass-through pool-release aliasing
+
+**Type:** finding
+**Tags:** gemma4e, cuda, e98, t98.2.3, ztensor, graph
+
+**Problem:** T98.2.2 localized the gemma4e CUDA illegal memory access to
+`FusedRMSNormGPU` being called with `devIn=0x0`. Trace it upstream.
+
+**Root cause:** `inference/gemma4_edge_ple_nodes.go`'s
+`pleCombinedProducer.Forward` returns its hidden-state input verbatim
+(the producer's real output is side-effects into `p.tokenPLE` /
+`p.modelProj`, consumed by `pleSliceNode`). In
+`ztensor/graph/graph.go:256-270` the refcount-driven release loop saw
+the upstream embedding node's refcount hit zero after pleProducer ran
+and called `pool.Release` on its tensor -- which on GPU immediately
+frees device memory (pool.go:57-60, `t.Release()`). But
+`memo[pleProducer]` still pointed at the SAME tensor (aliased). The
+first transformer block's `input_layernorm` then asked for that
+tensor's GPU pointer, got the now-zeroed `gs.Ptr()`, passed it into
+FusedRMSNormGPU, and the kernel tripped the CUDA runtime's illegal
+memory access detector.
+
+**Fix:** `ztensor/graph/graph.go` (branch
+`e98-t98.2.3-fix-passthrough-release`, commit `81016cd`). In the
+refcount-release loop, skip the pool.Release when the tensor being
+released is the same object as the just-produced node's output. The
+aliased tensor stays alive under the current node's memo entry and is
+released later when that entry's refcount expires. One conditional,
+no performance impact outside the release path.
+
+Regression test:
+`ztensor/graph/passthrough_release_test.go` wires a non-input producer
+-> pass-through -> scale chain with a poisoning pool whose Release
+zeroes data (reproduces GPU Release semantics on CPU). Fails pre-fix
+with `[0 0 0 0 0 0]` output; passes post-fix with `[2 4 6 8 10 12]`.
+
+**Verification:** DGX pod `gemma4-e2e-20260415-012524` (20 steps,
+cuda, ZERFOO_GQA_DEBUG=1): probes show valid non-null `devIn` across
+all 35 layers, every sync/memcpy is `<nil>`, pod exits successfully.
+Subsequent clean run (pod `gemma4-e2e-20260415-014848`, 5 steps,
+ZERFOO_DISABLE_CUDA_GRAPH=1) exits successfully.
+
+**Impact:** Unblocks T97.1.3 (gemma4e GPU greedy decode). The fix is
+architecture-agnostic -- any pass-through node benefits. Separate
+remaining issue: CUDA graph capture fails when pleProducer issues
+host-side H2D memcpy inside the capture region (symptom:
+"cudaMemcpy failed: operation would make the legacy stream depend on
+a capturing blocking stream"). Workaround: `ZERFOO_DISABLE_CUDA_GRAPH=1`.
+Track as a new task.
+
 ## 2026-04-15: T98.2.2 FusedRMSNormGPU sub-step probes -- root cause is NULL devIn
 
 **Type:** investigation

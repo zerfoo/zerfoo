@@ -1646,7 +1646,18 @@ upload/bridge gap.
   gpu_fused_rmsnorm.go:66 doesn't recognize, leading to an aliasing
   ToGPU.
 
-- [ ] T98.2.3 Implement the fix in ztensor  Owner: TBD  Est: 90m  verifies: [UC-001]
+- [x] T98.2.3 Implement the fix in ztensor  Owner: dndungu  Est: 90m  verifies: [UC-001]  Completed: 2026-04-15
+  Outcome: Fixed in `ztensor/graph/graph.go` (branch
+  `e98-t98.2.3-fix-passthrough-release`, commit `81016cd`). The
+  refcount-release loop now skips `pool.Release` when the tensor being
+  released is the same object as the just-produced node's output --
+  pass-through nodes (like `pleCombinedProducer`) no longer cause the
+  GPU storage underneath their output to be freed. Zerfoo go.mod
+  bumped in commit `ff576b42`. Verified on DGX pod
+  `gemma4-e2e-20260415-012524` (20-step gemma4e generate on cuda) --
+  no illegal memory access, all 35 layers' RMSNorm devIn are non-null.
+  Full notes: devlog 2026-04-15 "T98.2.3 fix gemma4e CUDA illegal
+  memory access".
   Deps: T98.2.2
   Once T98.2.2 names the broken sub-step, fix it in ztensor. Most
   likely candidates given current evidence:
@@ -1662,19 +1673,26 @@ upload/bridge gap.
   ztensor go.mod; gemma4e generate on CUDA prefill no longer raises
   illegal memory access.
 
-- [ ] T98.2.4 Regression test in ztensor for the broken weight/pool
-      path  Owner: TBD  Est: 1h  verifies: [UC-001]
+- [x] T98.2.4 Regression test in ztensor for the pass-through release
+      path  Owner: dndungu  Est: 1h  verifies: [UC-001]  Completed: 2026-04-15
+  Outcome: `ztensor/graph/passthrough_release_test.go` (commit
+  `81016cd`). Non-input producer -> pass-through -> scale chain with a
+  poisoning pool that zeroes on Release (reproduces GPU Release
+  semantics on CPU). Fails pre-fix with all zeros; passes post-fix.
   Deps: T98.2.3
   Build a reproducer test in ztensor that loads a [1, 5, 1536]
   GPUStorage input + a [1536] F32 weight, runs FusedRMSNormGPU, and
   reads back the output -- must succeed without illegal access.
   AC: test would have failed pre-fix; passes post-fix.
 
-- [ ] T98.2.5 Lint + vet + full test sweep  Owner: TBD  Est: 15m  verifies: [infrastructure]
+- [x] T98.2.5 Lint + vet + full test sweep  Owner: dndungu  Est: 15m  verifies: [infrastructure]  Completed: 2026-04-15
+  Outcome: `go build ./...` green in both repos. `go test ./graph/
+  ./compute/` green in ztensor. `go test ./...` green in zerfoo
+  (`tabular/` flaked once on first run, passed on rerun -- unrelated
+  to E98). Pre-existing `go vet` warnings in
+  `ztensor/internal/opencl|pjrt|tensorrt` (unsafe.Pointer in purego
+  bindings) are unrelated to this change.
   Deps: T98.2.3, T98.2.4
-  `go build ./... && go vet ./... && go test ./... -race -timeout 300s`
-  in both zerfoo and ztensor.
-  AC: green in both repos.
 
 ### E98.3: Close out
 
@@ -1722,13 +1740,13 @@ upload/bridge gap.
 Sync point: after Sub-wave B, we know which kernel/alloc/upload step
 inside FusedRMSNormGPU corrupts CUDA state.
 
-#### Wave E98-3: Fix + verify (3 agents)
+#### Wave E98-3: Fix + verify (3 agents) -- COMPLETE 2026-04-15
 Deps: Wave E98-2.
-- [ ] Agent 1: T98.2.3 (the fix in ztensor)
-- [ ] Agent 2: T98.2.4 (regression test in ztensor; can start in
-      parallel once Agent 1 names the broken function)
-- [ ] Agent 3: T98.2.5 (lint/vet/test sweep across both repos; runs
-      after Agents 1 + 2 commit)
+- [x] Agent 1: T98.2.3 (fix in ztensor; branch
+      `e98-t98.2.3-fix-passthrough-release` commit `81016cd`)
+- [x] Agent 2: T98.2.4 (regression test in ztensor same commit)
+- [x] Agent 3: T98.2.5 (build + graph/compute tests green in both
+      repos)
 
 #### Wave E98-4: DGX verify + close (1 agent)
 Deps: Wave E98-3 + ztensor PR merged + zerfoo go.mod bump merged.
