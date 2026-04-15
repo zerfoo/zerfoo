@@ -26,6 +26,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/ztensor/compute"
@@ -139,14 +140,18 @@ func runGenerate(ggufPath, device, prompt string, steps int) error {
 	// gemma4/gemma4e/gemma4moe guard in forward mode exists for the E96 smoke
 	// check; generate mode uses the real Generator which validates arch itself.
 	fmt.Printf("gemma4_e2e: prompt=%q steps=%d\n", prompt, steps)
+	start := time.Now()
 	out, err := mdl.Generate(context.Background(), prompt,
 		inference.WithTemperature(0),
 		inference.WithMaxTokens(steps),
 	)
+	elapsed := time.Since(start)
 	if err != nil {
 		return fmt.Errorf("Generate: %w", err)
 	}
-	fmt.Printf("gemma4_e2e: generated (%d bytes): %q\n", len(out), out)
+	genTokPerSec := float64(steps) / elapsed.Seconds()
+	fmt.Printf("gemma4_e2e: generated (%d bytes) in %.2fs (%.2f tok/s over %d steps): %q\n",
+		len(out), elapsed.Seconds(), genTokPerSec, steps, out)
 
 	if strings.TrimSpace(out) == "" {
 		return fmt.Errorf("generated text is empty")
