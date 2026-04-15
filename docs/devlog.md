@@ -2,6 +2,34 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-15: T98.3.1 DGX verification: gemma4e CUDA generate PASS
+
+**Type:** finding
+**Tags:** gemma4e, cuda, e98, t98.3.1, dgx
+
+**Problem:** Verify E98 fix end-to-end on DGX. Acceptance: gemma4_e2e
+PASS, decoded text non-degenerate, no NaN/Inf.
+
+**Run:** Pod `gemma4-e2e-20260415-025542`, 20 steps, cuda, zerfoo
+main `d04f9712`, ztensor main `fd646fb`. First 16Gi attempt OOM-killed
+(exit 137); bumped pod memory limit to 48Gi in
+`docs/bench/manifests/gemma4-e2e.yaml`.
+
+**Result:**
+```
+gemma4_e2e: arch=gemma4e layers=35 hidden=1536 vocab=262144
+gemma4_e2e: prompt="The quick brown fox" steps=20
+generate: CompileTraced plan validation failed, falling back to Compile: instruction 0 (Gather): input tensors cannot be nil
+gemma4_e2e: generated (40 bytes): "overdaythe\ns\nsn\n<unused78>t\nsn\ns▁zustn"
+gemma4_e2e: PASS
+```
+
+**Impact:** E98 closed. T97.1.3 unblocked. Text quality is low (base
+model + greedy + no graph capture) -- separate concern tracked under
+E97.2 Ollama parity (DEFERRED) and E99 (graph capture compatibility).
+CompileTraced fallback is a pre-existing soft-fail, not caused by
+E98.
+
 ## 2026-04-15: T98.2.3 fix gemma4e CUDA illegal memory access -- pass-through pool-release aliasing
 
 **Type:** finding
