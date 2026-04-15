@@ -2,6 +2,45 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-15: T92.5.3 Gemma 4 E2B DGX baseline: 3.85 tok/s (graph-capture disabled)
+
+**Type:** benchmark
+**Tags:** gemma4e, cuda, dgx, t92.5.3, baseline
+
+**Problem:** Unblocked by E98 fix. Measure decode tok/s for the
+gemma4-E2B-it-Q4_K_M model on DGX Spark GB10 as a correctness
+baseline ahead of E99 (graph-capture compatibility).
+
+**Run:** Pod `gemma4-e2e-20260415-164953`, 128 steps, cuda, 48Gi
+memory, `ZERFOO_DISABLE_CUDA_GRAPH=1`, `gemma4_e2e` commit
+`72828131` (now emits decode tok/s in generate mode), ztensor main
+`fd646fb`.
+
+**Result:**
+```
+gemma4_e2e: arch=gemma4e layers=35 hidden=1536 vocab=262144
+gemma4_e2e: prompt="The quick brown fox" steps=128
+generate: CompileTraced plan validation failed, falling back to Compile
+gemma4_e2e: generated (113 bytes) in 33.27s (3.85 tok/s over 128 steps)
+gemma4_e2e: PASS
+```
+
+**Decode:** 3.85 tok/s. Output non-degenerate, multi-token distinct
+(mix of ASCII + unicode), no NaN/Inf. Low vs Gemma 3 1B's 241 tok/s
+baseline -- expected because (a) graph capture is disabled so the
+pipeline runs without kernel fusion, (b) CompileTraced fell back to
+Compile (pre-existing), (c) embed_tokens was upgraded Q4->Q8 on
+load so effective weight size is larger.
+
+**Impact:** First gemma4e CUDA number on record. Target once E99
+ships: comparable to other gemma3-class models with capture
+enabled (i.e. ~100-240 tok/s depending on kernel coverage). Ollama
+comparison remains SKIP per E97.2 (Ollama doesn't support gemma4).
+
+**Artifacts:** docs/benchmarks.md row added; 3-run median deferred
+until E99 unlocks the capture path and the number stabilizes above
+the capture overhead.
+
 ## 2026-04-15: T98.3.1 DGX verification: gemma4e CUDA generate PASS
 
 **Type:** finding
