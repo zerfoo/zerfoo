@@ -4,7 +4,10 @@ package normalization
 import (
 	"context"
 	"fmt"
+	"math"
 
+	"github.com/zerfoo/float16"
+	"github.com/zerfoo/float8"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
@@ -12,6 +15,17 @@ import (
 )
 
 // LayerNormalization implements the Layer Normalization operation.
+//
+// When T is float32 or sub-float32 (float16, float8) AND the engine is
+// a CPU engine, Backward runs all per-element arithmetic in float64 and
+// casts the result back to T. Parameter storage and gradient outputs stay
+// at T. This removes the catastrophic-cancellation risk in (input - mean)
+// when activations drift far from zero, and protects the stdDev^3
+// division chain from float32 rounding noise. The GPU engine path
+// preserves the original T-only computation because GPU kernels batch
+// these ops and maintain intermediate precision better than naive
+// per-element float32 math; upgrading GPU kernels to mixed precision
+// is a follow-up once native kernels exist.
 type LayerNormalization[T tensor.Numeric] struct {
 	engine  compute.Engine[T]
 	epsilon T // Small constant to avoid division by zero
@@ -26,6 +40,8 @@ type LayerNormalization[T tensor.Numeric] struct {
 	variance    *tensor.TensorNumeric[T]
 	normedInput *tensor.TensorNumeric[T] // (input - mean) / sqrt(variance + epsilon)
 	outputShape []int
+
+	useMixedBackward bool // Run Backward per-element in float64 on CPU.
 }
 
 // LayerNormalizationOptions holds configuration options for LayerNormalization layers.
@@ -85,10 +101,11 @@ func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDi
 	}
 
 	return &LayerNormalization[T]{
-		engine:  engine,
-		epsilon: opts.Epsilon,
-		gamma:   gamma,
-		beta:    beta,
+		engine:           engine,
+		epsilon:          opts.Epsilon,
+		gamma:            gamma,
+		beta:             beta,
+		useMixedBackward: shouldUseMixedPrecisionBackward[T](engine),
 	}, nil
 }
 
@@ -102,10 +119,31 @@ func NewLayerNormalizationFromParams[T tensor.Numeric](
 	beta *graph.Parameter[T],
 ) *LayerNormalization[T] {
 	return &LayerNormalization[T]{
-		engine:  engine,
-		epsilon: epsilon,
-		gamma:   gamma,
-		beta:    beta,
+		engine:           engine,
+		epsilon:          epsilon,
+		gamma:            gamma,
+		beta:             beta,
+		useMixedBackward: shouldUseMixedPrecisionBackward[T](engine),
+	}
+}
+
+// shouldUseMixedPrecisionBackward returns true when LayerNorm.Backward
+// should run per-element arithmetic in float64 instead of T. True only
+// when T is float32 or below AND the engine is a CPU engine. GPU engines
+// keep the current all-T path so their CUDA-native kernels remain in
+// charge of precision.
+func shouldUseMixedPrecisionBackward[T tensor.Numeric](engine compute.Engine[T]) bool {
+	if _, ok := engine.(*compute.CPUEngine[T]); !ok {
+		return false
+	}
+	var zero T
+	switch any(zero).(type) {
+	case float64:
+		return false
+	case float32, float16.Float16, float16.BFloat16, float8.Float8:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -209,6 +247,11 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("LayerNormalization: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
+
+	if ln.useMixedBackward {
+		return ln.backwardMixedCPU(dOut, inputs[0])
+	}
+
 	// Gradients for gamma and beta
 	// dL/dgamma = sum(dOut * normedInput) along the normalization axis
 	dOutMulNormedInput, err := ln.engine.Mul(ctx, dOut, ln.normedInput, nil)
@@ -341,6 +384,146 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 	}
 
 	return []*tensor.TensorNumeric[T]{dInput}, nil
+}
+
+// backwardMixedCPU runs LayerNormalization.Backward with all per-element
+// arithmetic performed in float64, while parameter storage and gradient
+// outputs remain at T. Used only when T is float32 or below and the
+// engine is a CPU engine (see shouldUseMixedPrecisionBackward).
+//
+// The critical precision concerns it addresses:
+//   - (input - mean) can lose most significant digits to catastrophic
+//     cancellation when activations drift far from zero during training.
+//     float64 subtraction preserves full precision.
+//   - The stdDev^3 division chain amplifies any rounding error; running
+//     it in float64 keeps intermediate magnitudes meaningful.
+//   - Sum-of-products reductions over the feature axis accumulate error
+//     linearly in float32; float64 caps accumulated error below 1e-12.
+func (ln *LayerNormalization[T]) backwardMixedCPU(dOut *tensor.TensorNumeric[T], input *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	ops := ln.engine.Ops()
+	nFeat := ln.inputShape[len(ln.inputShape)-1]
+	if nFeat <= 0 {
+		return nil, fmt.Errorf("LayerNormalization: invalid feature dim %d", nFeat)
+	}
+	total := 1
+	for _, d := range ln.inputShape {
+		total *= d
+	}
+	positions := total / nFeat
+	epsilon := lnNumericToFloat64(ln.epsilon)
+
+	inputData := input.Data()
+	dOutData := dOut.Data()
+	meanData := ln.mean.Data()
+	varData := ln.variance.Data()
+	normedData := ln.normedInput.Data()
+	gammaData := ln.gamma.Value.Data()
+
+	dInputTensor, err := tensor.New[T](ln.inputShape, nil)
+	if err != nil {
+		return nil, err
+	}
+	dInputData := dInputTensor.Data()
+
+	dGamma64 := make([]float64, nFeat)
+	dBeta64 := make([]float64, nFeat)
+	nFeatF := float64(nFeat)
+
+	for p := 0; p < positions; p++ {
+		mu := lnNumericToFloat64(meanData[p])
+		sigma := math.Sqrt(lnNumericToFloat64(varData[p]) + epsilon)
+		sigma3 := sigma * sigma * sigma
+		base := p * nFeat
+
+		var sumDNorm, sumDNormXMu float64
+		for i := 0; i < nFeat; i++ {
+			gi := lnNumericToFloat64(gammaData[i])
+			dOutI := lnNumericToFloat64(dOutData[base+i])
+			xMinusMu := lnNumericToFloat64(inputData[base+i]) - mu
+			dNorm := dOutI * gi
+			sumDNorm += dNorm
+			sumDNormXMu += dNorm * xMinusMu
+		}
+
+		for i := 0; i < nFeat; i++ {
+			gi := lnNumericToFloat64(gammaData[i])
+			dOutI := lnNumericToFloat64(dOutData[base+i])
+			xMinusMu := lnNumericToFloat64(inputData[base+i]) - mu
+			normed := lnNumericToFloat64(normedData[base+i])
+
+			dNorm := dOutI * gi
+			term1 := dNorm / sigma
+			term2 := xMinusMu * sumDNormXMu / (nFeatF * sigma3)
+			term3 := sumDNorm / (nFeatF * sigma)
+
+			dInputData[base+i] = ops.FromFloat64(term1 - term2 - term3)
+			dGamma64[i] += dOutI * normed
+			dBeta64[i] += dOutI
+		}
+	}
+
+	dGammaTensor, err := tensor.New[T]([]int{nFeat}, nil)
+	if err != nil {
+		return nil, err
+	}
+	dBetaTensor, err := tensor.New[T]([]int{nFeat}, nil)
+	if err != nil {
+		return nil, err
+	}
+	dGammaData := dGammaTensor.Data()
+	dBetaData := dBetaTensor.Data()
+	for i := 0; i < nFeat; i++ {
+		dGammaData[i] = ops.FromFloat64(dGamma64[i])
+		dBetaData[i] = ops.FromFloat64(dBeta64[i])
+	}
+
+	if err := ln.gamma.AddGradient(dGammaTensor); err != nil {
+		return nil, err
+	}
+	if err := ln.beta.AddGradient(dBetaTensor); err != nil {
+		return nil, err
+	}
+
+	return []*tensor.TensorNumeric[T]{dInputTensor}, nil
+}
+
+// lnNumericToFloat64 converts a tensor.Numeric value to float64. This is
+// duplicated from training/optimizer and training/loss to keep this
+// package self-contained. Consolidate to a shared helper if a fourth
+// duplicate emerges.
+func lnNumericToFloat64[T tensor.Numeric](v T) float64 {
+	switch val := any(v).(type) {
+	case float32:
+		return float64(val)
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	case int8:
+		return float64(val)
+	case int16:
+		return float64(val)
+	case int32:
+		return float64(val)
+	case int64:
+		return float64(val)
+	case uint:
+		return float64(val)
+	case uint8:
+		return float64(val)
+	case uint32:
+		return float64(val)
+	case uint64:
+		return float64(val)
+	case float16.Float16:
+		return float64(val.ToFloat32())
+	case float16.BFloat16:
+		return float64(val.ToFloat32())
+	case float8.Float8:
+		return val.ToFloat64()
+	default:
+		return 0
+	}
 }
 
 // OpType returns the operation type of the LayerNormalization layer.
