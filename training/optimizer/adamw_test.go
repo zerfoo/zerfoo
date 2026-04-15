@@ -583,3 +583,65 @@ func TestAdamW_Step_ZeroGradient(t *testing.T) {
 		}
 	}
 }
+
+// TestAdamW_MixedPrecisionV_ResistsSmallGradientUnderflow verifies that the
+// float64 second-moment accumulator prevents the update magnitude blowup
+// that the all-T (float32) path produces on near-zero gradients.
+//
+// The old T-only path computes sqrt(v) + eps in float32. When v is small
+// (~1e-20, well below (sqrt(eps))^2 = 1e-10 for eps=1e-5), sqrt(v) rounds
+// to 0 in float32 and the division m/(sqrt(v)+eps) becomes m/eps, scaling
+// the Adam update by 1e5 and pushing weights toward overflow within
+// tens of thousands of steps.
+//
+// With mixed-precision v, sqrt(v) + eps is evaluated in float64 where
+// it retains the true (tiny) contribution of sqrt(v), yielding stable
+// update magnitudes proportional to m/|g|.
+func TestAdamW_MixedPrecisionV_ResistsSmallGradientUnderflow(t *testing.T) {
+	ops := &numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	paramTensor, err := tensor.New[float32]([]int{4}, []float32{0.5, 0.5, 0.5, 0.5})
+	if err != nil {
+		t.Fatalf("new param tensor: %v", err)
+	}
+	param, err := graph.NewParameter[float32]("w", paramTensor, tensor.New[float32])
+	if err != nil {
+		t.Fatalf("new parameter: %v", err)
+	}
+
+	// A persistently tiny gradient. v accumulates to ~1e-20; in float32
+	// sqrt(v) rounds to 0 and sqrt(v)+eps saturates at eps. In float64
+	// sqrt(v) is still ~1e-10 and the update remains proportional to g.
+	gradTensor, err := tensor.New[float32]([]int{4}, []float32{1e-10, -1e-10, 1e-10, -1e-10})
+	if err != nil {
+		t.Fatalf("new grad tensor: %v", err)
+	}
+	if err := param.AddGradient(gradTensor); err != nil {
+		t.Fatalf("add grad: %v", err)
+	}
+
+	adam := NewAdamW[float32](engine, 1e-3, 0.9, 0.999, 1e-5, 0.0)
+	if !adam.useMixedV {
+		t.Fatalf("expected mixed precision path active on CPU float32")
+	}
+
+	for step := 0; step < 100; step++ {
+		if err := adam.Step(context.Background(), []*graph.Parameter[float32]{param}); err != nil {
+			t.Fatalf("step %d: %v", step, err)
+		}
+		if err := param.AddGradient(gradTensor); err != nil {
+			t.Fatalf("reseed grad step %d: %v", step, err)
+		}
+	}
+
+	for i, pv := range param.Value.Data() {
+		if math.IsNaN(float64(pv)) {
+			t.Fatalf("param[%d] is NaN", i)
+		}
+		drift := math.Abs(float64(pv - 0.5))
+		if drift > 0.05 {
+			t.Errorf("param[%d] drifted too far: %v (|drift|=%v, expected <=0.05)", i, pv, drift)
+		}
+	}
+}
