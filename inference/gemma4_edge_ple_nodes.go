@@ -147,7 +147,6 @@ func (p *pleCombinedProducer[T]) Forward(ctx context.Context, inputs ...*tensor.
 		return nil, fmt.Errorf("Gemma4PLECombinedProducer: tokenPLE scale: %w", err)
 	}
 	p.tokenPLE = tokenPLE
-	gemma4EdgeDebugTensor("ple.tokenPLE", tokenPLE)
 
 	// --- 2. Per-layer model projection.
 	// HF (line 1687): per_layer_projection = per_layer_model_proj(embeds * hidden_size**-0.5).
@@ -165,9 +164,6 @@ func (p *pleCombinedProducer[T]) Forward(ctx context.Context, inputs ...*tensor.
 		return nil, fmt.Errorf("Gemma4PLECombinedProducer: model_proj matmul: %w", err)
 	}
 	p.modelProj = proj
-	gemma4EdgeDebugTensor("ple.scaled", scaled)
-	gemma4EdgeDebugTensor("ple.modelProj", proj)
-	gemma4EdgeDebugTensor("ple.return.hidden", hidden)
 
 	// Pass-through the hidden input so downstream nodes that declare a
 	// dependency on the producer see a well-formed tensor.
