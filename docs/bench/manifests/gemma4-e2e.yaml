@@ -46,9 +46,11 @@ spec:
       env:
         - name: LD_LIBRARY_PATH
           value: /usr/local/cuda/lib64
+        - name: ZERFOO_DISABLE_CUDA_GRAPH
+          value: "1"
       resources:
         limits:
-          memory: 16Gi
+          memory: 48Gi
           cpu: "4"
           nvidia.com/gpu: "1"
       volumeMounts:
