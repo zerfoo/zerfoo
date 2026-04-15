@@ -14,6 +14,16 @@ import (
 )
 
 // AdamW implements the AdamW optimizer.
+//
+// When T is float32 or a sub-float32 precision (float16, float8) AND the
+// engine is a CPU engine, the second-moment accumulator (v) is held as a
+// float64 sidecar instead of T and the per-element "sqrt(v) + epsilon"
+// and "m / (sqrt(v) + epsilon)" computations run in float64. This removes
+// the underflow cliff where v drifts into denormals and sqrt(v) + eps
+// collapses to eps, producing runaway update magnitudes. Storage for
+// param.Value and param.Gradient is unchanged. On GPU engines the
+// original T-only path is preserved; mixed-precision GPU kernels are a
+// follow-up.
 type AdamW[T tensor.Numeric] struct {
 	engine       compute.Engine[T]
 	learningRate T
@@ -23,10 +33,17 @@ type AdamW[T tensor.Numeric] struct {
 	weightDecay  T
 	maxGradNorm  float64 // If > 0, clip global gradient norm to this value.
 
-	// State variables for each parameter
-	m map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // First moment estimates
-	v map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // Second moment estimates
-	t int                                              // Timestep
+	// State variables for each parameter.
+	m map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // First moment estimates (T-precision)
+	v map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // Second moment estimates (T-precision, GPU path)
+
+	// Mixed-precision sidecar. When useMixedV is true, v64[p] holds the
+	// second moment in float64 and v[p] is unused. Allocated lazily per
+	// parameter on the first Step call.
+	v64       map[*graph.Parameter[T]][]float64
+	useMixedV bool
+
+	t int // Timestep
 }
 
 // NewAdamW creates a new AdamW optimizer.
@@ -40,7 +57,30 @@ func NewAdamW[T tensor.Numeric](engine compute.Engine[T], learningRate, beta1, b
 		weightDecay:  weightDecay,
 		m:            make(map[*graph.Parameter[T]]*tensor.TensorNumeric[T]),
 		v:            make(map[*graph.Parameter[T]]*tensor.TensorNumeric[T]),
+		v64:          make(map[*graph.Parameter[T]][]float64),
+		useMixedV:    shouldUseMixedPrecisionV[T](engine),
 		t:            0,
+	}
+}
+
+// shouldUseMixedPrecisionV returns true when AdamW should keep the
+// second-moment accumulator in float64 instead of T. True only when T is
+// float32 or below (float64 T doesn't need promotion) AND the engine is
+// a CPU engine. GPU engines preserve the current all-T path so their
+// CUDA-native kernels keep working; upgrading them to mixed precision
+// is a follow-up once a native GPU kernel exists for the division.
+func shouldUseMixedPrecisionV[T tensor.Numeric](engine compute.Engine[T]) bool {
+	if _, ok := engine.(*compute.CPUEngine[T]); !ok {
+		return false
+	}
+	var zero T
+	switch any(zero).(type) {
+	case float64:
+		return false // Already at max useful precision.
+	case float32, float16.Float16, float16.BFloat16, float8.Float8:
+		return true
+	default:
+		return false // Integer Ts don't use AdamW in practice.
 	}
 }
 
@@ -59,11 +99,20 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 
 	a.t++ // Increment timestep
 
-	// Bias correction terms
+	if a.useMixedV {
+		return a.stepMixedV(ctx, params)
+	}
+	return a.stepEngine(ctx, params)
+}
+
+// stepEngine is the original all-T path: every Adam arithmetic step goes
+// through the engine. Preserved for GPU engines and for float64 T where
+// further promotion has no benefit.
+func (a *AdamW[T]) stepEngine(ctx context.Context, params []*graph.Parameter[T]) error {
+	// Bias correction terms.
 	ops := a.engine.Ops()
 	one := ops.FromFloat64(1.0)
 	tAsT := ops.FromFloat64(float64(a.t))
-	// sqrt(1 - beta2^t) / (1 - beta1^t)
 	numer := ops.Sqrt(ops.Sub(one, ops.Pow(a.beta2, tAsT)))
 	denom := ops.Sub(one, ops.Pow(a.beta1, tAsT))
 	biasCorr := ops.Div(numer, denom)
@@ -73,10 +122,9 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 		grad := param.Gradient
 
 		if grad == nil {
-			continue // Skip if no gradient
+			continue
 		}
 
-		// Initialize m and v for this parameter if not already done
 		if _, ok := a.m[param]; !ok {
 			mTensor, err := tensor.New[T](param.Value.Shape(), nil)
 			if err != nil {
@@ -105,7 +153,6 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 		v := a.v[param]
 		paramValue := param.Value
 
-		// Update biased first moment estimate: m = beta1 * m + (1 - beta1) * grad
 		mNew, err := a.engine.MulScalar(ctx, m, a.beta1, nil)
 		if err != nil {
 			return err
@@ -116,12 +163,11 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 			return err
 		}
 
-		m, err = a.engine.Add(ctx, mNew, gradScaled, m) // Update m in-place
+		m, err = a.engine.Add(ctx, mNew, gradScaled, m)
 		if err != nil {
 			return err
 		}
 
-		// Update biased second raw moment estimate: v = beta2 * v + (1 - beta2) * grad^2
 		vNew, err := a.engine.MulScalar(ctx, v, a.beta2, nil)
 		if err != nil {
 			return err
@@ -138,13 +184,10 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 		}
 
 		v, err = a.engine.Add(ctx, vNew, gradSquaredScaled, v)
-		if err != nil { // Update v in-place
+		if err != nil {
 			return err
 		}
 
-		// Compute update: update = alpha * m_hat / (sqrt(v_hat) + epsilon)
-		// m_hat is already bias-corrected by alpha
-		// v_hat is already bias-corrected by alpha
 		sqrtV, err := a.engine.Sqrt(ctx, v, nil)
 		if err != nil {
 			return err
@@ -165,30 +208,107 @@ func (a *AdamW[T]) Step(ctx context.Context, params []*graph.Parameter[T]) error
 			return err
 		}
 
-		// Apply weight decay: param = param - (learningRate * weightDecay) * param
 		lrWd := ops.Mul(a.learningRate, a.weightDecay)
 		weightDecayTerm, err := a.engine.MulScalar(ctx, paramValue, lrWd, nil)
 		if err != nil {
 			return err
 		}
 
-		// Final update: param = param - updateTermScaled - weightDecayTerm
 		paramNew, err := a.engine.Sub(ctx, paramValue, updateTermScaled, nil)
 		if err != nil {
 			return err
 		}
 
 		param.Value, err = a.engine.Sub(ctx, paramNew, weightDecayTerm, paramValue)
-		if err != nil { // Update paramValue in-place
+		if err != nil {
 			return err
 		}
 
-		// Clear gradient for next step.
-		// Use engine.Fill instead of param.ClearGradient() because the latter
-		// modifies a D2H copy that is never written back to GPU storage.
 		var zero T
 		if err := a.engine.Fill(ctx, param.Gradient, zero); err != nil {
-			param.ClearGradient() // Fallback to CPU path.
+			param.ClearGradient()
+		}
+	}
+
+	return nil
+}
+
+// stepMixedV implements Adam update with the second-moment accumulator
+// held in float64. The first moment, parameter values, and gradients
+// stay in T. Only CPU engines reach this path (see shouldUseMixedPrecisionV).
+//
+// The critical improvement is that sqrt(v) + epsilon never collapses to
+// just epsilon due to float32 underflow on near-zero gradients, which in
+// the all-T path can yield update magnitudes of m/epsilon = m * 1e5 and
+// cause weights to drift rapidly toward the float32 overflow edge.
+func (a *AdamW[T]) stepMixedV(_ context.Context, params []*graph.Parameter[T]) error {
+	ops := a.engine.Ops()
+	one64 := 1.0
+	t64 := float64(a.t)
+	beta1F := numericToFloat64(a.beta1)
+	beta2F := numericToFloat64(a.beta2)
+	epsF := numericToFloat64(a.epsilon)
+	lrF := numericToFloat64(a.learningRate)
+	wdF := numericToFloat64(a.weightDecay)
+
+	numer := math.Sqrt(one64 - math.Pow(beta2F, t64))
+	denom := one64 - math.Pow(beta1F, t64)
+	alpha := lrF * (numer / denom)
+	lrWd := lrF * wdF
+
+	for _, param := range params {
+		grad := param.Gradient
+		if grad == nil {
+			continue
+		}
+
+		if _, ok := a.m[param]; !ok {
+			mTensor, err := tensor.New[T](param.Value.Shape(), nil)
+			if err != nil {
+				return err
+			}
+			mData := mTensor.Data()
+			var zero T
+			for i := range mData {
+				mData[i] = zero
+			}
+			a.m[param] = mTensor
+
+			total := 1
+			for _, d := range param.Value.Shape() {
+				total *= d
+			}
+			a.v64[param] = make([]float64, total)
+		}
+
+		m := a.m[param]
+		v64 := a.v64[param]
+		paramData := param.Value.Data()
+		gradData := grad.Data()
+		mData := m.Data()
+
+		if len(v64) != len(paramData) {
+			return fmt.Errorf("adamw: v64 size mismatch for parameter %q: %d vs %d",
+				param.Name, len(v64), len(paramData))
+		}
+
+		var zero T
+		for i := range paramData {
+			g := numericToFloat64(gradData[i])
+			mOld := numericToFloat64(mData[i])
+			mNew := beta1F*mOld + (one64-beta1F)*g
+			mData[i] = ops.FromFloat64(mNew)
+
+			v64[i] = beta2F*v64[i] + (one64-beta2F)*g*g
+
+			denomI := math.Sqrt(v64[i]) + epsF
+			update := alpha * mNew / denomI
+
+			pv := numericToFloat64(paramData[i])
+			pv = pv - update - lrWd*pv
+			paramData[i] = ops.FromFloat64(pv)
+
+			gradData[i] = zero
 		}
 	}
 
@@ -245,8 +365,6 @@ func (a *AdamW[T]) guardAndClipGradients(ctx context.Context, params []*graph.Pa
 			continue
 		}
 
-		// Sum all elements to a single scalar. NaN propagates through addition,
-		// so if any element is NaN the sum will be NaN. Inf likewise propagates.
 		sumTensor, err := a.engine.ReduceSum(ctx, grad, -1, false)
 		if err != nil {
 			return fmt.Errorf("adamw: ReduceSum failed for parameter %q: %w", param.Name, err)
@@ -262,7 +380,6 @@ func (a *AdamW[T]) guardAndClipGradients(ctx context.Context, params []*graph.Pa
 			return fmt.Errorf("adamw: Inf detected in gradient of parameter %q", param.Name)
 		}
 
-		// Compute sum of squares for global norm: ||grad||^2
 		gradSquared, err := a.engine.Mul(ctx, grad, grad, nil)
 		if err != nil {
 			return fmt.Errorf("adamw: Mul failed for parameter %q: %w", param.Name, err)
