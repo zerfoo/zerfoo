@@ -1063,11 +1063,11 @@ MoE and Edge builders are independent of each other.
 - [x] Agent 1: T92.3.1 + T92.3.2 + T92.3.3 + T92.3.4 (MoE variant)  2026-04-13 PR#428
 - [x] Agent 2: T92.4.1 + T92.4.2 + T92.4.3 + T92.4.4 + T92.4.5 + T92.4.6 (edge variants)  2026-04-13 PR#428
 
-#### Wave E92-4: Integration and validation (2 agents)
+#### Wave E92-4: Integration and validation (2 agents) -- COMPLETE
 Deps: Wave E92-3
 
-- [ ] Agent 1: T92.5.1 + T92.5.2 + T92.5.5 (GGUF download + e2e test + full suite)
-- [ ] Agent 2: T92.5.3 + T92.5.4 (DGX benchmark + docs update)
+- [x] Agent 1: T92.5.1 + T92.5.2 + T92.5.5 (GGUF download + e2e test + full suite)  2026-04-13/15
+- [x] Agent 2: T92.5.3 + T92.5.4 (DGX benchmark + docs update)  2026-04-15
 
 ---
 
@@ -1587,22 +1587,9 @@ upload/bridge gap.
   Risk: Ollama gemma3:1b image is ~815MB; GGUF may need to be fetched from
   HF (google/gemma-3-1b-it-GGUF). Allow extra 15m.
 
-- [ ] T98.1.2 Instrument GPUStorage.TrySlice to dump caller frames  Owner: TBD  Est: 45m  verifies: [infrastructure]  DEFERRED 2026-04-14
-  Deferred after T98.1.1 confirmed the bug is gemma4e-specific. Also lives
-  in sibling repo (ztensor), which would require a cross-repo PR + go.mod
-  bump. Re-open only if static analysis on `inference/arch_gemma4_edge.go`
-  doesn't produce a clear root cause.
-  Deps: none (parallel with T98.1.1)
-  File: `internal/cuda/gpu_storage.go` (or the ztensor equivalent that owns
-  `GPUStorage.TrySlice`). Locate the warning log site, add opt-in runtime
-  stack trace (envvar `ZERFOO_TRY_SLICE_TRACE=1`) using `runtime.Callers`
-  bounded to 16 frames. Do not make it the default; spam would be harmful.
-  AC: rerunning gemma4_e2e generate on CUDA emits stack traces identifying
-  which gemma4e builder call path slices a zero-sized GPU tensor.
+- [x] T98.1.2 Instrument GPUStorage.TrySlice to dump caller frames  CANCELLED 2026-04-15 -- superseded by T98.2.1 dynamic instrumentation which located the root cause without ztensor changes.
 
-- [ ] T98.1.3 Unit test: TrySlice returning zero does not silently succeed  Owner: TBD  Est: 30m  verifies: [infrastructure]  DEFERRED 2026-04-14
-  Deferred with T98.1.2. Lives in ztensor. Revisit only if T98.2.1's
-  static analysis fails to find the root cause.
+- [x] T98.1.3 Unit test: TrySlice returning zero does not silently succeed  CANCELLED 2026-04-15 -- superseded by T98.2.4 regression test (passthrough_release_test.go with poisoning pool).
   Deps: none (parallel)
   Cover the current behavior -- warning then zero slice -- and propose a
   stricter mode (ZERFOO_TRY_SLICE_STRICT=1) that returns an error instead.
@@ -2254,248 +2241,21 @@ Task details removed during /tidy --apply. See git history for full lists.
   instrumentation -- bug is UPSTREAM of GQA layer 0" and "T98.2.1
   deeper bisect -- bug between PLE and RMSNorm".
 
-### 2026-04-14 (late): E96 shipped; E97-1/E97-2 partial; E98 added for Gemma 4 edge CUDA qNorm bug
-
-- **E96 complete**: T96.1.1-3 + T96.2.1-2 marked [x]. First confirmed GPU
-  forward pass of gemma4e on DGX via pod `gemma4-e2e-20260414-160552`.
-  Architectural deviation: darwin cross-compile failed (purego linknames);
-  switched to native build on DGX.
-- **E97-1 complete** (PR #467 merged): T97.1.1 added `-mode=generate`
-  scaffolding to `cmd/gemma4_e2e`; T97.2.1 found no Ollama Gemma 4 image
-  available and deferred T97.2.2 and T97.2.3.
-- **E97-2 partial** (PR #468 merged): T97.1.2 parameterized Spark manifest
-  and script for mode/prompt/steps/seq/device. T97.1.3 BLOCKED by a CUDA
-  illegal memory access in `GroupedQueryAttention.qNorm` during gemma4e
-  prefill (pod `gemma4-e2e-20260414-164140`).
-- **E98 added**: "Gemma 4 edge CUDA qNorm illegal memory access
-  (unblocks T97.1.3)". 3 waves, 6 active tasks, targeting triangulation
-  -> fix -> DGX re-verification. Waves designed for 3/2/1 parallel agents.
-
-### 2026-04-14: E96 + E97 added; plan now tracks DGX staging and Gemma 4 generation follow-ups
-
-- E96 "DGX Staging + First Gemma 4 E2E Spark Run" covers the one-time
-  validation of the E93-3/E93-4 deliverables on real GPU. 5 tasks across
-  staging (T96.1.1-3) and execution (T96.2.1-2). Wave count: 2 (staging
-  2 agents, run 1 agent).
-- E97 "Gemma 4 Generation + Ollama Parity" lifts the T93.4.2 / T93.4.3
-  tasks deferred out of E93-4 with concrete subtasks. 7 tasks across
-  generation (T97.1.x), parity harness (T97.2.x), and close-out
-  (T97.3.1). Wave count: 3.
-- E86 PyTorch Parity remains a separate large epic, already in this plan;
-  referenced but not restructured in this pass.
-
-### 2026-04-13 (late night): E95 added, E93-3 gated on external-KV plumbing
-
-- Second Wave E93-3 spawn stopped on a ZERO-STUB call: `layers/attention/
-  grouped_query_attention.go` has no API to skip K/V projection or accept
-  external K/V tensors, but HF transformers Gemma 4 semantics require it
-  for shared-KV layers (HF `modeling_gemma4.py` lines 1148-1226).
-- Three options evaluated: (A) donor-weight swap at construction, (B)
-  first-class external-KV graph input, (C) ignore sharing. User chose B
-  for architectural cleanliness: K/V sharing becomes a reusable graph
-  concept that generalizes to future shared-KV architectures.
-- New epic E95 "External K/V Input Path for GroupedQueryAttention" added
-  with 7 tasks across 3 waves (API extension, wiring, non-regression,
-  lint). ADR-087 records the decision.
-- E93-3 deps updated: now gated on E95 completion. E93-4 remains gated
-  on E93-3.
-- Agent work from second E93-3 spawn (GGUF metadata dump program,
-  verified layer-type bool array + shared_kv_layers=20 count + per-layer
-  ffn lengths matching HF boundary at 15) was not committed; findings
-  captured in devlog and this plan entry.
-
-### 2026-04-13 (night): ADR-086 wiring questions resolved
-
-- Confirmed llama.cpp has NO Gemma 4 builder (no `LLM_ARCH_GEMMA4`, no
-  `gemma4` commits in `git log --all`); only `gemma3n-iswa.cpp` exists
-  and is the wrong architecture.
-- HuggingFace transformers `src/transformers/models/gemma4/modeling_gemma4.py`
-  is the canonical reference. ADR-086 updated with line-numbered
-  citations answering all three open wiring questions (PLE combiner at
-  lines 1401-1408, post_norm + layer_output_scale at lines 1337/1410,
-  shared_kv_layers at lines 1149-1226).
-- Bonus finding: HF gates `use_double_wide_mlp` on `is_kv_shared_layer`
-  (boundary layer 20) but the unsloth GGUF's `feed_forward_length`
-  per-layer array shows the boundary at layer 15. Builder must trust
-  per-layer tensor shapes over scalar config.
-- Wave E93-3 is fully unblocked. Next /apply spawns the builder agent
-  with these citations as ground truth.
-- Also deferred: DRY refactor across arch_gemma4.go / _edge.go / _moe.go.
-  3-5 shared helpers identified (attention classification, RoPE+GQA,
-  embedding init, final norm+head, post-attn fused block). Scheduled
-  after E93-4 stabilizes the edge builder (two-stable-implementations-
-  before-abstraction rule).
-
-### 2026-04-13 (late late evening): E94 retracted, E93-3 unblocked
-
-- Direct tensor dump of the unsloth Gemma 4 E2B Q4_K_M GGUF returned
-  zero altup_*/laurel_*/router tensors. The E94 premise (that Gemma 4
-  edge inherits Gemma 3N's AltUp+Laurel architecture) was wrong.
-- E94 marked ARCHIVED in place. E94 tasks (T94.1.1-T94.4.2) are obsolete.
-- Wave E93-3 unblocked. Three open wiring questions in ADR-086 remain
-  and must be resolved by reading the correct Gemma 4 builder in
-  llama.cpp (not `gemma3n-iswa.cpp`).
-- Devlog retraction recorded under 2026-04-13 (late evening) reference;
-  new entry for 2026-04-13 (late late evening) with full explanation.
-- GitHub issues #443..#454 (E94 board items) need to be closed as
-  superseded on the next sync pass.
-
-### 2026-04-13 (late evening): E94 added -- AltUp and Laurel primitives for Gemma 4 edge
-
-- Added E94 (11 tasks, 4 waves) providing the layer primitives and
-  tensor-name mapping extensions that Wave E93-3 needs.
-- Wave E94-1: architecture doc extension + ADR-087 (AltUp + Laurel
-  adoption; cross-refs ADR-086 for shared PLE which still stands).
-- Wave E94-2: extend `gemma4eTensorNameMap` and `gemma4eGlobalTensorMap`
-  with 9 per-block + 2 global tensor names, plus real-GGUF verification.
-- Wave E94-3: five parallel primitive builds (altup router, predict,
-  correct, project-back; laurel).
-- Wave E94-4: vet/lint + full test suite.
-- Wave E93-3 remains BLOCKED in the plan with an explicit dependency on
-  E94 completion. E93-4 gated on E93-3 as before.
-- No ADRs created in this planning pass; T94.1.2 creates ADR-087 during
-  execution.
-
-### 2026-04-13 (evening): E93 added -- gemma4e builder rework
-
-- Added E93 (12 tasks, 4 waves) to realign `arch_gemma4_edge.go` with the
-  canonical Gemma 4 edge GGUF layout surfaced by T92.5.2.
-- Wave E93-1: research + ADR-086 (shared PLE plus per-layer proj decision).
-- Wave E93-2: tensor name mapping (load_gguf.go) + config audit (arch.go).
-- Wave E93-3: single-agent builder rewrite + synthetic fixture update + lint.
-- Wave E93-4: integration verification (real-GGUF graph+forward, 50-token
-  generation, Ollama parity check, full test run, devlog closure).
-- T92.5.2 remains BLOCKED until E93 lands; closure note in T93.4.5 will
-  unblock it.
-- No new ADRs created in this planning pass; T93.1.2 creates ADR-086 during
-  execution.
-
-### 2026-04-13: E92 added -- Gemma 4 architecture support
-
-- Added E92 (25 tasks, 4 waves) for Gemma 4 architecture support across all 4 variants.
-- Phase 1: Dense 31B builder with hybrid attention, dual RoPE, K=V, GELU FFN.
-- Phase 2: MoE 26B-A4B with 128 experts top-8 routing (reuses existing MoE layer).
-- Phase 3: Edge E4B/E2B with PLE and KV-shared layers.
-- Created ADR-085 (docs/adr/085-gemma4-architecture-support.md).
-- Vision and audio encoders deferred to future multimodal epic.
-- Added risks R75-R78 for per-layer KV, K=V, MoE memory, GGUF metadata.
-- Trimmed plan: collapsed E50, E51, E74, E85, E87, E89, pruned 7 branches, fixed DGX IP.
-
-### 2026-04-11: E86.5 GPU parity complete + E90 added
-
-- E86.5 GPU kernel parity tests (T86.5.1-T86.5.7) completed and merged (PR #387).
-  34 GPU vs CPU parity tests: 9 activations, 3 normalizations, 4 core ops, 3 attention,
-  1 RoPE, 14 backward gradients. Containerfile and Spark manifest created.
-  T86.5.8 (DGX submission) blocked by purego cross-compilation limitation.
-- E89 Engine[T] compliance completed (27/27 tasks, PR #386). All 6 timeseries models
-  migrated: CfC, FreTS, DLinear, TimeMixer, ITransformer, PatchTST.
-- E90 added (14 tasks, 3 waves) to resolve GitHub #381 and #384: CrossAsset GPU
-  training 10-100x slower than PyTorch. Root cause: TrainGPU ignores GPU engine,
-  all ops on CPU with float64. Fix: float32 migration, Engine[T] forward path,
-  GPU TrainGPU implementation, DGX benchmarking.
-- v1.46.0 released with parity tests and Engine[T] migrations.
-
-### 2026-04-11: E89 added -- timeseries Engine[T] compliance
-
-- Added E89 (27 tasks, 2 waves) to eliminate all raw slice math from 6 timeseries
-  model files (155+ lines of for-loop arithmetic violating "Engine[T] is law").
-- Audit found: frets.go (73 violations), cfc.go (42), timemixer.go (24),
-  dlinear.go (10), itransformer.go (4+), patchtst.go (1). Clean references:
-  nbeats.go, nhits.go, tft.go, mamba.go.
-- All migrations are independent (Wave 1: 3 agents, 2 models each).
-- E88 completed: PatchTST, N-BEATS, ITransformer upgraded to golden-file parity.
-
-### 2026-04-10 (night): E87 added -- fix 4 backward pass bugs
-
-- Added E87 (8 tasks, 1 wave, 4 agents) to fix bugs found by E86 Wave 2.
-- Bugs: LayerNorm (wrong ReduceSum axis), MatMul (missing transposes),
-  MSE (missing 2/N factor), CrossEntropy (missing 1/N normalization).
-- All 4 fixes are in different packages -- fully parallelizable in one wave.
-- Each fix has a paired test verification task.
-
-### 2026-04-10 (evening): E86 plan refined for execution
-
-- Restructured E86 from 4 sequential waves to 3 waves with better parallelism (8 agents total).
-- Added E86.0 sub-epic: wire 10 existing golden files that have no Go test (Conv2D, FFN,
-  BatchNorm, Dropout, AdamW, SGD, SimpleRNN, S4, MambaBlock, TransformerBlock).
-- Split batched tasks into individual tasks: timeseries layers (6 separate tasks),
-  SSM variants, residual types, audio layers. Total tasks: 72 (was 63).
-- Removed false dependencies: backward tests only need E86.0 (wire existing), not all
-  of E86.1 (new layers). Architecture tests can start after E86.0 completes.
-- Added E86.4 tasks for GCN and GAT separately (was combined). Added SWA optimizer.
-- Wave 1 now has 3 fully independent agents (wire existing, new layers, optimizers).
-  Wave 2 has 3 agents (backward, timeseries/tabular archs, RL/GNN/synth archs).
-  Wave 3 has 2 agents (GPU on DGX, CI integration).
-
-### 2026-04-10: E86 added -- PyTorch parity testing for all layers
-
-- Added E86 for comprehensive PyTorch parity testing of every layer, loss function,
-  optimizer, and model architecture.
-- Initial audit completed: 32/32 CPU forward-pass parity tests PASS (100%).
-  Tests cover: 8 activations, 8 functional ops, 2 normalization, 3 core, 3 attention,
-  2 embeddings, 3 loss, 3 ops.
-- Files created: tests/golden/generate_golden.py (PyTorch 2.11.0 golden generator),
-  tests/golden/layers/ (36 JSON golden files), tests/parity/layer_parity_test.go.
-- Key findings: core.Linear uses [in,out] weight (x@W); functional.Linear uses
-  [out,in] (x@W^T). SDPA defaults bidirectional. RoPE uses split-half rotation.
-
-### 2026-04-07 (afternoon): E85 diagnosis complete, fix scope refined
-
-- T85.1.3 + T85.1.4 marked DONE. Root cause: ~38 leaked GPU tensors per batch in
-  trainWindowedGPU. CUDA graph capture (T51.4.1) confirmed disabled at line 453.
-- T85.1.1 + T85.1.2 (runtime profiling) skipped — root cause was visible from source.
-- E85.2 (fix tasks) refined from 3 vague tasks to 8 concrete tasks (T85.2.0-T85.2.7)
-  with line numbers, target struct fields, and specific allocation sites.
-- Added Wave E85-2a (ztensor API inventory) as a hard prerequisite for the fix.
-- Added Wave E85-2b (ztensor API extension) as conditional follow-up.
-- Wave E85-3 expanded from 3 to 5 parallel agents (one per allocation cluster +
-  encoder helpers).
-- Added "E85 Next-Session Starter Checklist" with the exact resume sequence.
-- Shipped diagnosis as PR #346 (merged).
-
-### 2026-04-07: E85 added — fix GPU training memory leak
-
-- Added E85 (9 tasks across 4 waves) targeting the cudaMalloc OOM in `trainWindowedGPU`
-  encoder backward path. CRITICAL — blocks T50.5.2 and T51.5.2 (DGX training benchmarks).
-- Detailed reproducer and evidence matrix in the epic and devlog.
-- Wave plan: diagnosis (3 agents) -> profile run (1) -> fix (3) -> validation (1).
-
-### 2026-04-06: Wave 20 DGX benchmarks + housekeeping
-
-- Merged release-please PR #340 (v1.42.1).
-- Fixed stale status header for E77-E84 (all DONE), E50/E51 (code complete).
-- Fixed DGX IP in hand-off notes (192.168.86.250 → 192.168.86.29).
-- Created cmd/bench_train benchmark tool for PatchTST training.
-- Started GPU + CPU benchmarks on DGX (T50.5.2, T51.5.2); results pending collection.
-- T58.1.2 (GQA parity) blocked: no GGUF model files on DGX.
-- T63.2.1-T63.2.3 blocked: need CUDA CGo kernel stubs on DGX.
-
-### 2026-04-06: /tidy --apply --prune
-
-- Marked Waves 18-19 validation tasks complete (11/11). Epics E77-E84 all DONE.
-- Milestone M-COMP-4 marked DONE.
-- Collapsed completed epics E77-E84 into summary (removed ~520 lines of task breakdowns).
-- Collapsed completed Waves 13-19 into summary.
-- Pruned 5 stale worktrees and 8 superseded branches (local + remote).
-- Release-please PR #340 (v1.42.1) left open (automated, no action needed).
-
-### 2026-04-03: Added E77-E84 composition phase 4 and E74-E76 phase 3
-
-Added 8 epics (E77-E84, ~61 tasks) for phase 4 composition and 3 epics
-(E74-E76, 25 tasks) for phase 3 backward composition. All completed by
-2026-04-06 across Waves 9-19. See git history for detailed breakdowns.
-
-Older progress log entries (2026-03-26 through 2026-04-03) removed during
-2026-04-06 plan trim. Key milestones: E34-E44 research (127 tasks complete),
-E45-E65 implementation, E66-E73 composition phases 1-2, E74-E76 phase 3,
-E77-E84 phase 4. See git history for full changelog.
+Older progress log entries (2026-04-03 through 2026-04-14) removed during
+2026-04-15 plan trim. Key milestones: E85 GPU training leak fixed (40.3s
+benchmark), E86 parity testing (105 tests), E87-E89 all COMPLETE,
+E90 CrossAsset GPU (12/14), E92-E93-E95 Gemma 4 architecture shipped,
+E94 retracted (no AltUp/Laurel in gemma4e GGUF), E96 closed (first DGX
+GPU forward), E97 partial (Ollama deferred), E98 closed (pass-through
+pool-release aliasing fix), E99 added (CUDA graph capture compat).
+See git history for full changelog.
 
 ---
 
 ## Hand-off Notes
 
 - All code is in Go 1.25 with generics. No CGo. GPU via purego/dlopen.
-- DGX Spark GPU at `ssh ndungu@192.168.86.29` for CUDA testing.
+- DGX Spark GPU at `ssh ndungu@192.168.86.250` for CUDA testing.
 - ztensor and zerfoo are separate repos with separate go.mod files.
   Primitive tasks (T34.1.*, T35.1.*, T35.3.4, T37.1.5, T39.1.*) go in ztensor.
   All other tasks go in zerfoo.
@@ -2515,44 +2275,7 @@ E77-E84 phase 4. See git history for full changelog.
 - E43 (Flash Decode) goes in ztensor (CUDA kernel) and zerfoo (attention wiring).
 - E44 (Multi-LoRA) is entirely in zerfoo. Adapter format uses standard GGUF.
 - GGUF is the sole model format (ADR-037).
-- E74 (backward composition) is the biggest remaining composition task. Key insight:
-  layers/functional currently only has forward ops. Backward ops must be added first
-  (T74.1.1-T74.1.7), then 3 backward files + encoder backward can migrate (T74.2.*).
-  The backward ops should use engine operations internally, NOT raw loops.
-  Reference implementations: itransformer_backward.go:503-537 (LayerNorm backward),
-  itransformer_backward.go:542-555 (softmax backward), timemixer_backward.go:457-496
-  (MLP backward). All use the same numerical formulas -- just needs engine wrapping.
-- E75 (inference .Data()) is mostly engine.Slice and engine.Reshape replacements.
-  Do NOT touch arch_chronos.go or arch_regime.go (justified .Data() uses).
-- E63/E64 (ztensor) must be committed in the ztensor repo, not zerfoo.
-- E77 (tabular composition): tabular/ has 5 model architectures (FT-Transformer, SAINT,
-  TabNet, ResNet, model.go). Each file can be migrated independently. The key is replacing
-  local linearForward/layerNorm/geluScalar/attention with functional.* equivalents.
-  Run parity tests for each model after migration -- validation loss must match within 1e-4.
-- E78 (layers/ internal): These are violations WITHIN layers/ itself. vision/clip_encoder.go
-  is the worst offender (~200 lines of raw loops). The timeseries files (mlstm, ssm, vsn)
-  have .Data() access that should use engine.Slice. core/gemm.go has a hand-rolled triple-loop
-  GEMM that should simply call engine.MatMul.
-- E79 (generate/ refactor): The 4 decode loops (Generate, GenerateStream, speculative, EAGLE)
-  are ~80% identical. Extract the shared decode step FIRST (T79.1.2), then deduplicate the
-  callers. Be careful with streaming -- SSE token emission timing must not change.
-- E80 (builder boilerplate): Create the helper functions FIRST (T80.1.1-T80.1.3), then
-  migrate builders in waves. Start with the 6 production builders (llama, gemma, mistral,
-  qwen, phi, deepseek), then do the remaining ~20. Each builder migration is small but
-  there are many -- batch them efficiently.
-- E81 (custom nodes): These are the REMAINING custom nodes after E61. E61 refactored the
-  builders to use arch_common patterns, but left some custom nodes in place. E81 finishes
-  the job by replacing them with layer compositions. arch_vision_helpers.go is the priority.
-- E82 (training loss): QuantileLoss has a KNOWN BUG -- it panics for non-float32 types due
-  to a hard float32 cast. Fix the generics first (T82.1.3). The other loss functions work
-  but bypass the engine they store as a field.
-- E83 (serve handlers): handleChatCompletions and handleCompletions share ~60% of their logic.
-  The extractions (buildGenerationOptions, parseAndApplyGrammar, detectAndFormatToolCalls) are
-  straightforward refactors. Be careful not to change the OpenAI API response format.
-- E84 (modeldsl): modeldsl/ reimplements layers from scratch on raw []float64. E62 did
-  high-level composition but E84 goes deeper into the individual layer implementations.
-  The LayerType constant reconciliation (T84.1.6) should make layers/registry the single
-  source of truth.
+- E63 (ztensor) must be committed in the ztensor repo, not zerfoo.
 - E92 (Gemma 4): The builder uses its own per-layer loop (like arch_deepseek.go)
   because Gemma 4 has per-layer varying KV head counts and head dims. Does NOT
   modify buildTransformerGraph. Reuses GQA, MoE, RMSNorm, FFN, RoPE layers.
@@ -2572,17 +2295,7 @@ E77-E84 phase 4. See git history for full changelog.
   For backward tests: golden files include grad_output, expected_grad_input, and
   expected_grad_weight fields. Call layer.Backward() and compare.
 - Gemma3-1B Q4_K_M is cached on DGX Spark for integration tests.
-- E47 (batched training) is entirely in zerfoo/timeseries/. Key insight: replace
-  per-sample GPU calls with batch-level tensor operations. DataLoader converts
-  float64 slices to float32 tensors once, then iterates mini-batches.
-- E48 (TimeMixer) follows exact same pattern as PatchTST. Reference implementation:
-  github.com/kwuking/TimeMixer. Key architecture: multi-scale decomposition via
-  learnable moving averages, then MLP mixing across scales.
-- E49 (foundation models) is native Go. New xLSTM layers (sLSTM, mLSTM) go in
-  layers/timeseries/. Graph builders go in inference/timeseries/. Weight converters
-  produce GGUF from HuggingFace SafeTensors. Parity tests need golden files generated
-  from Python reference (one-time, checked into tests/golden/).
-- Platform for E47-E49: linux/arm64 (DGX Spark with Grace Hopper GPU).
+- Gemma3-1B Q4_K_M and Gemma4-E2B Q4_K_M are cached on DGX for integration tests.
 
 ---
 
@@ -2658,215 +2371,20 @@ Detailed task lists removed during /tidy --apply. See git history.
 
 ---
 
-## E50: GPU Training Kernel Elimination (GitHub Issue #278)
+## E50: GPU Training Kernel Elimination (COMPLETE)
 
-**Problem:** After channel batching (PR #292), PatchTST GPU training still takes 63.7s/epoch
-on DGX Spark (target: 6s/epoch for <60s total at 10 epochs). Profiling shows the remaining
-time is dominated by CPU operations that pull data off GPU, process on CPU, and push back:
-layer norm forward/backward (8 calls/layer on [7680, 64] matrices), GELU forward/backward
-(4 calls/layer on [7680, 256] matrices), and redundant weight transpose computation
-(same weights transposed every batch iteration).
-
-**Goal:** Replace all CPU bottleneck operations with engine ops (engine.Sum, engine.Mul,
-engine.Sub, engine.MulScalar, engine.Sqrt, engine.Tanh, engine.Add, engine.Div) so the
-full forward/backward loop can execute on GPU without CPU round-trips. Cache weight
-transposes outside the batch loop.
-
-**File:** timeseries/patchtst_gpu_train.go
-
-### E50.1: Layer Norm Forward on Engine
-
-- [x] T50.1.1 Implement engine-based layer norm forward  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30
-  File: timeseries/patchtst_gpu_train.go
-  Replace layerNormF32WithCache with engine ops:
-  (1) mean = engine.Sum(x, -1, keepDims=true) / dModel via engine.MulScalar
-  (2) centered = engine.Sub(x, mean)
-  (3) var = engine.Sum(engine.Mul(centered, centered), -1, keepDims=true) / dModel
-  (4) invStd = 1 / engine.Sqrt(engine.AddScalar(var, 1e-5))
-  (5) normed = engine.Mul(engine.Mul(centered, invStd), scale) + bias via engine.Add
-  Update gpuBatchLayerCache: change centered1/2 from [][]float32 to *tensor.TensorNumeric[float32],
-  invStd1/2 from []float32 to *tensor.TensorNumeric[float32].
-  Cache xInput (pre-norm) for backward. Remove matFromTensor/tensorFromMat calls for layer norm.
-  Acceptance: go test -run TestPatchTST passes. Gradient check within 1e-3.
-
-### E50.2: Layer Norm Backward on Engine
-
-- [x] T50.2.1 Implement engine-based layer norm backward  Owner: TBD  Est: 3h  verifies: [UC-TS01]  DONE 2026-03-31
-  Deps: T50.1.1
-  File: timeseries/patchtst_encoder.go (layerNormBackwardWithEngine)
-  Replaced layerNormBackwardF32 with engine ops. Also removed matFromTensor,
-  tensorFromMat, copyMatToTensor (all now unused). The backward formula:
-  (1) dScale += engine.Sum(dOut * centered * invStd, axis=0)
-  (2) dBias += engine.Sum(dOut, axis=0)
-  (3) dNorm = engine.Mul(dOut, scale)  -- broadcast [1, dModel] over [rows, dModel]
-  (4) dotScaleGrad = engine.Sum(dNorm * centered, -1, keepDims=true)
-  (5) dotMeanGrad = engine.Sum(dNorm, -1, keepDims=true)
-  (6) dInput = invStd * (dNorm - (dotMeanGrad + centered * invStd^2 * dotScaleGrad) / dModel)
-  All operations use engine.Mul, engine.Sub, engine.Sum, engine.MulScalar, engine.Add.
-  Acceptance: Gradient check (numerical vs analytical) within 1e-3. go test passes.
-
-### E50.3: GELU Forward/Backward on Engine
-
-- [x] T50.3.1 Implement engine-based GELU forward and backward  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30
-  File: timeseries/patchtst_gpu_train.go
-  GELU forward: gelu(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
-  Using engine ops: engine.Mul, engine.MulScalar, engine.Add, engine.Tanh, engine.AddScalar.
-  Cache the tanh result and the inner term for backward.
-  GELU backward: dgelu = 0.5 * (1 + tanh_val) + 0.5 * x * (1 - tanh_val^2) * sqrt(2/pi) * (1 + 3*0.044715*x^2)
-  Using engine.Mul, engine.MulScalar, engine.Sub, engine.Add.
-  Update lc.ffn1PreAct caching to store values needed for backward.
-  Remove geluScalar and geluDerivF32 CPU functions.
-  Acceptance: Gradient check within 1e-3. go test passes. Forward output matches CPU within 1e-5.
-
-### E50.4: Cache Weight Transposes
-
-- [x] T50.4.1 Pre-compute weight transposes before batch loop  Owner: TBD  Est: 1h  verifies: [UC-TS01]  DONE 2026-03-30 0fbaf2e8
-  File: timeseries/patchtst_gpu_train.go
-  Before the epoch loop, compute and store: qWT, kWT, vWT, oWT, ffn1WT, ffn2WT, headWT
-  for each encoder layer. These are used in the backward pass but recomputed every batch.
-  Add a gpuWeightTransposes struct to hold them. Recompute only when weights change (once
-  per optimizer step, not once per batch -- but since we update weights every batch,
-  recompute at start of each batch iteration instead of inside backward pass to avoid
-  redundant computation when multiple backward calls reference the same weight).
-  Actually: weights change every batch via AdamW, so compute transposes once at the start
-  of each backward pass (not inside the per-layer loop). This saves nLayers-1 redundant
-  transposes per weight matrix per batch.
-  Acceptance: go test passes. No behavioral change.
-
-### E50.5: Validation and Benchmark
-
-- [x] T50.5.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-03
-  Deps: T50.1.1, T50.2.1, T50.3.1, T50.4.1
-  Acceptance: go vet ./timeseries/ clean. go test ./timeseries/ passes.
-
-- [x] T50.5.2 Benchmark on DGX Spark  DONE 2026-04-09  verifies: [UC-TS01]
-  28K×20×10: 40.3s (4.0s/epoch). Target met (<6s/epoch). 14.8x vs v1.37 (596s).
-  See docs/benchmarks.md and devlog 2026-04-09 entries.
-
-### E50 Parallel Work
-
-#### Waves
-
-##### Wave E50-1: Independent implementations (3 agents)
-
-- [x] T50.1.1 Layer norm forward on engine  DONE 2026-03-30
-- [x] T50.3.1 GELU forward/backward on engine  DONE 2026-03-30
-- [x] T50.4.1 Cache weight transposes  DONE 2026-03-30 0fbaf2e8
-
-##### Wave E50-2: Dependent + validation (3 agents)
-
-- [x] T50.2.1 Layer norm backward on engine  Deps: T50.1.1  DONE 2026-03-31
-- [x] T50.5.1 Run go vet and tests  Deps: T50.1.1, T50.2.1, T50.3.1, T50.4.1  DONE 2026-04-03
-- [x] T50.5.2 Benchmark on DGX Spark  DONE 2026-04-09
+6/6 tasks done. Replaced CPU bottleneck ops (layer norm fwd/bwd, GELU fwd/bwd, weight
+transposes) with engine ops. 28K×20×10: 40.3s (4.0s/epoch), 14.8x vs v1.37.
+PRs #292+. Detailed task lists removed during /tidy. See git history.
 
 ---
 
-## E51: CUDA Graph Capture for Training (GitHub Issue #278)
+## E51: CUDA Graph Capture for Training (COMPLETE)
 
-**Problem:** PatchTST GPU training takes 63.7s/epoch on DGX Spark despite channel batching
-and batched attention. The bottleneck is Go-to-GPU synchronization: ~500 engine op calls per
-batch, each requiring a Go round-trip. Moving ops to engine (E50) made things 2x slower
-because element-wise engine ops have more launch overhead than CPU for small tensors.
-The fundamental fix: capture the entire forward+backward pass as a CUDA graph and replay it,
-eliminating ALL intermediate synchronization.
-
-**Goal:** Capture the PatchTST forward+backward pass as a CUDA graph. First batch runs normally
-(warmup), second batch captures, subsequent batches replay. Target: <6s/epoch (10x speedup).
-
-**Decision rationale:** docs/adr/077-cuda-graph-training-capture.md
-
-**Key decisions:**
-- Drop partial batches (not pad) for fixed tensor shapes during replay
-- Capture combined forward+backward graph (one graph per batch iteration)
-- Implement in zerfoo training loop, not in ztensor graph compiler
-- Pre-allocate all tensors before capture; warmup on first batch
-- AdamW and loss computation stay outside graph (they call .Data() which triggers D2H)
-
-**Closes:** GitHub issue #278
-
-### E51.1: Drop Partial Batches
-
-- [x] T51.1.1 Skip partial final batch in trainWindowedGPU  Owner: TBD  Est: 0.5h  verifies: [UC-TS01]  DONE 2026-03-30
-  File: timeseries/patchtst_gpu_train.go
-  When nSamples % batchSize != 0, stop the batch loop before the partial batch.
-  Change `for start := 0; start < nSamples; start += batchSize` to stop at
-  `nSamples - (nSamples % batchSize)`. Log a warning if samples are dropped.
-  Acceptance: go test passes. Training on 28001 samples with batch=64 produces
-  same result as 28000 samples (last sample silently dropped).
-
-### E51.2: Pre-allocate Tensor Workspace
-
-- [x] T51.2.1 Pre-allocate all layer caches and intermediates before batch loop  Owner: TBD  Est: 2h  verifies: [UC-TS01]  DONE 2026-03-30
-  File: timeseries/patchtst_gpu_train.go
-  CUDA graph capture fails on cudaMalloc during capture. Currently, tensor.New
-  and engine ops allocate GPU memory on demand. Pre-allocate:
-  (1) gpuBatchForwardCache with all layer caches (normed1/2, q/k/v, scores, attnOut,
-  ffn1PreAct, ffn1Out, centered1/2, invStd1/2, xResidual, xAfterAttn, flatInput, patches)
-  (2) All backward intermediates (dX, dFlat, dChanOut, dAttnProjOut, etc.)
-  Use engine ops with dst parameter (pre-allocated destination) to avoid new allocations.
-  Acceptance: go test passes. No new tensor.New or engine allocations inside the
-  forward/backward block (verify by counting allocations in a test).
-
-### E51.3: Add Engine Capture/Replay API
-
-- [x] T51.3.1 Add BeginCapture/EndCapture/Replay to Engine interface  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-03-30 ztensor PR #46
-  Repo: ztensor. File: compute/engine.go, compute/gpu_engine.go, compute/cpu_engine.go
-  Add three methods to the Engine[T] interface:
-  - `BeginCapture(ctx) error` -- starts CUDA stream capture (no-op on CPU engine)
-  - `EndCapture(ctx) (GraphHandle, error)` -- ends capture, returns opaque handle
-  - `ReplayGraph(ctx, GraphHandle) error` -- replays captured graph (on CPU: re-execute ops)
-  GraphHandle is an interface{} (opaque, engine-specific).
-  GPUEngine implementation calls cuda.StreamBeginCapture/EndCapture/GraphInstantiate/GraphLaunch.
-  CPUEngine implementation records op sequence during capture, replays during replay.
-  Acceptance: GPU engine captures and replays a simple MatMul+Add sequence correctly.
-  Unit test: capture MatMul+Add, replay 3 times, verify output matches non-captured execution.
-
-### E51.4: Wire Graph Capture into Training Loop
-
-- [x] T51.4.1 Integrate capture/replay into trainWindowedGPU  Owner: TBD  Est: 3h  verifies: [UC-TS01]  DONE 2026-03-30
-  Deps: T51.1.1, T51.2.1, T51.3.1
-  File: timeseries/patchtst_gpu_train.go
-  Training loop structure becomes:
-  ```
-  batch 0: warmup (normal execution, establishes tensor sizes)
-  batch 1: engine.BeginCapture() -> forward+backward -> engine.EndCapture() -> graphHandle
-  batch 2..N: engine.ReplayGraph(graphHandle) (tensors updated in-place)
-  ```
-  Before each replay: update input patches tensor and zero gradients (these are writes
-  to pre-allocated buffers, not new allocations -- compatible with graph replay).
-  After each replay: run AdamW on CPU (outside graph).
-  Handle epoch boundaries: recapture at start of each epoch if shuffling changes data order
-  (graph replays with same tensor addresses, data content changes via memcpy before replay).
-  Acceptance: Training convergence matches non-captured execution within 1e-4 tolerance.
-  Gradient check passes. go test -run TestPatchTST passes.
-
-### E51.5: Validation and Benchmark
-
-- [x] T51.5.1 Run go vet and full test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-03
-  Deps: T51.4.1
-  Acceptance: go vet clean. go test ./timeseries/ passes. go test ./... passes in ztensor.
-
-- [x] T51.5.2 Benchmark on DGX Spark  DONE 2026-04-09  verifies: [UC-TS01]
-  28K×20×10: 40.3s (4.0s/epoch). Target met (<6s/epoch, <60s total).
-  Note: graph capture is disabled (canCapture=false, see T85.1.4 / T54.3.1);
-  performance gains from E50 kernel elimination + E85 dst-memory reuse.
-  See docs/benchmarks.md and devlog 2026-04-09 entries.
-
-### E51 Parallel Work
-
-#### Waves
-
-##### Wave E51-1: Foundation (3 agents)
-
-- [x] T51.1.1 Drop partial batches  DONE 2026-03-30
-- [x] T51.2.1 Pre-allocate tensor workspace  DONE 2026-03-30
-- [x] T51.3.1 Add Engine capture/replay API (ztensor repo)  DONE 2026-03-30
-
-##### Wave E51-2: Integration + validation (3 agents)
-
-- [x] T51.4.1 Wire graph capture into training loop  Deps: T51.1.1, T51.2.1, T51.3.1  DONE 2026-03-30
-- [x] T51.5.1 Run go vet and tests  Deps: T51.4.1  DONE 2026-04-03
-- [x] T51.5.2 Benchmark on DGX Spark  DONE 2026-04-09
+6/6 tasks done. Implemented BeginCapture/EndCapture/Replay in ztensor Engine,
+pre-allocated tensor workspace, wired into PatchTST training loop. Graph capture
+disabled (canCapture=false) but perf target met via E50+E85 dst-reuse: 28K×20×10
+in 40.3s (4.0s/epoch). ADR-077. Detailed task lists removed during /tidy.
 
 ---
 
@@ -3400,45 +2918,10 @@ Deps: Wave E63-1
 
 ---
 
-## E64: GPU Engine File Decomposition (ztensor)
+## E64: GPU Engine File Decomposition (COMPLETE)
 
-**Problem:** compute/gpu_engine.go is 4,318 lines with 94 methods -- a god object.
-After E63 consolidates quantized matmul, the file will be ~2,900 lines. Split it
-into focused files for maintainability.
-
-**Goal:** Split gpu_engine.go into 5 files. No API changes. Pure reorganization.
-
-**Repo:** github.com/zerfoo/ztensor (separate repo, separate commits)
-**Deps:** E63 (consolidate before splitting)
-
-- [x] T64.1.1 Split gpu_engine.go into focused files  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-06 ztensor PR #77
-  Deps: E63 complete
-  Split into:
-  - gpu_engine.go: 2,245 lines (core struct, New, lifecycle, dispatch, quantized matmul)
-  - gpu_engine_matmul.go: 240 lines (shared matmul helpers, created in E63)
-  - gpu_engine_elementwise.go: 400 lines (add/sub/mul/div/scalar/fused ops)
-  - gpu_engine_reduction.go: 221 lines (softmax/sum/argmax/topk)
-  - gpu_engine_memory.go: 695 lines (copy/zero/reshape/gather/split/concat)
-  Acceptance: go build ./... clean. go test ./compute/ passes. No exported API
-  changes. Each file under 1,000 lines.
-
-- [x] T64.1.2 Run full ztensor test suite  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-06 (go test -race ./... passes, CI green)
-  Deps: T64.1.1
-  Acceptance: go test -race ./... passes.
-
-- [x] T64.1.3 Run linters  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-06 (go vet clean, CI green)
-  Deps: T64.1.1
-  Acceptance: go vet clean. golangci-lint clean.
-
-### E64 Parallel Work
-
-#### Wave E64-1: Split (1 agent) -- COMPLETE
-- [x] T64.1.1 File decomposition  DONE 2026-04-06
-
-#### Wave E64-2: Validate (2 agents) -- COMPLETE
-Deps: Wave E64-1
-- [x] T64.1.2 Test suite  DONE 2026-04-06
-- [x] T64.1.3 Linters  DONE 2026-04-06
+3/3 tasks done. Split ztensor gpu_engine.go (4,318 lines) into 5 focused files:
+core, matmul, elementwise, reduction, memory. ztensor PR #77. See git history.
 
 ---
 
@@ -3496,43 +2979,12 @@ Deps: Wave E64-1
 
 ---
 
-## E74: Timeseries Backward Pass Composition
+## E74: Timeseries Backward Pass Composition (COMPLETE)
 
-**Problem:** The timeseries/ package has 2,048 lines of manually-maintained backward
-pass code across 3 files (patchtst_backward.go, itransformer_backward.go,
-timemixer_backward.go) plus encoderBackwardF64 in patchtst_encoder.go. All backward
-passes use raw float64 loops with zero composition from layers/ or engine operations.
-E67 migrated the forward paths but backward passes remain as a parallel ML framework.
-No graph.Backward() API or functional backward ops exist yet.
-
-**Goal:** Add backward operation support to layers/functional, then migrate all 3
-backward files to compose from functional backward ops. Eliminate raw f64 backward
-loops. Target: ~1,500 lines of raw backward computation replaced by functional calls.
-
-**Prerequisite:** E66 (layers/functional API) is COMPLETE.
-
-### E74.1: Functional Backward API
-
-- [x] T74.1.1 Add functional.LinearBackward  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-03 PR #329
-- [x] T74.1.2 Add functional.LayerNormBackward  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-03 PR #329
-- [x] T74.1.3 Add functional.GELUBackward  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-03 PR #329
-- [x] T74.1.4 Add functional.SoftmaxBackward  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-03 PR #329
-- [x] T74.1.5 Add functional.MultiHeadAttentionBackward  Owner: TBD  Est: 4h  verifies: [infrastructure]  DONE 2026-04-03 PR #330
-- [x] T74.1.6 Add functional.MLPBackward  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-03 PR #330
-- [x] T74.1.7 Unit tests for all backward functional ops  DONE 2026-04-03 PR #331  Owner: TBD  Est: 2h  verifies: [infrastructure]
-
-### E74.2: Migrate Backward Files
-
-- [x] T74.2.1 Migrate patchtst_backward.go to functional backward ops  DONE 2026-04-03 PR #331  Owner: TBD  Est: 4h  verifies: [UC-TS01]
-- [x] T74.2.2 Migrate encoderBackwardF64 in patchtst_encoder.go  DONE 2026-04-03 PR #331  Owner: TBD  Est: 4h  verifies: [UC-TS01]
-- [x] T74.2.3 Migrate itransformer_backward.go to functional backward ops  DONE 2026-04-03 PR #331  Owner: TBD  Est: 3h  verifies: [UC-TS01]
-- [x] T74.2.4 Migrate timemixer_backward.go to functional backward ops  DONE 2026-04-03 PR #331  Owner: TBD  Est: 3h  verifies: [UC-TS02]
-
-### E74.3: Validation
-
-- [x] T74.3.1 Full timeseries test suite with race detector  DONE 2026-04-03  Owner: TBD  Est: 1h  verifies: [UC-TS01, UC-TS02]
-- [x] T74.3.2 Run linters  DONE 2026-04-03  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
-- [x] T74.3.3 Verify line count reduction  DONE 2026-04-03 (+127 lines from bridge helpers)  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+14/14 tasks done. Added 7 functional backward ops (Linear, LayerNorm, GELU, Softmax,
+MultiHeadAttention, MLP + unit tests) then migrated patchtst_backward.go,
+itransformer_backward.go, timemixer_backward.go, and encoderBackwardF64 to compose
+from them. PRs #329, #330, #331. Detailed task lists removed during /tidy.
 
 ---
 
@@ -3577,243 +3029,13 @@ Deps: E74 complete
 
 ---
 
-## E85: Fix GPU Training Memory Leak in PatchTST Encoder Backward (CRITICAL)
+## E85: Fix GPU Training Memory Leak in PatchTST Encoder Backward (COMPLETE)
 
-**Problem:** `trainWindowedGPU` (timeseries/patchtst_gpu_train.go) leaks GPU memory across epochs.
-The benchmark hits `cudaMalloc failed: out of memory` in `gpu encoder bwd` (or `gpu encoder fwd`)
-at 10+ epochs once the dataset reaches ~10K samples x 20 channels. Short runs (3 epochs)
-work fine and scale linearly to 25K samples at ~5.9s/epoch.
-
-**Reproducer (DGX Spark GB10):**
-```
-ssh ndungu@192.168.86.29 'cd /home/ndungu/zerfoo && ./bench_train -samples 10000 -channels 20 -epochs 10 -batch-size 64 -out /tmp/leak.log'
-# Expected: 10 epoch loss curve in ~24s
-# Actual: cudaMalloc OOM in gpu encoder bwd after ~14min
-```
-
-**Evidence matrix (all measured 2026-04-06 on DGX Spark GB10):**
-
-| Samples | Channels | Epochs | Result |
-|---------|----------|--------|--------|
-| 100     | 5        | 3      | OK 0.29s |
-| 1,000   | 20       | 3      | OK 0.81s |
-| 10,000  | 20       | 3      | OK 7.3s  |
-| 20,000  | 20       | 3      | OK 14.4s |
-| 25,000  | 20       | 3      | OK 17.6s |
-| 10,000  | 20       | 10     | FAIL: OOM in gpu encoder bwd (14min) |
-| 25,000  | 20       | 10     | FAIL: hung in CUDA call |
-| 28,000  | 20       | 10     | FAIL: OOM in gpu encoder fwd (23min) |
-
-**Regression:** v1.38.4 reportedly trained 28K x 20ch x 10 epochs in 128.5s
-(docs/benchmarks.md:22). That result is no longer reproducible after the E50/E51 work.
-
-**Goal:** Identify the leak, fix it, restore the 28K x 20ch x 10 epoch benchmark on DGX Spark.
-Unblocks T50.5.2 and T51.5.2.
-
-**Repo:** zerfoo
-**Files:** timeseries/patchtst_gpu_train.go (primary), timeseries/patchtst_encoder.go,
-timeseries/patchtst_backward.go, optimizer/adamw.go (if optimizer state grows)
-**Reference:** docs/devlog.md "GPU training memory leak in PatchTST encoder backward (CRITICAL)"
-docs/adr/077-cuda-graph-training-capture.md
-
-### E85.1: Diagnosis
-
-- [ ] T85.1.1 Add per-epoch GPU allocation profiling to bench_train  Owner: TBD  Est: 1h  verifies: [infrastructure]
-  File: cmd/bench_train/main.go
-  Wrap each epoch with allocation counters: number of `tensor.New` calls, total GPU bytes
-  allocated, total bytes freed. Use `runtime.ReadMemStats` for Go heap and ztensor's
-  GPU allocator stats if exposed (check compute/gpu_engine.go for an alloc counter API,
-  add one if missing).
-  Acceptance: Bench output shows epoch N: alloc=X bytes, free=Y bytes, net=Z bytes.
-  If net grows monotonically across epochs, leak is confirmed and quantified.
-
-- [ ] T85.1.2 Run bench_train at 10K x 20ch x 5 epochs with profiling enabled  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
-  Deps: T85.1.1
-  Run on DGX Spark with the new profiling. Confirm net allocation per epoch.
-  Acceptance: Numerical evidence of leak (e.g., +200MB/epoch). Documented in devlog.
-
-- [x] T85.1.3 Audit trainWindowedGPU for tensor.New / engine.New calls inside epoch loop  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-07
-  Found ~38 leaked allocations per batch across patchtst_gpu_train.go lines 510-747.
-  Full breakdown in devlog "GPU training memory leak — root cause identified".
-
-- [x] T85.1.4 Verify CUDA graph capture (T51.4.1) is engaged for encoder backward  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-07
-  Capture is DISABLED at line 453 (`canCapture = false`). Comment at 442-450 explains
-  the small forward-prefix graph is slower than no-capture; full encoder capture is
-  blocked on E55 (fused encoder kernel). So per-batch ops execute as discrete kernel
-  launches with all their leaked allocations.
-
-### E85.2: Fix (refined 2026-04-07 with diagnosis findings)
-
-- [x] T85.2.0 Inventory ztensor compute.Engine for dst-param variants  DONE 2026-04-07
-  All 9 required ops accept variadic `dst ...*tensor.TensorNumeric[T]` on the
-  Engine interface (compute/engine.go) AND in GPUEngine impls (route through
-  internal `gpu<Op>(..., dst...)` helpers):
-  | Op        | Interface (engine.go) | GPU impl |
-  |-----------|-----------------------|----------|
-  | Add       | :179 | gpu_engine_elementwise.go:20 |
-  | Sub       | :184 | gpu_engine_elementwise.go:25 |
-  | Mul       | :189 | gpu_engine_elementwise.go:30 |
-  | MatMul    | :199 | gpu_engine.go:733 |
-  | Transpose | :204 | gpu_engine_memory.go:18 |
-  | Sum       | :211 | gpu_engine_reduction.go:17 |
-  | Tanh      | :232 | gpu_engine_elementwise.go:60 |
-  | MulScalar | :270 | gpu_engine_elementwise.go:75 |
-  | Reshape   | :324 | gpu_engine_memory.go:614 |
-  Conclusion: **Wave E85-2b (T85.2.0a) is not needed.** Proceed directly to E85-3.
-
-- [ ] T85.2.0a Add missing dst-param variants to ztensor Engine (if needed)  Owner: TBD  Est: 4h  verifies: [infrastructure]
-  Deps: T85.2.0
-  Repo: ztensor
-  For each op identified in T85.2.0 as missing a dst variant, add one. Pattern:
-  - GPU: write into dst's GPU storage, no new allocation
-  - CPU: write into dst's slice, no new allocation
-  Add unit tests for each new dst variant.
-  Acceptance: ztensor PR merged. Bumped version. zerfoo go.mod updated.
-
-- [x] T85.2.1 Pre-allocate per-batch transpose buffers in gpuBatchForwardCache  DONE 2026-04-07  Owner: agent-a-trainloop
-  Deps: T85.2.0a
-  File: timeseries/patchtst_gpu_train.go
-  Extend `gpuBatchForwardCache` struct (line 404) to include:
-  - `headWT *tensor.TensorNumeric[float32]` (shape [outDim, headIn])
-  - `layerWTs []layerTransposes` with pre-allocated qWT/kWT/vWT/oWT/ffn1WT/ffn2WT per layer
-  Allocate these ONCE before the epoch loop using `tensor.New` with backing []float32.
-  Replace lines 510, 519-540 to use `m.engine.Transpose(ctx, src, perm, dst)` writing
-  into the pre-allocated buffers.
-  Eliminates: 1 + 6N transposes per batch (13 for 2-layer model).
-  Acceptance: Build passes. 10K x 20ch x 10 epochs runs without OOM (basic smoke test
-  on DGX). Loss curve matches existing 3-epoch convergence.
-
-- [x] T85.2.2 Pre-allocate forward-prefix output buffers (embedded, emb3d, x)  DONE 2026-04-07  Owner: agent-a-trainloop
-  Deps: T85.2.0a
-  File: timeseries/patchtst_gpu_train.go
-  Extend gpuBatchForwardCache with:
-  - `embedded *tensor.TensorNumeric[float32]` (shape [bsC*numPatches, dModel])
-  - `emb3d *tensor.TensorNumeric[float32]` (shape [bsC, numPatches, dModel])
-  - `posEmb3d *tensor.TensorNumeric[float32]` (shape [1, numPatches, dModel])
-  - `xForward *tensor.TensorNumeric[float32]` (shape [totalRows, dModel])
-  - `headOut *tensor.TensorNumeric[float32]` (shape [bsC, outDim])
-  Refactor lines 547-572 and 617-621 to use dst-param variants.
-  Eliminates: ~6 forward-prefix tensors per batch.
-  Acceptance: Build passes. Forward pass output bit-identical to pre-fix.
-
-- [x] T85.2.3 Pre-allocate backward intermediate buffers  DONE 2026-04-07  Owner: agent-a-trainloop
-  Deps: T85.2.0a
-  File: timeseries/patchtst_gpu_train.go
-  Extend gpuBatchForwardCache (or new gpuBatchBackwardCache) with:
-  - `flatInputT, dHW, dHB, dHBR, dFlat, dX *tensor.TensorNumeric[float32]`
-  - `patchesT, dPEW, dPEB, dPEBR *tensor.TensorNumeric[float32]`
-  Refactor lines 670-747 to use dst-param variants.
-  Eliminates: ~10 backward intermediates per batch.
-  Acceptance: Build passes. Gradient values bit-identical to pre-fix (compare via test).
-
-- [x] T85.2.4 Audit and fix per-batch allocations in encoderForward / encoderBackward  DONE 2026-04-07  Owner: agent-b-encoder (recovered during integration)
-  Deps: T85.2.0a
-  Files: timeseries/patchtst_encoder.go, timeseries/patchtst_backward.go
-  encoderForward (line 605) and encoderBackward (line 709) are called per batch and
-  contain MANY internal allocations (attention scores, softmax, FFN intermediates,
-  layer norm caches). Each layer iteration produces its own set.
-  Read both functions end-to-end, list all allocation sites, extend gpuBatchLayerCache
-  to hold pre-allocated buffers for each, refactor to use dst-param variants.
-  This is the largest single piece of E85.2 work — likely 40+ allocation sites.
-  Acceptance: Per-batch allocation count from these functions drops to zero (verify
-  with T85.1.1 profiler if added).
-
-- [x] T85.2.5 Verify gradient pointer semantics (gradTs vs grads.X reassignment)  DONE 2026-04-07  Owner: agent-a-trainloop
-  Deps: T85.2.3
-  File: timeseries/patchtst_gpu_train.go lines 678, 691, 735, 747, 759, 787
-  After T85.2.3, the `grads.headW = engine.Add(...)` reassignments should disappear
-  (replaced with in-place dst variant). Verify that `gradTs` (line 430) and `grads.X`
-  fields point to the SAME tensor objects after each batch. Add a test or assertion.
-  This also resolves the latent correctness concern about stale gradients in
-  AdamW (line 787) and grad clipping (line 759).
-  Acceptance: Test confirms grads.headW == gradTs[headWIdx] after backward step.
-
-- [x] T85.2.6 Run gofmt + go vet + golangci-lint on changed files  DONE 2026-04-07
-  Deps: T85.2.1, T85.2.2, T85.2.3, T85.2.4, T85.2.5
-  Acceptance: Zero lint findings. go vet clean.
-
-- [x] T85.2.7 Run timeseries unit tests with race detector  DONE 2026-04-07
-  All timeseries tests pass; TestPatchTST_TrainWindowed_EngineConvergence and
-  TestPatchTST_BatchedTrainConvergence green. Full repo: 136/136 packages ok.
-  Deps: T85.2.6
-  Run: go test -race -timeout 300s ./timeseries/...
-  Specifically verify: TestPatchTST_TrainWindowed_EngineConvergence, TestPatchTST_BatchedTrainConvergence
-  Acceptance: All pre-existing PatchTST tests pass. No new failures.
-
-### E85.3: Validation
-
-- [x] T85.3.1 Run 10K x 20ch x 10 epochs on DGX Spark  DONE 2026-04-09  verifies: [UC-TS01]
-  20K×20×5 in 15.0s (3.0s/epoch), convergence 99.2%. No OOM. Commit 2ecf473a.
-
-- [x] T85.3.2 Run 28K x 20ch x 10 epochs on DGX Spark (T50.5.2 and T51.5.2 benchmark)  DONE 2026-04-09  verifies: [UC-TS01]
-  28K×20×10 in 40.3s (4.0s/epoch), convergence 99.9%. No OOM.
-  v1.38.4 baseline was 128.5s → 3.2x faster. Documented in docs/benchmarks.md and devlog.
-
-- [x] T85.3.3 Mark T50.5.2 and T51.5.2 complete with results  DONE 2026-04-09  verifies: [infrastructure]
-  Plan updated, benchmarks.md updated, devlog entries from Wave 7 + bisect session.
-
-### E85 Parallel Work (refined 2026-04-07)
-
-#### Wave E85-1: Diagnosis — DONE 2026-04-07
-- [x] T85.1.3 Audit allocations in trainWindowedGPU — DONE
-- [x] T85.1.4 Verify graph capture engaged (it is NOT — disabled at line 453) — DONE
-- T85.1.1, T85.1.2 (runtime profiling) — SKIPPED, not needed
-
-#### Wave E85-2a: ztensor API inventory — DONE 2026-04-07
-- [x] T85.2.0 Inventory ztensor compute.Engine for dst-param variants
-  All 9 required ops already have dst variants. See task entry for table.
-
-#### Wave E85-2b: ztensor API extension — SKIPPED (not needed)
-T85.2.0 confirmed all dst variants exist; no ztensor changes required.
-
-#### Wave E85-3: Fix per-batch leaks (5 agents in parallel)
-Deps: T85.2.0a (or T85.2.0 if no extension needed)
-All 5 tasks touch timeseries/patchtst_gpu_train.go but in distinct sections.
-Worktree isolation handles the file overlap. Designate T85.2.4 (encoder helpers,
-different files) as primary owner of patchtst_encoder.go.
-- [ ] T85.2.1 Pre-allocate transpose buffers (lines 510-542)
-- [ ] T85.2.2 Pre-allocate forward-prefix buffers (lines 547-621)
-- [ ] T85.2.3 Pre-allocate backward intermediates (lines 670-747)
-- [ ] T85.2.4 Audit + fix encoderForward / encoderBackward (largest scope)
-- [ ] T85.2.5 Verify gradient pointer semantics (small audit + assertion)
-
-#### Wave E85-4: Lint + unit tests (1 agent)
-Deps: E85-3 merged
-- [ ] T85.2.6 gofmt / go vet / golangci-lint
-- [ ] T85.2.7 go test -race ./timeseries/
-
-#### Wave E85-5: DGX validation (1 agent)
-Deps: E85-4 complete, code merged to main, DGX synced
-Run benchmarks SEQUENTIALLY (not concurrent — that overloaded DGX last session).
-- [ ] T85.3.1 Run 10K x 20ch x 10 epochs on DGX (smoke test for fix)
-- [ ] T85.3.2 Run 28K x 20ch x 10 epochs on DGX (T50.5.2 / T51.5.2 benchmark)
-- [ ] T85.3.3 Update plan.md, benchmarks.md, devlog.md with results
-
-### E85 Next-Session Starter Checklist
-
-Use this exact sequence when resuming E85 in a fresh session:
-
-1. **Read context** (in order):
-   - docs/plan.md section "E85: Fix GPU Training Memory Leak" (this section)
-   - docs/devlog.md entry "GPU training memory leak — root cause identified"
-   - timeseries/patchtst_gpu_train.go lines 344-851 (full trainWindowedGPU)
-
-2. **Start Wave E85-2a:** Switch to ztensor repo, read compute/engine.go, list which
-   ops have a dst-parameter variant. Check Transpose, MatMul, Add, Sum, Reshape,
-   MulScalar, Sub, Mul, Tanh. Write findings to a comment on PR #346 or a new file.
-
-3. **If dst variants are missing** (likely for some): file a ztensor PR adding them
-   before touching zerfoo. Pattern is documented in compute/engine.go for ops that
-   already have dst variants (look for any `_, err := e.SomeOp(ctx, a, b, dst)` call).
-
-4. **If dst variants exist:** start Wave E85-3 in zerfoo. T85.2.4 is the largest
-   piece — start it first or assign to the strongest agent.
-
-5. **Critical reminder for DGX validation (T85.3.x):**
-   - DO NOT run multiple bench_train processes simultaneously. Last session this
-     overloaded the DGX (load avg 18+, sshd unresponsive for 30+ min).
-   - Run benchmarks ONE AT A TIME with `-out /tmp/log` for unbuffered file output.
-   - Use `pgrep bench_train` between runs to confirm cleanup.
+Root cause: ~38 leaked GPU tensor allocations per batch in trainWindowedGPU.
+Fix: pre-allocated dst-param variants for transpose, forward-prefix, backward,
+and encoder fwd/bwd buffers (ztensor#84/#85). DGX validation: 28K×20×10 in 40.3s
+(4.0s/epoch), 3.2x vs v1.38.4 (128.5s), convergence 99.9%, no OOM.
+Detailed task lists removed during /tidy. See git history and devlog 2026-04-07.
 
 ---
 
