@@ -1,6 +1,7 @@
 package inference
 
 import (
+	"context"
 	"testing"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -780,4 +781,197 @@ func TestBuildGemma4EdgeGraph_KVSharing(t *testing.T) {
 	}
 
 	assertGraphForwardNonNaN(t, g, cfg.VocabSize)
+}
+
+// TestPLECombinedProducer_SliceBuffersStable verifies the ADR-088 invariant
+// that pleCombinedProducer reuses the same per-layer slice tensor objects
+// across Forward calls with the same shape, but refreshes their contents
+// when the input tokens change. This property is required for CUDA graph
+// capture to work: the captured graph reads from fixed device addresses,
+// so the slice tensors (and their underlying storage) must outlive the
+// capture and be updated in place on each decode step.
+func TestPLECombinedProducer_SliceBuffersStable(t *testing.T) {
+	const (
+		numLayers = 3
+		pleDim    = 4
+		hidden    = 8
+		vocab     = 16
+	)
+	totalPLE := numLayers * pleDim
+
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	// Fill tensor with deterministic values based on a seed so both Forward
+	// calls produce valid outputs.
+	fill := func(shape []int, seed float32) *tensor.TensorNumeric[float32] {
+		n := 1
+		for _, d := range shape {
+			n *= d
+		}
+		data := make([]float32, n)
+		for i := range data {
+			data[i] = seed + 0.01*float32(i)
+		}
+		tn, err := tensor.New[float32](shape, data)
+		if err != nil {
+			t.Fatalf("tensor.New %v: %v", shape, err)
+		}
+		return tn
+	}
+
+	pleEmbed := fill([]int{vocab, totalPLE}, 1.0)
+	pleModelProj := fill([]int{hidden, totalPLE}, 2.0)
+
+	producer, err := newPLECombinedProducer[float32](engine, pleEmbed, pleModelProj, numLayers, pleDim, hidden)
+	if err != nil {
+		t.Fatalf("newPLECombinedProducer: %v", err)
+	}
+
+	// First pass: tokens 1, 2.
+	ids1 := fill([]int{1, 2}, 1.0)
+	// Round fill() output to ints in the valid token range.
+	{
+		d := ids1.Data()
+		d[0], d[1] = 1, 2
+	}
+	hiddenIn := fill([]int{1, 2, hidden}, 0.5)
+
+	if _, err := producer.Forward(context.Background(), ids1, hiddenIn); err != nil {
+		t.Fatalf("first Forward: %v", err)
+	}
+	if producer.tokenPLESlices == nil || len(producer.tokenPLESlices) != numLayers {
+		t.Fatalf("first Forward did not initialise tokenPLESlices: %v", producer.tokenPLESlices)
+	}
+	if producer.modelProjSlices == nil || len(producer.modelProjSlices) != numLayers {
+		t.Fatalf("first Forward did not initialise modelProjSlices: %v", producer.modelProjSlices)
+	}
+
+	// Capture first-pass state: tensor-pointer identity and a copy of contents
+	// so we can verify (1) the same tensor objects are reused next pass, and
+	// (2) the contents differ after a second pass with different tokens.
+	tokenPtrs := make([]*tensor.TensorNumeric[float32], numLayers)
+	projPtrs := make([]*tensor.TensorNumeric[float32], numLayers)
+	tokenSnapshot := make([][]float32, numLayers)
+	projSnapshot := make([][]float32, numLayers)
+	for i := 0; i < numLayers; i++ {
+		tokenPtrs[i] = producer.tokenPLESlices[i]
+		projPtrs[i] = producer.modelProjSlices[i]
+		tokenSnapshot[i] = append([]float32(nil), producer.tokenPLESlices[i].Data()...)
+		projSnapshot[i] = append([]float32(nil), producer.modelProjSlices[i].Data()...)
+	}
+
+	// Second pass: tokens 3, 4 (different from first pass -> different
+	// tokenPLE contents). Same shape -> same buffers reused.
+	ids2 := fill([]int{1, 2}, 0.0)
+	{
+		d := ids2.Data()
+		d[0], d[1] = 3, 4
+	}
+
+	if _, err := producer.Forward(context.Background(), ids2, hiddenIn); err != nil {
+		t.Fatalf("second Forward: %v", err)
+	}
+
+	// (1) Stable pointers: the CUDA-graph replay invariant.
+	for i := 0; i < numLayers; i++ {
+		if producer.tokenPLESlices[i] != tokenPtrs[i] {
+			t.Fatalf("layer %d: tokenPLESlices tensor pointer changed (was %p, now %p); this breaks CUDA graph replay",
+				i, tokenPtrs[i], producer.tokenPLESlices[i])
+		}
+		if producer.modelProjSlices[i] != projPtrs[i] {
+			t.Fatalf("layer %d: modelProjSlices tensor pointer changed (was %p, now %p); this breaks CUDA graph replay",
+				i, projPtrs[i], producer.modelProjSlices[i])
+		}
+	}
+
+	// (2) Contents were refreshed: different tokens must produce different
+	// tokenPLE data.
+	anyTokenDiffered := false
+	for i := 0; i < numLayers; i++ {
+		newData := producer.tokenPLESlices[i].Data()
+		if len(newData) != len(tokenSnapshot[i]) {
+			t.Fatalf("layer %d: tokenPLESlices data length changed (was %d, now %d)",
+				i, len(tokenSnapshot[i]), len(newData))
+		}
+		for j := range newData {
+			if newData[j] != tokenSnapshot[i][j] {
+				anyTokenDiffered = true
+				break
+			}
+		}
+	}
+	if !anyTokenDiffered {
+		t.Fatalf("second Forward with different token ids did not refresh tokenPLESlices contents")
+	}
+}
+
+// TestPLECombinedProducer_SliceBuffersReallocateOnShapeChange verifies the
+// producer drops its cached slice buffers and allocates fresh ones when the
+// batch or seqLen changes (e.g. prefill [1,5] -> decode [1,1]). The stable
+// address guarantee only applies within a given shape regime.
+func TestPLECombinedProducer_SliceBuffersReallocateOnShapeChange(t *testing.T) {
+	const (
+		numLayers = 2
+		pleDim    = 4
+		hidden    = 8
+		vocab     = 16
+	)
+	totalPLE := numLayers * pleDim
+
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	fill := func(shape []int, seed float32) *tensor.TensorNumeric[float32] {
+		n := 1
+		for _, d := range shape {
+			n *= d
+		}
+		data := make([]float32, n)
+		for i := range data {
+			data[i] = seed + 0.01*float32(i)
+		}
+		tn, err := tensor.New[float32](shape, data)
+		if err != nil {
+			t.Fatalf("tensor.New %v: %v", shape, err)
+		}
+		return tn
+	}
+
+	pleEmbed := fill([]int{vocab, totalPLE}, 1.0)
+	pleModelProj := fill([]int{hidden, totalPLE}, 2.0)
+
+	producer, err := newPLECombinedProducer[float32](engine, pleEmbed, pleModelProj, numLayers, pleDim, hidden)
+	if err != nil {
+		t.Fatalf("newPLECombinedProducer: %v", err)
+	}
+
+	// Prefill-shaped pass: seqLen=5.
+	idsPrefill := fill([]int{1, 5}, 0.0)
+	for i := range idsPrefill.Data() {
+		idsPrefill.Data()[i] = float32(i % vocab)
+	}
+	hiddenPrefill := fill([]int{1, 5, hidden}, 0.5)
+	if _, err := producer.Forward(context.Background(), idsPrefill, hiddenPrefill); err != nil {
+		t.Fatalf("prefill Forward: %v", err)
+	}
+	prefillToken0 := producer.tokenPLESlices[0]
+	prefillShape := prefillToken0.Shape()
+	if len(prefillShape) != 3 || prefillShape[1] != 5 {
+		t.Fatalf("prefill slice unexpected shape: %v", prefillShape)
+	}
+
+	// Decode-shaped pass: seqLen=1 -> buffers must be reallocated.
+	idsDecode := fill([]int{1, 1}, 0.0)
+	idsDecode.Data()[0] = 1
+	hiddenDecode := fill([]int{1, 1, hidden}, 0.5)
+	if _, err := producer.Forward(context.Background(), idsDecode, hiddenDecode); err != nil {
+		t.Fatalf("decode Forward: %v", err)
+	}
+	decodeToken0 := producer.tokenPLESlices[0]
+	if decodeToken0 == prefillToken0 {
+		t.Fatalf("slice tensor pointer should have been reallocated on shape change but was reused")
+	}
+	decodeShape := decodeToken0.Shape()
+	if len(decodeShape) != 3 || decodeShape[1] != 1 {
+		t.Fatalf("decode slice unexpected shape: %v", decodeShape)
+	}
 }

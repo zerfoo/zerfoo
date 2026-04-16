@@ -2,6 +2,75 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-15: E99 T99.1.1 + T99.1.2 -- fix gemma4e CUDA graph capture vs pleCombinedProducer
+
+**Type:** finding
+**Tags:** gemma4e, cuda, graph-capture, e99, t99.1.1, t99.1.2, adr-088
+
+**Problem:** `ZERFOO_DISABLE_CUDA_GRAPH=1` is still needed for gemma4e
+on CUDA because the graph capture region includes
+`Gemma4PLECombinedProducer`, which (a) runs a CPU embedding gather and
+(b) calls `MulScalar` on the freshly-allocated CPUStorage tensor. CUDA
+rejects the resulting H2D cudaMemcpy on the capturing stream with
+`operation would make the legacy stream depend on a capturing
+blocking stream`.
+
+The obvious fix -- adding the producer to `nonCapturableOps` -- is not
+sufficient on its own, because each of 35 `Gemma4PLESlice` nodes (one
+per transformer layer) also does CPU work via `sliceLastDim` on the
+producer's cached CPU tensors. Marking the slicers non-capturable too
+would fragment the capture region into 35 single-layer runs and
+destroy the benefit of graph replay.
+
+**Root cause:** `pleCombinedProducer` computed the two full-width
+[B, S, numLayers*pleDim] tensors as CPU tensors and stashed them in
+Go struct fields. `pleSliceNode.Forward` read them via struct
+reference and extracted per-layer slices with `sliceLastDim` (calls
+`.Data()`, allocates new CPU tensor). Everything downstream of the
+producer was CPU-bound, so no layer-body capture region could form.
+
+**Fix (ADR-088 Option C):**
+
+1. ztensor: add `Gemma4PLECombinedProducer` to the `nonCapturableOps`
+   map in `graph/cuda_graph.go`. The producer naturally belongs in
+   pre-capture -- it runs once before the layer loop.
+2. zerfoo: in `inference/gemma4_edge_ple_nodes.go`, pre-slice the
+   full-width tensors into 35 per-layer slices inside
+   `pleCombinedProducer.Forward`. On the first call, allocate stable
+   GPU buffers via a no-op `MulScalar` (identity upload). On every
+   subsequent call, refresh the same GPU buffers in place via
+   `GPUStorage.CopyFromHost`. The buffers' device addresses stay
+   stable across decode steps, which is exactly what CUDA graph
+   replay requires.
+3. zerfoo: rewrite `pleSliceNode.Forward` to read the producer's
+   pre-computed GPU slices via Go struct fields. Downstream RMSNorm +
+   Add + MulScalar are now GPU-native, so the per-layer PLE combiner
+   is fully capturable.
+4. Removed now-unused CPU `sliceLastDim` helper.
+5. Added regression tests (`TestPLECombinedProducer_SliceBuffersStable`
+   and `_SliceBuffersReallocateOnShapeChange`) covering the stable
+   pointer guarantee and the shape-change reallocation path.
+
+**Shape-change handling:** If the batch or seqLen differ from the
+cached shape (e.g. prefill [1,5] -> decode [1,1]), the cached
+buffers are dropped and freshly allocated. Stability is scoped to a
+single shape regime, which matches CUDA graph capture semantics --
+capture is only attempted for decode (seqLen=1) and the graph is
+re-captured if the input shape changes.
+
+**Follow-up:** T99.1.3 verifies the fix on DGX by rerunning gemma4e
+generate on cuda without `ZERFOO_DISABLE_CUDA_GRAPH=1`. The manifest
+keeps the env var set for now; it is dropped only after DGX-side
+verification shows the capture lands cleanly and throughput meets or
+beats the uncaptured baseline (3.85 tok/s at commit `72828131`).
+
+Files touched: `ztensor/graph/cuda_graph.go` (additive map entry +
+comment), `zerfoo/inference/gemma4_edge_ple_nodes.go` (producer
+refactor + slice cache + dead-code removal),
+`zerfoo/inference/arch_gemma4_test.go` (two new regression tests),
+`zerfoo/docs/adr/088-gemma4-ple-cuda-graph-capture.md` (decision
+record).
+
 ## 2026-04-15: T92.5.3 Gemma 4 E2B DGX baseline: 3.85 tok/s (graph-capture disabled)
 
 **Type:** benchmark
