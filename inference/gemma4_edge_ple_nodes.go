@@ -446,9 +446,17 @@ func (n *pleSliceNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *t
 // 1-element tensor (`model.layers.N.layer_output_scale.weight`). Corresponds
 // to `self.layer_scalar` in HF modeling_gemma4.py (line 1337, applied at line
 // 1410: hidden_states *= self.layer_scalar).
+//
+// CUDA graph capture note (ADR-088 follow-up): the scalar value is resolved
+// at construction time (while the tensor is still CPU-resident from GGUF
+// load) and stored in `scalarValue`. Forward never calls `scale.Data()`,
+// because once the graph compiler uploads frozen weights to GPU, `Data()`
+// on the GPU-backed scale tensor triggers a synchronous D2H cudaMemcpy
+// that CUDA rejects inside a capturing stream.
 type layerOutputScaleNode[T tensor.Numeric] struct {
-	engine compute.Engine[T]
-	scale  *tensor.TensorNumeric[T] // shape [1]
+	engine      compute.Engine[T]
+	scale       *tensor.TensorNumeric[T] // shape [1]; retained for EmbeddedFrozen registration
+	scalarValue T
 }
 
 func newLayerOutputScaleNode[T tensor.Numeric](engine compute.Engine[T], scale *tensor.TensorNumeric[T]) (*layerOutputScaleNode[T], error) {
@@ -459,7 +467,11 @@ func newLayerOutputScaleNode[T tensor.Numeric](engine compute.Engine[T], scale *
 	if len(shape) != 1 || shape[0] != 1 {
 		return nil, fmt.Errorf("layerOutputScaleNode: scale shape %v, want [1]", shape)
 	}
-	return &layerOutputScaleNode[T]{engine: engine, scale: scale}, nil
+	sData := scale.Data()
+	if len(sData) == 0 {
+		return nil, fmt.Errorf("layerOutputScaleNode: scale data empty (construct with CPU-backed tensor before GPU upload)")
+	}
+	return &layerOutputScaleNode[T]{engine: engine, scale: scale, scalarValue: sData[0]}, nil
 }
 
 func (n *layerOutputScaleNode[T]) OpType() string                   { return "Gemma4LayerOutputScale" }
@@ -475,11 +487,7 @@ func (n *layerOutputScaleNode[T]) Forward(ctx context.Context, inputs ...*tensor
 	if len(inputs) != 1 {
 		return nil, fmt.Errorf("Gemma4LayerOutputScale: expected 1 input, got %d", len(inputs))
 	}
-	sData := n.scale.Data()
-	if len(sData) == 0 {
-		return nil, fmt.Errorf("Gemma4LayerOutputScale: scale data empty")
-	}
-	return n.engine.MulScalar(ctx, inputs[0], sData[0])
+	return n.engine.MulScalar(ctx, inputs[0], n.scalarValue)
 }
 
 func (n *layerOutputScaleNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
