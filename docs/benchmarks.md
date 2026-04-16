@@ -10,15 +10,38 @@ All benchmarks run on DGX Spark GB10 unless noted. Greedy sampling, 128 output t
 | DeepSeek-R1 1.5B | Q4_K_M | 186 | 168 | **1.11x** | 2026-03-30 |
 | Llama 3.2 3B | Q4_K_M | 92 | 93 | 0.99x | 2026-03-30 |
 | Mistral 7B | Q4_K_M | 44 | 44 | 1.00x | 2026-03-30 |
-| Gemma 4 E2B (edge) | Q4_K_M | 3.85* | N/A | — | 2026-04-15 |
+| Gemma 4 E2B (edge) | Q4_K_M | 3.85* / 2.69** / 1.23*** | N/A | — | 2026-04-15 / 2026-04-16 |
 
-\* Gemma 4 E2B baseline captured on 2026-04-15 (commit `72828131`) with
-CUDA graph capture disabled (E99 blocker: `pleCombinedProducer` H2D
-memcpy incompatibility). This is a correctness baseline, NOT an
-optimized number. Once E99 lands and the graph-capture path is
-enabled, this should rise substantially (Gemma 3 1B with capture is
-241 tok/s). Ollama comparison skipped because Ollama does not
-support the gemma4 architecture yet (E97.2 DEFERRED).
+\* The `3.85 tok/s` figure originally recorded for commit `72828131`
+could not be reproduced on 2026-04-16: the same binary at the same
+commit, on the same DGX host, running `-mode generate -device cuda
+-steps 64 -prompt "The quick brown fox"` with
+`ZERFOO_DISABLE_CUDA_GRAPH=1`, measured 2.69 tok/s. The 3.85 number
+was likely measured with different parameters (possibly `-mode
+forward`, or different `-steps`/`-seq`) and should be treated as
+unverified. See `docs/devlog.md` 2026-04-16 entry.
+
+\*\* 2.69 tok/s = current best reproducible gemma4e generate
+throughput on GPU, measured 2026-04-16 at commit `72828131`,
+capture disabled.
+
+\*\*\* 1.23 tok/s = current main (`6ad8bceb`) gemma4e generate on GPU,
+capture disabled. A ~2.2x regression vs 72828131 tracked as T99.2.1.
+
+**Correctness caveat (2026-04-16):** gemma4e generate produces
+degenerate tokens (`"ly\ns\ns\ns..."` on CPU, multilingual gibberish
+on GPU) on both `72828131` and current main. The E98 note about
+"40 bytes non-degenerate output" referred to `-mode forward`
+integration, not decode. Do not trust any gemma4e generate
+throughput number until T99.2.2 restores decode coherence. The
+throughput figures above are only useful as a regression floor for
+T99.2.1, not as user-facing performance claims.
+
+Once E99 lands (T99.1.3/T99.1.4) and decode is fixed (T99.2.2) and
+throughput is restored (T99.2.1), this row should rise substantially
+(Gemma 3 1B with capture is 241 tok/s). Ollama comparison skipped
+because Ollama does not support the gemma4 architecture yet (E97.2
+DEFERRED).
 
 CUDA graph capture: 184/185 instructions (99.5%). Fused kernels: softmax+V multiply, repeat-interleave for GQA, fused AddRMSNorm, fused SwiGLU, fused QKNormRoPE, merged QKV, merged gate+up.
 
