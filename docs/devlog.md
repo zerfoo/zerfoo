@@ -2,6 +2,109 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-16: T99.1.3 investigation -- three stacked gemma4e issues, none caused by T99.1.2
+
+**Type:** investigation
+**Tags:** gemma4e, cuda, graph-capture, e99, t99.1.3, t99.1.4, t99.2.1, t99.2.2, regression, correctness
+
+**Problem:** attempted T99.1.3 on current main (`6ad8bceb`): unset
+`ZERFOO_DISABLE_CUDA_GRAPH` in `docs/bench/manifests/gemma4-e2e.yaml`,
+rebuild `gemma4_e2e` on DGX, submit via Spark, compare throughput vs
+the 3.85 tok/s baseline recorded in `docs/benchmarks.md`. Expected
+capture to complete (T99.1.2 fixed the `pleCombinedProducer`
+incompatibility) and throughput to meet or beat the uncaptured path.
+Got neither.
+
+**Reproduction matrix** (DGX Spark GB10, prompt `"The quick brown fox"`,
+`-seq 4`):
+
+| Commit | Device | Capture env | Steps | tok/s | First ~40 bytes of output |
+|--------|--------|-------------|-------|-------|---------------------------|
+| `72828131` (Apr 15) | cpu | N/A | 32 | 0.69 | `"ly\ns\ns\ns\ns\ns\ns\ns\ns..."` |
+| `72828131` (Apr 15) | cuda | `ZERFOO_DISABLE_CUDA_GRAPH=1` | 64 | **2.69** | `"overdaythe\ns\nsn\n..."` |
+| `6ad8bceb` (main) | cpu | N/A | 16 | 0.59 | `"ly\ns\ns\ns\ns\ns\ns\ns\n"` |
+| `6ad8bceb` (main) | cuda | `ZERFOO_DISABLE_CUDA_GRAPH=1` | 64 | 1.23 | multilingual gibberish (457 bytes) |
+| `6ad8bceb` (main) | cuda | unset (capture ON) | 64 | 1.17 | capture fails at LMHead, falls back; same gibberish |
+
+**What the capture attempt actually did** (capture-on run on main):
+T99.1.2's fix worked -- the capture region now extends to
+instructions `[2, 569)` (full graph minus pre-capture PLE producer).
+But `cudaStreamEndCapture` failed with `operation failed due to a
+previous error during capture`, reporting instruction 568 (LMHead):
+`number of axes 3 must match tensor dimensions 2`. Execution fell
+back to the uncaptured path, producing the same output as
+capture-off. So the capture path never ran as a graph, and the
+1.17/1.23 tok/s numbers are both really the uncaptured path -- the
+capture-on variant is slightly slower because it pays the overhead of
+starting and aborting capture each step.
+
+**Three orthogonal issues surfaced:**
+
+1. **LMHead is not capture-safe.** T99.1.2 made the PLE combiner
+   capturable but the capture region now reaches a second
+   incompatible op at the tail. Fix is either to register `LMHead`
+   in ztensor's `nonCapturableOps` (mirrors T99.1.1's playbook) or
+   to fix the axes/dims handling upstream. Filed as T99.1.4.
+
+2. **GPU decode throughput regressed 2.2x.** At capture-off, commit
+   `72828131` ran at 2.69 tok/s; main (`6ad8bceb`) runs at 1.23
+   tok/s. Same binary semantics (both capture-off), same host, same
+   prompt/steps/seq, same GGUF file. Prime suspect is T99.1.2's
+   per-step `CopyFromHost` refresh of 35 per-layer PLE slice buffers
+   in `inference/gemma4_edge_ple_nodes.go`, but this is a guess --
+   not bisected. Filed as T99.2.1. Do NOT revert T99.1.2 to
+   "fix" this; fix forward.
+
+3. **gemma4e decode has never been correct.** Output is degenerate
+   on both CPU (`"ly\ns\ns\ns..."`, a stuck-token loop) and GPU
+   (`"overdaythe\ns\nsn\n..."` at 72828131, full multilingual
+   gibberish at 6ad8bceb) on both measured commits. The plan.md
+   note from the E98 run (`gemma4-e2e-20260415-025542`) stating
+   "gemma4_e2e PASS, 40 bytes non-degenerate output" referred to
+   `-mode forward` integration, not `-mode generate`. Decode was
+   never validated. Filed as T99.2.2. This is arguably epic-level
+   work -- could be sampling, LMHead, tied embeddings, or the
+   Q4->Q8 upgrade path for `model.embed_tokens.weight` (which the
+   logs show happens on load for GPU runs).
+
+   A fourth, possibly related, noise signal: every generate run
+   prints `CompileTraced plan validation failed, falling back to
+   Compile: instruction 0 (Gather|MulScalar): input tensors cannot
+   be nil` before decoding. Unclear if this is related to the
+   degenerate output or independent. Worth chasing as part of
+   T99.2.2.
+
+**What we verified and what we did NOT do:**
+- Verified that T99.1.2 did not regress decode correctness (decode
+  was already broken at 72828131).
+- Verified that the 3.85 tok/s figure in `docs/benchmarks.md` is not
+  reproducible at its recorded commit (measured 2.69 tok/s with
+  plausible defaults).
+- Did NOT revert T99.1.2 -- it did what ADR-088 Option C
+  specified (PLE combiner is now capturable), and the correctness
+  break predates it. A revert would trade a smaller capture region
+  for no correctness benefit.
+- Did NOT mark T99.1.3 complete. It remains `[ ]` and BLOCKED on
+  T99.1.4 + T99.2.2.
+
+**Process note:** the initial instinct was to revert T99.1.2 + its
+follow-up `6ad8bceb` and re-implement with a regression test.
+Running a CPU diagnostic at main first, then a GPU diagnostic at the
+prior commit, cheaply invalidated that plan (both commits equally
+broken in different ways). Rule worth generalizing: before blaming a
+recent commit for a regression, reproduce the pre-commit state. The
+3 minutes of bench time saved hours of wrong-path bisecting and a
+PR that would have lost the T99.1.2 work for no gain.
+
+**Fix:** N/A for this investigation. Three follow-up tasks filed in
+`docs/plan.md`: T99.1.4, T99.2.1, T99.2.2. Benchmarks entry annotated.
+
+**Impact:** gemma4e inference on Zerfoo does not produce usable
+output today; capture is blocked beyond the PLE fix; the best
+reproducible throughput number is 2.69 tok/s and it's on gibberish.
+Gemma 4 E2B should not appear in user-facing benchmarks or marketing
+until T99.2.2 lands.
+
 ## 2026-04-15: E99 T99.1.1 + T99.1.2 -- fix gemma4e CUDA graph capture vs pleCombinedProducer
 
 **Type:** finding

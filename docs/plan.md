@@ -1814,11 +1814,72 @@ everything else; this is a performance task, not a correctness blocker.
   (prefill -> decode reallocation path). Removed now-unused
   `sliceLastDim` helper. Full test suite green locally.
 
-- [ ] T99.1.3 Re-verify gemma4e generate with CUDA graph capture ENABLED  Owner: dndungu  Est: 20m  verifies: [UC-001]
-  Deps: T99.1.2
+- [ ] T99.1.3 Re-verify gemma4e generate with CUDA graph capture ENABLED  Owner: dndungu  Est: 20m  verifies: [UC-001]  BLOCKED by T99.1.4 + T99.2.2
+  Deps: T99.1.2, T99.1.4, T99.2.2
   AC: gemma4_e2e generate on cuda runs with `ZERFOO_DISABLE_CUDA_GRAPH` unset,
   graph capture completes, and throughput meets or beats the
   uncaptured path. Drop the env var from the manifest.
+  Status (2026-04-16): attempted on main `6ad8bceb`, capture fails at
+  instruction 568 (LMHead) with `number of axes 3 must match tensor
+  dimensions 2`; falls back to uncaptured path at 1.17 tok/s vs 1.23
+  tok/s baseline (equivalent -- capture never completes). Also
+  surfaced two deeper issues tracked as T99.2.1 and T99.2.2. See
+  `docs/devlog.md` 2026-04-16 entry.
+
+- [ ] T99.1.4 Make LMHead CUDA-graph-capture compatible  Owner: TBD  Est: 2-4h  verifies: [UC-001]
+  Deps: none (unblocks T99.1.3)
+  Problem: during gemma4e generate on cuda with capture enabled, the
+  capture region extends to the full [2, 569) graph but ends with
+  `cudaStreamEndCapture failed: operation failed due to a previous
+  error during capture` and the error message points at instruction
+  568 (LMHead): "number of axes 3 must match tensor dimensions 2".
+  Options: (a) register `LMHead` in ztensor's `nonCapturableOps` so it
+  runs post-capture on the host stream (mirrors T99.1.1's playbook for
+  `Gemma4PLECombinedProducer`), or (b) fix the axes/dims path in
+  LMHead so it is capture-safe. Pick based on how small the capture
+  region becomes in option (a) -- losing the last instruction is
+  fine; losing a larger tail is not.
+  AC: gemma4_e2e generate on cuda completes `cudaStreamEndCapture`
+  successfully with `ZERFOO_DISABLE_CUDA_GRAPH` unset, on a binary
+  built from current main (regardless of T99.2.1/T99.2.2 state).
+
+### E99.2 Pre-existing gemma4e correctness + throughput issues (discovered 2026-04-16)
+
+These were surfaced while attempting T99.1.3 and are orthogonal to
+the capture-compatibility work in E99.1. Neither is caused by T99.1.2
+-- both reproduce on commit `72828131` (the prior "baseline"). See
+`docs/devlog.md` 2026-04-16 entry for the reproduction matrix.
+
+- [ ] T99.2.1 Bisect and fix gemma4e GPU decode throughput regression  Owner: TBD  Est: 4-8h  verifies: [infrastructure]
+  Deps: none
+  Problem: gemma4e generate on cuda with `ZERFOO_DISABLE_CUDA_GRAPH=1`
+  ran at 2.69 tok/s on commit `72828131` (2026-04-15) and at 1.23
+  tok/s on commit `6ad8bceb` (main, 2026-04-16). Same prompt, steps,
+  seq, device. Prime suspect is T99.1.2's per-step `CopyFromHost`
+  refresh of the 35 per-layer PLE slice buffers, but not yet bisected.
+  AC: restore gemma4e decode throughput to at least the 72828131
+  level (>= 2.69 tok/s at capture-off on the same bench params), with
+  the root cause identified and documented in the fix PR. Do NOT
+  revert T99.1.2 -- fix forward.
+
+- [ ] T99.2.2 Fix gemma4e decode correctness (degenerate output)  Owner: TBD  Est: unknown (epic-level)  verifies: [UC-001]
+  Deps: none
+  Problem: `gemma4_e2e -mode generate -device cpu -steps 32 -prompt
+  "The quick brown fox"` produces `"ly\ns\ns\ns..."` on both
+  `72828131` and `6ad8bceb`. GPU output is differently degenerate
+  (`"overdaythe\ns\nsn\n..."` on 72828131, multilingual gibberish on
+  6ad8bceb) but also incoherent. The existing plan note that the
+  E98 test pod gave "40 bytes non-degenerate output" referred to
+  `-mode forward`, not `-mode generate`; decode has never been
+  validated for coherence on gemma4e in either mode on either device.
+  Also: every generate run logs `CompileTraced plan validation failed,
+  falling back to Compile: instruction 0 (Gather|MulScalar): input
+  tensors cannot be nil`; unclear whether this is related to the
+  decode break or a separate noise.
+  AC: gemma4e generate on a standard prompt produces coherent
+  English tokens on both CPU and GPU, verified by a committed
+  regression test. Likely touches sampling, logits/LMHead, tied
+  embeddings, or the Q4->Q8 upgrade path for `model.embed_tokens.weight`.
 
 ### E98 Risk Register
 
