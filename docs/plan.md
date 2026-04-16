@@ -1794,19 +1794,27 @@ everything else; this is a performance task, not a correctness blocker.
 
 ### E99.1 Fix capture compatibility
 
-- [ ] T99.1.1 Decide capture strategy for `pleCombinedProducer`  Owner: TBD  Est: 30m  verifies: [infrastructure]
-  Options:
-    a) Exclude the producer from the capture region (partial capture).
-    b) Move its host-side token gather to a GPU kernel so it stays
-       on-device throughout.
-    c) Mark the producer as "uncapturable" in the graph compiler so
-       the capture region auto-splits around it.
-  Deliverable: ADR recommending one approach, with perf estimate.
+- [x] T99.1.1 Decide capture strategy for `pleCombinedProducer`  Owner: dndungu  Est: 30m  verifies: [infrastructure]  Completed: 2026-04-15
+  Decision recorded in `docs/adr/088-gemma4-ple-cuda-graph-capture.md`
+  (Option C: mark the producer non-capturable so it runs in
+  pre-capture, and pre-slice the full-width PLE tensors into stable
+  per-layer GPU buffers so `pleSliceNode` becomes fully capturable).
 
-- [ ] T99.1.2 Implement the chosen strategy  Owner: TBD  Est: 2-4h  verifies: [UC-001]
+- [x] T99.1.2 Implement the chosen strategy  Owner: dndungu  Est: 2-4h  verifies: [UC-001]  Completed: 2026-04-15
   Deps: T99.1.1.
+  ztensor: added `Gemma4PLECombinedProducer` to `nonCapturableOps` in
+  `graph/cuda_graph.go`. zerfoo: refactored
+  `inference/gemma4_edge_ple_nodes.go` so `pleCombinedProducer`
+  pre-slices both full-width tensors into 35 per-layer slices with
+  stable GPU addresses (first-call MulScalar identity upload,
+  subsequent-call `CopyFromHost` refresh), and `pleSliceNode` reads
+  pre-computed GPU slices directly. Added two regression tests:
+  `TestPLECombinedProducer_SliceBuffersStable` (stable pointers
+  across calls) and `TestPLECombinedProducer_SliceBuffersReallocateOnShapeChange`
+  (prefill -> decode reallocation path). Removed now-unused
+  `sliceLastDim` helper. Full test suite green locally.
 
-- [ ] T99.1.3 Re-verify gemma4e generate with CUDA graph capture ENABLED  Owner: TBD  Est: 20m  verifies: [UC-001]
+- [ ] T99.1.3 Re-verify gemma4e generate with CUDA graph capture ENABLED  Owner: dndungu  Est: 20m  verifies: [UC-001]
   Deps: T99.1.2
   AC: gemma4_e2e generate on cuda runs with `ZERFOO_DISABLE_CUDA_GRAPH` unset,
   graph capture completes, and throughput meets or beats the

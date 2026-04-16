@@ -31,8 +31,9 @@ import (
 )
 
 // pleCombinedProducer computes the two full-width [B, S, numLayers*pleDim]
-// per-layer feature tensors once per forward pass and caches the result for
-// consumption by pleSliceNode.
+// per-layer feature tensors once per forward pass and pre-slices them into
+// per-layer [B, S, pleDim] GPU-resident tensors for consumption by
+// pleSliceNode.
 //
 // Inputs:
 //
@@ -43,8 +44,20 @@ import (
 //	             passes the standard `embeds * sqrt(hidden)` (same tensor the
 //	             main transformer stack consumes).
 //
-// Outputs an opaque placeholder tensor; consumers read results via the
-// producer's cached tokenPLE / modelProj fields through pleSliceNode.
+// Outputs the hidden input unchanged as a pass-through; consumers read
+// per-layer results via the producer's cached tokenPLESlices /
+// modelProjSlices fields through pleSliceNode.
+//
+// CUDA graph capture strategy (see ADR-088). The node is listed as
+// non-capturable in ztensor's graph compiler (Gemma4PLECombinedProducer),
+// so it runs in pre-capture on every forward. After computing the two
+// full-width tensors, it pre-slices them into 35 per-layer slices and
+// caches the slices as GPU-resident tensors with stable addresses across
+// calls. On the first call, stable GPU buffers are allocated via a
+// no-op MulScalar; on subsequent calls, the buffers are refreshed in
+// place via GPUStorage.CopyFromHost. pleSliceNode then reads the cached
+// GPU slices directly — no .Data() calls — which makes the per-layer
+// PLE combiner fully capturable.
 type pleCombinedProducer[T tensor.Numeric] struct {
 	engine compute.Engine[T]
 
@@ -56,8 +69,19 @@ type pleCombinedProducer[T tensor.Numeric] struct {
 	hiddenSize int
 	vocabSize  int
 
-	tokenPLE  *tensor.TensorNumeric[T] // cached: [B, S, numLayers*pleDim]
-	modelProj *tensor.TensorNumeric[T] // cached: [B, S, numLayers*pleDim]
+	// Per-layer pre-sliced tensors with stable GPU addresses (see
+	// ADR-088). Allocated on the first forward pass via a no-op
+	// MulScalar to obtain GPU buffers; refreshed in place on subsequent
+	// passes via GPUStorage.CopyFromHost. Length == numLayers once
+	// initialized.
+	tokenPLESlices  []*tensor.TensorNumeric[T]
+	modelProjSlices []*tensor.TensorNumeric[T]
+
+	// cachedBatch / cachedSeqLen record the shape of the currently
+	// allocated slice buffers. If the next forward pass has a different
+	// shape (e.g. prefill vs decode), the buffers are reallocated.
+	cachedBatch  int
+	cachedSeqLen int
 }
 
 func newPLECombinedProducer[T tensor.Numeric](
@@ -102,7 +126,12 @@ func (p *pleCombinedProducer[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
 
 // Forward computes per-layer features. Returns inputs[1] unchanged as a
 // pass-through; the actual per-layer outputs are read by pleSliceNode
-// consumers via p.tokenPLE and p.modelProj.
+// consumers via p.tokenPLESlices and p.modelProjSlices.
+//
+// Side effect: allocates (first call) or refreshes (subsequent calls)
+// 2*numLayers GPU-resident tensors with stable device addresses across
+// calls. This stability is required for CUDA graph replay — see
+// ADR-088.
 func (p *pleCombinedProducer[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) != 2 {
 		return nil, fmt.Errorf("Gemma4PLECombinedProducer: expected 2 inputs (ids, hidden), got %d", len(inputs))
@@ -146,7 +175,6 @@ func (p *pleCombinedProducer[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if err != nil {
 		return nil, fmt.Errorf("Gemma4PLECombinedProducer: tokenPLE scale: %w", err)
 	}
-	p.tokenPLE = tokenPLE
 
 	// --- 2. Per-layer model projection.
 	// HF (line 1687): per_layer_projection = per_layer_model_proj(embeds * hidden_size**-0.5).
@@ -159,15 +187,144 @@ func (p *pleCombinedProducer[T]) Forward(ctx context.Context, inputs ...*tensor.
 		return nil, fmt.Errorf("Gemma4PLECombinedProducer: invScale hidden: %w", err)
 	}
 	// [B, S, hidden] @ [hidden, totalPLE] -> [B, S, totalPLE].
-	proj, err := p.engine.MatMul(ctx, scaled, p.pleModelProj)
+	modelProj, err := p.engine.MatMul(ctx, scaled, p.pleModelProj)
 	if err != nil {
 		return nil, fmt.Errorf("Gemma4PLECombinedProducer: model_proj matmul: %w", err)
 	}
-	p.modelProj = proj
+
+	// --- 3. Pre-slice into per-layer GPU-resident tensors with stable
+	// device addresses (see ADR-088). If the batch/seqLen have changed
+	// since the last call, drop the cached buffers so fresh ones are
+	// allocated; otherwise, refresh the existing GPU buffers in place
+	// via CopyFromHost so the CUDA-graph replayed reads hit the same
+	// GPU addresses on every decode step.
+	if p.cachedBatch != batch || p.cachedSeqLen != seqLen {
+		p.tokenPLESlices = nil
+		p.modelProjSlices = nil
+		p.cachedBatch = batch
+		p.cachedSeqLen = seqLen
+	}
+	if err := p.refreshPerLayerSlices(ctx, tokenPLE, modelProj, batch, seqLen); err != nil {
+		return nil, fmt.Errorf("Gemma4PLECombinedProducer: refresh slices: %w", err)
+	}
 
 	// Pass-through the hidden input so downstream nodes that declare a
 	// dependency on the producer see a well-formed tensor.
 	return hidden, nil
+}
+
+// refreshPerLayerSlices fills p.tokenPLESlices and p.modelProjSlices so
+// each entry is a GPU-resident [B, S, pleDim] tensor. On the first
+// invocation (or after a shape change) it allocates stable GPU buffers
+// via a no-op MulScalar. On every subsequent invocation it reuses the
+// same GPU buffers and refreshes their contents with CopyFromHost, so
+// the CUDA graph replay path sees stable device addresses.
+func (p *pleCombinedProducer[T]) refreshPerLayerSlices(
+	ctx context.Context,
+	tokenPLE, modelProj *tensor.TensorNumeric[T],
+	batch, seqLen int,
+) error {
+	sliceElems := batch * seqLen * p.pleDim
+	firstCall := p.tokenPLESlices == nil
+	if firstCall {
+		p.tokenPLESlices = make([]*tensor.TensorNumeric[T], p.numLayers)
+		p.modelProjSlices = make([]*tensor.TensorNumeric[T], p.numLayers)
+	}
+
+	// Both tokenPLE and modelProj are rank-3 [B, S, totalPLE]. We need
+	// their dense data to slice on CPU. The engine's MulScalar on a
+	// GPU tensor returns a GPU tensor, but reading via .Data() forces
+	// a D2H copy. Since this node runs in pre-capture, D2H is safe
+	// (no capturing stream). Pull .Data() once per tensor and reuse
+	// the slices.
+	tokenData := tokenPLE.Data()
+	if tokenData == nil {
+		return fmt.Errorf("tokenPLE has no readable data")
+	}
+	projData := modelProj.Data()
+	if projData == nil {
+		return fmt.Errorf("modelProj has no readable data")
+	}
+
+	totalPLE := p.numLayers * p.pleDim
+
+	// Per-layer buffers: stride = totalPLE, offset = layer*pleDim per row.
+	flatLen := batch * seqLen
+	tokenScratch := make([]T, sliceElems)
+	projScratch := make([]T, sliceElems)
+
+	for layer := 0; layer < p.numLayers; layer++ {
+		offset := layer * p.pleDim
+		// Gather the per-layer strided slice into a contiguous CPU buffer.
+		for i := 0; i < flatLen; i++ {
+			src := tokenData[i*totalPLE+offset : i*totalPLE+offset+p.pleDim]
+			copy(tokenScratch[i*p.pleDim:(i+1)*p.pleDim], src)
+			src = projData[i*totalPLE+offset : i*totalPLE+offset+p.pleDim]
+			copy(projScratch[i*p.pleDim:(i+1)*p.pleDim], src)
+		}
+
+		if firstCall {
+			// Allocate a stable GPU buffer by wrapping the CPU data as a
+			// tensor and passing it through a no-op MulScalar. The GPU
+			// engine's getDevicePtr uploads the contents and returns a
+			// GPU-resident tensor whose device address is stable for the
+			// lifetime of the tensor.
+			tokenCPU, err := tensor.New[T]([]int{batch, seqLen, p.pleDim}, append([]T(nil), tokenScratch...))
+			if err != nil {
+				return fmt.Errorf("token slice layer=%d alloc: %w", layer, err)
+			}
+			tokenGPU, err := p.engine.MulScalar(ctx, tokenCPU, T(1))
+			if err != nil {
+				return fmt.Errorf("token slice layer=%d upload: %w", layer, err)
+			}
+			p.tokenPLESlices[layer] = tokenGPU
+
+			projCPU, err := tensor.New[T]([]int{batch, seqLen, p.pleDim}, append([]T(nil), projScratch...))
+			if err != nil {
+				return fmt.Errorf("proj slice layer=%d alloc: %w", layer, err)
+			}
+			projGPU, err := p.engine.MulScalar(ctx, projCPU, T(1))
+			if err != nil {
+				return fmt.Errorf("proj slice layer=%d upload: %w", layer, err)
+			}
+			p.modelProjSlices[layer] = projGPU
+			continue
+		}
+
+		// Subsequent calls: refresh the stable GPU buffers in place.
+		// If the storage is CPU-backed (CPU engine), update the CPU
+		// data directly; no device copy is needed.
+		if err := refreshSliceStorage(p.tokenPLESlices[layer], tokenScratch); err != nil {
+			return fmt.Errorf("token slice layer=%d refresh: %w", layer, err)
+		}
+		if err := refreshSliceStorage(p.modelProjSlices[layer], projScratch); err != nil {
+			return fmt.Errorf("proj slice layer=%d refresh: %w", layer, err)
+		}
+	}
+	return nil
+}
+
+// refreshSliceStorage updates the contents of an existing tensor in
+// place. For GPU-resident tensors it issues a synchronous H2D copy via
+// CopyFromHost, which is safe here because the producer runs in the
+// pre-capture region (no active stream capture). For CPU-resident
+// tensors it overwrites the underlying Data() slice directly.
+func refreshSliceStorage[T tensor.Numeric](dst *tensor.TensorNumeric[T], src []T) error {
+	if dst == nil {
+		return fmt.Errorf("destination tensor is nil")
+	}
+	if gs, ok := dst.GetStorage().(*tensor.GPUStorage[T]); ok {
+		return gs.CopyFromHost(src, 0)
+	}
+	dstData := dst.Data()
+	if dstData == nil {
+		return fmt.Errorf("destination tensor has no readable data")
+	}
+	if len(dstData) < len(src) {
+		return fmt.Errorf("destination tensor too small: have %d, need %d", len(dstData), len(src))
+	}
+	copy(dstData, src)
+	return nil
 }
 
 func (p *pleCombinedProducer[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
@@ -241,20 +398,26 @@ func (n *pleSliceNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
 	return frozen
 }
 
-// Forward reads the producer's cached tensors, extracts slice [layerIdx],
-// applies RMSNorm to the projection slice (dim=pleDim), adds the
-// token-identity slice, scales by 1/sqrt(2), and returns [B, S, pleDim].
+// Forward reads the producer's pre-computed per-layer GPU slices, applies
+// RMSNorm to the projection slice (dim=pleDim), adds the token-identity
+// slice, scales by 1/sqrt(2), and returns [B, S, pleDim].
+//
+// The slices are allocated and refreshed by pleCombinedProducer so that
+// their GPU device addresses are stable across decode steps. Reading
+// them here via Go struct fields produces only GPU-native operations
+// (RMSNorm, Add, MulScalar), making this node fully CUDA-graph
+// capturable. See ADR-088.
 func (n *pleSliceNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if n.producer.tokenPLE == nil || n.producer.modelProj == nil {
+	if n.producer.tokenPLESlices == nil || n.producer.modelProjSlices == nil {
 		return nil, fmt.Errorf("pleSliceNode(layer=%d): producer has not run Forward yet", n.layerIdx)
 	}
-	tokenSlice, err := sliceLastDim[T](ctx, n.engine, n.producer.tokenPLE, n.layerIdx*n.pleDim, n.pleDim)
-	if err != nil {
-		return nil, fmt.Errorf("pleSliceNode(layer=%d): token slice: %w", n.layerIdx, err)
+	if n.layerIdx >= len(n.producer.tokenPLESlices) || n.layerIdx >= len(n.producer.modelProjSlices) {
+		return nil, fmt.Errorf("pleSliceNode(layer=%d): producer slice cache too short (len=%d)", n.layerIdx, len(n.producer.tokenPLESlices))
 	}
-	projSlice, err := sliceLastDim[T](ctx, n.engine, n.producer.modelProj, n.layerIdx*n.pleDim, n.pleDim)
-	if err != nil {
-		return nil, fmt.Errorf("pleSliceNode(layer=%d): proj slice: %w", n.layerIdx, err)
+	tokenSlice := n.producer.tokenPLESlices[n.layerIdx]
+	projSlice := n.producer.modelProjSlices[n.layerIdx]
+	if tokenSlice == nil || projSlice == nil {
+		return nil, fmt.Errorf("pleSliceNode(layer=%d): producer slice cache has nil entry", n.layerIdx)
 	}
 	// Delegate RMSNorm to layers/normalization (architectural guard:
 	// private layer reimpls are disallowed outside layers/).
@@ -277,33 +440,6 @@ func (n *pleSliceNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeri
 
 func (n *pleSliceNode[T]) Backward(_ context.Context, _ types.BackwardMode, _ *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	return nil, nil
-}
-
-// sliceLastDim extracts elements [start, start+length) along the last axis of
-// a rank-3 tensor shaped [B, S, D]. Implemented via a direct data copy; the
-// compute.Engine interface has no generic slice primitive today.
-func sliceLastDim[T tensor.Numeric](_ context.Context, _ compute.Engine[T], src *tensor.TensorNumeric[T], start, length int) (*tensor.TensorNumeric[T], error) {
-	shape := src.Shape()
-	if len(shape) != 3 {
-		return nil, fmt.Errorf("sliceLastDim: expected rank 3, got %d", len(shape))
-	}
-	batch, seqLen, dim := shape[0], shape[1], shape[2]
-	if start < 0 || start+length > dim {
-		return nil, fmt.Errorf("sliceLastDim: [%d, %d) out of range [0, %d)", start, start+length, dim)
-	}
-	srcData := src.Data()
-	if srcData == nil {
-		return nil, fmt.Errorf("sliceLastDim: CPU path requires dense src data")
-	}
-	out := make([]T, batch*seqLen*length)
-	for b := 0; b < batch; b++ {
-		for s := 0; s < seqLen; s++ {
-			srcOff := (b*seqLen+s)*dim + start
-			dstOff := (b*seqLen + s) * length
-			copy(out[dstOff:dstOff+length], srcData[srcOff:srcOff+length])
-		}
-	}
-	return tensor.New[T]([]int{batch, seqLen, length}, out)
 }
 
 // layerOutputScaleNode multiplies its input by a learned scalar stored as a
