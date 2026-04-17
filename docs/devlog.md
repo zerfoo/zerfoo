@@ -2,6 +2,24 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-17: T99.1.4a -- ztensor LMHead nonCapturable shipped, zerfoo bumped to v1.6.0
+
+**Type:** finding
+**Tags:** cuda-graph, capture, lmhead, ztensor, release
+
+**Problem:** T99.1.4 decision in ADR-089 required registering `"LMHead"` in ztensor's `nonCapturableOps` map and bumping zerfoo's `go.mod` to the resulting ztensor release.
+
+**Fix:**
+- ztensor PR [#98](https://github.com/zerfoo/ztensor/pull/98) added `"LMHead": true` to the map (plus docstring + `TestIsNonCapturable` regression case). Merged at ztensor `07ba531`.
+- ztensor release-please PR #90 (already queued with 7 other feats since 2026-04-15) merged → v1.6.0 tag cut.
+- zerfoo PR [#491](https://github.com/zerfoo/zerfoo/pull/491) bumped `github.com/zerfoo/ztensor` → v1.6.0 and annotated plan. Merged at zerfoo `ec0b98ae`.
+
+**Scope NOT in this shipment:**
+- Dropping `ZERFOO_DISABLE_CUDA_GRAPH: "1"` from `docs/bench/manifests/gemma4-e2e.yaml` — remains T99.1.3's AC.
+- DGX verification that `cudaStreamEndCapture` succeeds — deferred until host load clears (session checkpoint noted load avg 19, 119/119 Gi RAM used, 5 Gi swap).
+
+**Impact:** T99.1.4 code half complete. T99.1.3 is now code-unblocked (still behaviorally blocked by T99.2.2 decode correctness). No measurable impact on any passing path: pre-release ztensor dev pseudoversion already contained the rest of v1.6.0; only the LMHead entry is new to main consumers.
+
 ## 2026-04-16: T99.1.4 -- LMHead CUDA-graph-capture root cause + ztensor handoff diff
 
 **Type:** investigation
