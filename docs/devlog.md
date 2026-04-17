@@ -277,6 +277,70 @@ clean except for ADR-089 and this devlog entry. Full fix requires the
 coordinator to ship the ztensor diff above and then bump the zerfoo
 go.mod.
 
+## 2026-04-16: T99.2.1 -- gemma4e PLE producer refresh rewrite, 70 H2D -> 2 D2D per decode step
+
+**Type:** fix
+**Tags:** gemma4e, cuda, performance, h2d, d2d, pre-slicing, t99.2.1, regression
+
+**Problem:** gemma4e generate on cuda with `ZERFOO_DISABLE_CUDA_GRAPH=1`
+ran at 2.69 tok/s on `72828131` and 1.23 tok/s on `6ad8bceb` (2.2x
+regression). Task T99.2.1.
+
+**Bisect.** Only two code-changing commits sit between the baseline and
+main: `96c7540a` (T99.1.2 PLE pre-slicing rewrite) and `6ad8bceb`
+(layer_scalar construct-time fix). The layer_scalar change removes a
+per-forward `.Data()` call, which is strictly faster, so the prime
+suspect is T99.1.2. Reading the two versions of
+`inference/gemma4_edge_ple_nodes.go` confirms it: T99.1.2's
+`refreshPerLayerSlices` added a per-step scatter-gather that issues
+2*numLayers=70 tiny synchronous `CopyFromHost` (H2D memcpy) launches
+per decode step, plus 2 `.Data()` calls on GPU-resident tensors (D2H
+each). The old path read the two full-width tensors per layer via
+`sliceLastDim` (35 D2H copies of 8960 floats per step) -- more bytes
+moved, but the downstream ops were all CPU-side reads of CPU-backed
+slice tensors, while the new path kept every per-layer buffer GPU-
+resident and thus forced more cudaMemcpy launch overhead. On GB10
+with synchronous launches, 70 tiny H2D + 2 D2H is the worse of the
+two worlds.
+
+**Fix (fast path).** Allocate two stable full-width GPU buffers
+`p.tokenPLEBuf` and `p.modelProjBuf` once (or on shape change) and
+construct `numLayers` per-layer slice tensors as non-owning
+`NewGPUStorageView` sub-slices of these buffers. On every Forward,
+issue one D2D memcpy per buffer (`CopyFromDevice`) to refresh every
+layer's view at once. Per decode step: 2 memcpy launches instead of
+2 D2H + 70 H2D. The per-layer slice tensor objects and their device
+addresses remain stable, so the CUDA-graph replay invariant added in
+T99.1.2 still holds.
+
+**Prefill.** When `flatLen = batch*seqLen > 1`, last-dim slices are
+strided and a single-buffer-with-views representation is invalid.
+Fall back to the pre-T99.2.1 path (per-layer scatter + H2D upload on
+first call, `CopyFromHost` refresh on subsequent calls). Prefill runs
+once per sequence, so the cost is out of the decode hot path.
+
+**CPU engine.** CPU storage has no notion of a "view," so the fast
+path allocates a single `[]T` of length `totalPLE` per tensor and
+creates per-layer views as sub-slices (`tokenStable[offset:offset+
+pleDim]`). Since Go sub-slicing preserves capacity up to the end of
+the parent array, `refreshCPUStableBuffer` re-extends layer-0's view
+to full width and overwrites it in one `copy`; all 35 layer views
+see the update. Matches the existing CPU-engine semantics expected
+by `TestPLECombinedProducer_SliceBuffersStable`.
+
+**Tests.** Added
+`TestPLECombinedProducer_DecodeFastPathSharesBackingStorage` pinning
+three invariants of the fast path: (1) per-layer views share one
+backing array; (2) writes to the shared array propagate to every
+layer; (3) a second Forward with the same shape reuses the existing
+tensor objects and backing array.
+
+**Verification.** DGX Spark pod `gemma4-e2e-<sha>`, identical
+manifest to the T99.1.3 probe (`-mode generate -device cuda -seq 4
+-prompt "The quick brown fox" -steps 64`,
+`ZERFOO_DISABLE_CUDA_GRAPH=1`): target >= 2.69 tok/s, restore parity
+with `72828131`. See table below for measured numbers.
+
 ## 2026-04-16: T99.1.3 investigation -- three stacked gemma4e issues, none caused by T99.1.2
 
 **Type:** investigation
