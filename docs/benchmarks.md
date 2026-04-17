@@ -25,8 +25,17 @@ unverified. See `docs/devlog.md` 2026-04-16 entry.
 throughput on GPU, measured 2026-04-16 at commit `72828131`,
 capture disabled.
 
-\*\*\* 1.23 tok/s = current main (`6ad8bceb`) gemma4e generate on GPU,
-capture disabled. A ~2.2x regression vs 72828131 tracked as T99.2.1.
+\*\*\* 1.23 tok/s = main (`6ad8bceb`) gemma4e generate on GPU,
+capture disabled. A ~2.2x regression vs 72828131, tracked as T99.2.1
+and bisected to commit `96c7540a` (T99.1.2): the per-step
+`refreshPerLayerSlices` in `inference/gemma4_edge_ple_nodes.go`
+issued 2*numLayers = 70 synchronous H2D `CopyFromHost` launches per
+decode step plus 2 `.Data()` D2H copies. Fix on branch
+`perf/t99-2-1-gemma4e-ple-decode` replaces that with 2 full-width
+D2D copies per decode step (numLayers per-layer tensors become
+non-owning `NewGPUStorageView` SubSlice views into two stable GPU
+buffers). DGX verification pending GPU availability (training pod
+holding the GPU at fix commit time).
 
 **Correctness caveat (2026-04-16):** gemma4e generate produces
 degenerate tokens (`"ly\ns\ns\ns..."` on CPU, multilingual gibberish
