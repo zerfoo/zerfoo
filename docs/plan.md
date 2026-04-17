@@ -1842,6 +1842,17 @@ everything else; this is a performance task, not a correctness blocker.
   AC: gemma4_e2e generate on cuda completes `cudaStreamEndCapture`
   successfully with `ZERFOO_DISABLE_CUDA_GRAPH` unset, on a binary
   built from current main (regardless of T99.2.1/T99.2.2 state).
+  Status (2026-04-16, handoff): investigation complete. Root cause is
+  the `MatMulTransposeB` fallback in ztensor
+  `compute/gpu_engine.go:1248,1258,1307,1317,1338` which calls
+  `Transpose(b, [0,2,1])` (3 axes) on LMHead's always-2D weight.
+  Decision is Option A (see ADR-089) -- register `"LMHead"` in
+  ztensor's `nonCapturableOps` map. Since LMHead is the last
+  instruction (568 of 569), post-capture placement costs zero
+  capture-region coverage. Exact one-line diff for ztensor + the
+  coordinator checklist are in `docs/devlog.md` (2026-04-16 T99.1.4
+  entry) and `docs/adr/089-lmhead-cuda-graph-capture.md`. Awaiting
+  coordinator to ship ztensor PR and bump `go.mod`.
 
 ### E99.2 Pre-existing gemma4e correctness + throughput issues (discovered 2026-04-16)
 

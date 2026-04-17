@@ -2,6 +2,146 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-16: T99.1.4 -- LMHead CUDA-graph-capture root cause + ztensor handoff diff
+
+**Type:** investigation
+**Tags:** gemma4e, cuda, graph-capture, e99, t99.1.4, lmhead, nonCapturableOps, adr-089, cross-repo
+
+**Problem:** T99.1.3 (2026-04-16 earlier entry) observed that after
+T99.1.2's PLE-combiner fix, gemma4e capture still fails with
+`cudaStreamEndCapture failed: operation failed due to a previous
+error during capture` and `instruction 568 (LMHead): number of axes
+3 must match tensor dimensions 2`. T99.1.4 is to fix LMHead so
+capture completes.
+
+**Root cause:** The error string matches exactly one source in
+ztensor: `CPUEngine.Transpose` at `compute/cpu_engine.go:1306`, which
+checks `len(axes) != len(originalShape)`. LMHead's weight is always 2D
+`[vocabSize, hiddenDim]`, so the caller is passing 3 axes.
+
+The caller is `GPUEngine.MatMulTransposeB` in
+`ztensor/compute/gpu_engine.go`. That function has five fallback sites
+(lines 1248, 1258, 1307, 1317, 1338) that all do
+`e.Transpose(ctx, b, []int{0, 2, 1})` — hard-coded 3 axes, assuming `b`
+is always 3D. When `b` is 2D (as in every LMHead call), the fallback
+explodes.
+
+The fallback fires when any of these is true during graph capture:
+
+- BLAS does not implement `BLASTransposeB` (SgemmNT).
+- `T` is not `float32`.
+- `getDevicePtr(e, a)` or `getDevicePtr(e, b)` fails (common under
+  capture if a tensor is CPU-resident — CUDA rejects synchronous H2D
+  on a capturing stream).
+- `e.pool.Alloc` fails.
+
+On DGX gemma4e Q4_K_M, at least one of these triggers during capture.
+
+**Prior art:** the 2026-03-26 mmap devlog entry records the same
+string at `instruction 184 (LMHead)` for the mmap load path. Same root
+cause, different trigger density. Never fixed; masked by
+`ZERFOO_DISABLE_CUDA_GRAPH=1`.
+
+**Decision (ADR-089):** Adopt Option A — register `"LMHead"` in
+ztensor's `nonCapturableOps` map. LMHead is the last instruction in
+the plan (568 of 569), so excluding it loses zero capture coverage:
+the capture region becomes `[2, 568)`, which is the full 35-layer
+transformer body. Post-capture, LMHead runs on the host stream via
+the same mechanism used for `EmbeddingLookup` pre-capture. Mirrors
+T99.1.1 / ADR-088's playbook.
+
+**Options rejected:**
+
+- **Option B** (fix `MatMulTransposeB` fallback axes for 2D B, in
+  ztensor): Correct but touches five fallback sites with subtly
+  different preconditions. Also, even with correct axes, the
+  fallback's `MatMul` would run on the host stream during capture and
+  could still break capture via implicit memcpy. File separately as a
+  ztensor hardening task; do not block T99.1.4 on it.
+- **Option C** (swap `MatMulTransposeB` for explicit Transpose+MatMul
+  in zerfoo's `lmHeadNode.Forward`): Regresses the fix documented in
+  `inference/arch_llama.go:98-102` — explicit Transpose allocates
+  1GB+ on large-vocab LMs each pass. Also hits the same
+  capture-during-fallback failure class.
+- **Option D** (catch-and-recover in LMHead): not viable, stream is
+  already invalidated mid-capture.
+
+**Cross-repo constraint:** Option A's fix lives in
+`github.com/zerfoo/ztensor`. Per CLAUDE.md policy and T99.1.4 brief,
+cross-repo release is a 30min-2h coordination (ztensor PR ->
+release-please version cut -> zerfoo go.mod bump). The T99.1.4 brief
+explicitly instructs:
+
+> if option (a) is clearly correct but the cross-repo cycle blocks
+> you, STOP and write up the exact ztensor change needed as a handoff
+> note — do NOT attempt to force a cross-repo ship.
+
+Option (a) is clearly correct. Handoff follows.
+
+**Exact ztensor diff** (`github.com/zerfoo/ztensor` @
+`graph/cuda_graph.go`):
+
+```diff
+ var nonCapturableOps = map[string]bool{
+ 	"EmbeddingLookup":            true,
+ 	"Gather":                     true,
+ 	"AutoAttentionMask":          true,
+ 	"AutoPositionIds":            true,
+ 	"Slice":                      true,
+ 	"ConstantOfShape":            true,
+ 	"Shape":                      true,
+ 	"Gemma4PLECombinedProducer":  true,
++	"LMHead":                     true,
+ }
+```
+
+Include a justification comment near the existing
+`Gemma4PLECombinedProducer` comment:
+
+```go
+// LMHead is the terminal op of transformer graphs
+// (hidden -> logits). Its internal MatMulTransposeB fallback calls
+// Transpose(weight, [0,2,1]) on a 2D weight tensor, raising
+// "number of axes 3 must match tensor dimensions 2" from
+// CPUEngine.Transpose when any of BLAS-NT absence, non-float32 T,
+// getDevicePtr failure, or Alloc-during-capture drives into the
+// fallback path. Since LMHead is the last instruction, placing it
+// post-capture costs zero capture-region coverage.
+// See zerfoo/docs/adr/089.
+```
+
+**Coordinator checklist to close T99.1.4:**
+
+1. Open PR in `zerfoo/ztensor` with the diff above (conventional
+   commit: `fix(graph): mark LMHead as non-capturable for CUDA graph`).
+2. Merge (rebase+merge). Wait for release-please to cut ztensor
+   vN.N.N.
+3. In `zerfoo/zerfoo`, update `go.mod`: bump
+   `github.com/zerfoo/ztensor` to vN.N.N. Run `go mod tidy`.
+4. Remove the `ZERFOO_DISABLE_CUDA_GRAPH: "1"` env entry from
+   `docs/bench/manifests/gemma4-e2e.yaml`.
+5. Submit `scripts/gemma4-spark.sh -mode generate -device cuda -steps
+   32 -cleanup`. Success = no `cudaStreamEndCapture failed` or
+   `capture failed: instruction ... (LMHead)` lines in the log.
+   Output may still be degenerate (T99.2.2 is pre-existing and out of
+   scope).
+6. Unblocks T99.1.3 (verify throughput vs baseline with capture on).
+
+**Process note:** the investigation in this repo worktree reached the
+root cause in ~20 minutes by cross-referencing the error string
+(exactly one grep hit in ztensor), the LMHead callsite
+(`inference/arch_llama.go:lmHeadNode.Forward`), and the
+`MatMulTransposeB` fallback pattern (five identical `[]int{0, 2, 1}`
+sites). Confirmation that LMHead is the terminal instruction was the
+deciding factor for Option A over Option B — losing a tail
+instruction costs nothing; a mid-graph non-capturable op would have
+fragmented the region and forced Option B.
+
+**Impact:** No functional change in this repo yet. The worktree is
+clean except for ADR-089 and this devlog entry. Full fix requires the
+coordinator to ship the ztensor diff above and then bump the zerfoo
+go.mod.
+
 ## 2026-04-16: T99.1.3 investigation -- three stacked gemma4e issues, none caused by T99.1.2
 
 **Type:** investigation
