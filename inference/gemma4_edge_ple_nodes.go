@@ -48,16 +48,30 @@ import (
 // per-layer results via the producer's cached tokenPLESlices /
 // modelProjSlices fields through pleSliceNode.
 //
-// CUDA graph capture strategy (see ADR-088). The node is listed as
-// non-capturable in ztensor's graph compiler (Gemma4PLECombinedProducer),
-// so it runs in pre-capture on every forward. After computing the two
-// full-width tensors, it pre-slices them into 35 per-layer slices and
-// caches the slices as GPU-resident tensors with stable addresses across
-// calls. On the first call, stable GPU buffers are allocated via a
-// no-op MulScalar; on subsequent calls, the buffers are refreshed in
-// place via GPUStorage.CopyFromHost. pleSliceNode then reads the cached
-// GPU slices directly — no .Data() calls — which makes the per-layer
-// PLE combiner fully capturable.
+// CUDA graph capture strategy (see ADR-088, T99.2.1 follow-up). The
+// node is listed as non-capturable in ztensor's graph compiler
+// (Gemma4PLECombinedProducer), so it runs in pre-capture on every
+// forward. After computing the two full-width tensors it pre-slices
+// them into numLayers per-layer slices and caches the slices as
+// GPU-resident tensors with stable addresses across calls. pleSliceNode
+// reads the cached slices directly — no .Data() calls — which makes the
+// per-layer PLE combiner fully capturable.
+//
+// Refresh strategy (T99.2.1 fast path). For the decode regime
+// (flatLen == batch*seqLen == 1, i.e. seqLen == 1 which covers every
+// generate step) the per-layer slices are non-owning views into two
+// stable full-width GPU buffers. Each Forward copies the freshly
+// computed full-width tensors into the stable buffers via a single
+// D2D memcpy each (2 memcpys total), instead of 2*numLayers H2D
+// memcpys of tiny 256-float segments. This eliminates the 70 per-step
+// cudaMemcpy launches that caused the regression bisected to commit
+// 96c7540a.
+//
+// For prefill (flatLen > 1), the last-dim slice is strided, so
+// contiguous GPU views are invalid. In that regime the producer falls
+// back to a slower per-layer-scatter CPU gather + H2D upload; prefill
+// runs once per sequence and is not in the decode hot path, so the
+// cost is acceptable.
 type pleCombinedProducer[T tensor.Numeric] struct {
 	engine compute.Engine[T]
 
@@ -69,11 +83,8 @@ type pleCombinedProducer[T tensor.Numeric] struct {
 	hiddenSize int
 	vocabSize  int
 
-	// Per-layer pre-sliced tensors with stable GPU addresses (see
-	// ADR-088). Allocated on the first forward pass via a no-op
-	// MulScalar to obtain GPU buffers; refreshed in place on subsequent
-	// passes via GPUStorage.CopyFromHost. Length == numLayers once
-	// initialized.
+	// Per-layer pre-sliced tensors with stable addresses (see
+	// ADR-088, T99.2.1). Length == numLayers once initialized.
 	tokenPLESlices  []*tensor.TensorNumeric[T]
 	modelProjSlices []*tensor.TensorNumeric[T]
 
@@ -82,6 +93,16 @@ type pleCombinedProducer[T tensor.Numeric] struct {
 	// shape (e.g. prefill vs decode), the buffers are reallocated.
 	cachedBatch  int
 	cachedSeqLen int
+
+	// Stable full-width GPU buffers backing the per-layer views in the
+	// decode fast path (flatLen == 1). Nil when the producer is in the
+	// CPU path or when the fallback prefill path owns the slices. When
+	// non-nil these buffers live for the lifetime of the current shape
+	// regime and the per-layer slice tensors are SubSlice views into
+	// them, so refreshing them with a single D2D memcpy per forward is
+	// enough to propagate new data to every layer.
+	tokenPLEBuf  *tensor.GPUStorage[T]
+	modelProjBuf *tensor.GPUStorage[T]
 }
 
 func newPLECombinedProducer[T tensor.Numeric](
@@ -192,15 +213,17 @@ func (p *pleCombinedProducer[T]) Forward(ctx context.Context, inputs ...*tensor.
 		return nil, fmt.Errorf("Gemma4PLECombinedProducer: model_proj matmul: %w", err)
 	}
 
-	// --- 3. Pre-slice into per-layer GPU-resident tensors with stable
-	// device addresses (see ADR-088). If the batch/seqLen have changed
-	// since the last call, drop the cached buffers so fresh ones are
-	// allocated; otherwise, refresh the existing GPU buffers in place
-	// via CopyFromHost so the CUDA-graph replayed reads hit the same
-	// GPU addresses on every decode step.
+	// --- 3. Pre-slice into per-layer tensors with stable device
+	// addresses (see ADR-088). If the batch/seqLen have changed since
+	// the last call, drop the cached buffers so fresh ones are
+	// allocated; otherwise, refresh the existing buffers in place so
+	// that the CUDA-graph replayed reads hit the same device addresses
+	// on every decode step.
 	if p.cachedBatch != batch || p.cachedSeqLen != seqLen {
 		p.tokenPLESlices = nil
 		p.modelProjSlices = nil
+		p.tokenPLEBuf = nil
+		p.modelProjBuf = nil
 		p.cachedBatch = batch
 		p.cachedSeqLen = seqLen
 	}
@@ -214,29 +237,205 @@ func (p *pleCombinedProducer[T]) Forward(ctx context.Context, inputs ...*tensor.
 }
 
 // refreshPerLayerSlices fills p.tokenPLESlices and p.modelProjSlices so
-// each entry is a GPU-resident [B, S, pleDim] tensor. On the first
-// invocation (or after a shape change) it allocates stable GPU buffers
-// via a no-op MulScalar. On every subsequent invocation it reuses the
-// same GPU buffers and refreshes their contents with CopyFromHost, so
-// the CUDA graph replay path sees stable device addresses.
+// each entry is a [B, S, pleDim] tensor with a stable device address
+// (for GPU engines) or stable backing slice (for CPU engines).
+//
+// T99.2.1: the fast path applies when flatLen == batch*seqLen == 1
+// (every decode step, with seqLen == 1). In that regime the last-dim
+// slice of the full-width rank-3 tensor is contiguous, so each
+// per-layer slice can be a non-owning view into a single stable
+// full-width buffer. Refreshing the 35 slices therefore costs one
+// memcpy (D2D on GPU, slice copy on CPU), not 35 small memcpys.
+//
+// For flatLen > 1 (prefill) the last-dim slice is strided and can't
+// be aliased as a contiguous view; we fall back to a per-layer gather
+// + per-slice refresh. Prefill is invoked once per sequence and runs
+// outside the CUDA-graph replay window, so the extra overhead is not
+// in the decode hot path.
 func (p *pleCombinedProducer[T]) refreshPerLayerSlices(
 	ctx context.Context,
 	tokenPLE, modelProj *tensor.TensorNumeric[T],
 	batch, seqLen int,
 ) error {
-	sliceElems := batch * seqLen * p.pleDim
 	firstCall := p.tokenPLESlices == nil
 	if firstCall {
 		p.tokenPLESlices = make([]*tensor.TensorNumeric[T], p.numLayers)
 		p.modelProjSlices = make([]*tensor.TensorNumeric[T], p.numLayers)
 	}
 
-	// Both tokenPLE and modelProj are rank-3 [B, S, totalPLE]. We need
-	// their dense data to slice on CPU. The engine's MulScalar on a
-	// GPU tensor returns a GPU tensor, but reading via .Data() forces
-	// a D2H copy. Since this node runs in pre-capture, D2H is safe
-	// (no capturing stream). Pull .Data() once per tensor and reuse
-	// the slices.
+	flatLen := batch * seqLen
+	if flatLen == 1 {
+		return p.refreshPerLayerSlicesFast(ctx, tokenPLE, modelProj, batch, seqLen, firstCall)
+	}
+	return p.refreshPerLayerSlicesFallback(ctx, tokenPLE, modelProj, batch, seqLen, firstCall)
+}
+
+// refreshPerLayerSlicesFast is the decode-regime implementation
+// (flatLen == 1). The per-layer slices are non-owning views into two
+// stable full-width buffers. On the first call the stable buffers are
+// allocated and the views are constructed; on every subsequent call a
+// single memcpy per full-width tensor refreshes every layer's data at
+// once. See ADR-088 follow-up and T99.2.1 for the rationale.
+func (p *pleCombinedProducer[T]) refreshPerLayerSlicesFast(
+	ctx context.Context,
+	tokenPLE, modelProj *tensor.TensorNumeric[T],
+	batch, seqLen int,
+	firstCall bool,
+) error {
+	totalPLE := p.numLayers * p.pleDim
+
+	// Branch on the storage type of the freshly computed full-width
+	// tensors. GPU engine: compute stays on-device, D2D refresh. CPU
+	// engine: copy the backing []T slice into the cached full-width
+	// buffer and re-wrap per-layer views.
+	if tokenGPU, ok := tokenPLE.GetStorage().(*tensor.GPUStorage[T]); ok {
+		projGPU, ok := modelProj.GetStorage().(*tensor.GPUStorage[T])
+		if !ok {
+			return fmt.Errorf("Gemma4PLECombinedProducer: modelProj storage mismatches tokenPLE (GPU vs %T)", modelProj.GetStorage())
+		}
+		if firstCall {
+			tb, err := tensor.NewGPUStorage[T](totalPLE, tokenGPU.DeviceID())
+			if err != nil {
+				return fmt.Errorf("alloc tokenPLE stable buffer: %w", err)
+			}
+			mb, err := tensor.NewGPUStorage[T](totalPLE, projGPU.DeviceID())
+			if err != nil {
+				return fmt.Errorf("alloc modelProj stable buffer: %w", err)
+			}
+			p.tokenPLEBuf = tb
+			p.modelProjBuf = mb
+			for layer := 0; layer < p.numLayers; layer++ {
+				offset := layer * p.pleDim
+				tokenView := tensor.NewGPUStorageView[T](p.tokenPLEBuf, offset, p.pleDim)
+				tokenTensor, err := tensor.NewWithStorage[T]([]int{batch, seqLen, p.pleDim}, tokenView)
+				if err != nil {
+					return fmt.Errorf("wrap tokenPLE view layer=%d: %w", layer, err)
+				}
+				p.tokenPLESlices[layer] = tokenTensor
+
+				projView := tensor.NewGPUStorageView[T](p.modelProjBuf, offset, p.pleDim)
+				projTensor, err := tensor.NewWithStorage[T]([]int{batch, seqLen, p.pleDim}, projView)
+				if err != nil {
+					return fmt.Errorf("wrap modelProj view layer=%d: %w", layer, err)
+				}
+				p.modelProjSlices[layer] = projTensor
+			}
+		}
+		// Refresh the stable buffers with a single D2D memcpy each.
+		if err := p.tokenPLEBuf.CopyFromDevice(tokenGPU, 0, 0, totalPLE); err != nil {
+			return fmt.Errorf("tokenPLE D2D refresh: %w", err)
+		}
+		if err := p.modelProjBuf.CopyFromDevice(projGPU, 0, 0, totalPLE); err != nil {
+			return fmt.Errorf("modelProj D2D refresh: %w", err)
+		}
+		_ = ctx
+		return nil
+	}
+
+	// CPU path: allocate a single stable []T of length totalPLE per
+	// tensor and wrap per-layer views as non-owning sub-slices. The
+	// contents are refreshed per call by copying the freshly computed
+	// full-width data in. This keeps the invariant that per-layer
+	// tensor pointers stay stable across calls with the same shape
+	// (exercised by TestPLECombinedProducer_SliceBuffersStable).
+	tokenData := tokenPLE.Data()
+	if tokenData == nil {
+		return fmt.Errorf("tokenPLE has no readable data")
+	}
+	projData := modelProj.Data()
+	if projData == nil {
+		return fmt.Errorf("modelProj has no readable data")
+	}
+	if len(tokenData) < totalPLE || len(projData) < totalPLE {
+		return fmt.Errorf("Gemma4PLECombinedProducer: full-width data shorter than expected (tok=%d proj=%d need>=%d)",
+			len(tokenData), len(projData), totalPLE)
+	}
+	if firstCall {
+		// Allocate stable backing arrays and per-layer sub-slice views.
+		tokenStable := make([]T, totalPLE)
+		projStable := make([]T, totalPLE)
+		copy(tokenStable, tokenData[:totalPLE])
+		copy(projStable, projData[:totalPLE])
+		for layer := 0; layer < p.numLayers; layer++ {
+			offset := layer * p.pleDim
+			tokenView := tokenStable[offset : offset+p.pleDim]
+			tokenTensor, err := tensor.NewWithStorage[T]([]int{batch, seqLen, p.pleDim}, tensor.NewCPUStorage[T](tokenView))
+			if err != nil {
+				return fmt.Errorf("wrap tokenPLE cpu view layer=%d: %w", layer, err)
+			}
+			p.tokenPLESlices[layer] = tokenTensor
+
+			projView := projStable[offset : offset+p.pleDim]
+			projTensor, err := tensor.NewWithStorage[T]([]int{batch, seqLen, p.pleDim}, tensor.NewCPUStorage[T](projView))
+			if err != nil {
+				return fmt.Errorf("wrap modelProj cpu view layer=%d: %w", layer, err)
+			}
+			p.modelProjSlices[layer] = projTensor
+		}
+		// Stash the stable backing arrays on the first layer's slice so
+		// future refreshes can reach them via the existing views.
+		// The per-layer Data() for layer 0 returns the first pleDim
+		// elements of tokenStable; we refresh the full array via the
+		// shared underlying slice below.
+		return nil
+	}
+	// Refresh by overwriting the stable backing arrays in place. Since
+	// each per-layer view shares the underlying array, one bulk copy
+	// updates every layer.
+	if err := refreshCPUStableBuffer(p.tokenPLESlices[0], tokenData[:totalPLE], p.numLayers, p.pleDim); err != nil {
+		return fmt.Errorf("tokenPLE cpu refresh: %w", err)
+	}
+	if err := refreshCPUStableBuffer(p.modelProjSlices[0], projData[:totalPLE], p.numLayers, p.pleDim); err != nil {
+		return fmt.Errorf("modelProj cpu refresh: %w", err)
+	}
+	_ = ctx
+	return nil
+}
+
+// refreshCPUStableBuffer overwrites the stable underlying []T of the
+// first-layer view with `src`. Since every per-layer view references
+// the same underlying slice (with a per-layer offset), one bulk write
+// propagates the update to every layer. `numLayers*pleDim == len(src)`.
+func refreshCPUStableBuffer[T tensor.Numeric](layer0 *tensor.TensorNumeric[T], src []T, numLayers, pleDim int) error {
+	if layer0 == nil {
+		return fmt.Errorf("refreshCPUStableBuffer: layer0 tensor nil")
+	}
+	cs, ok := layer0.GetStorage().(*tensor.CPUStorage[T])
+	if !ok {
+		return fmt.Errorf("refreshCPUStableBuffer: expected CPU storage, got %T", layer0.GetStorage())
+	}
+	// The underlying slice for layer0 is tokenStable[0:pleDim]. Its
+	// capacity extends to the full backing array because sub-slicing
+	// preserves capacity up to the end of the parent slice, so we can
+	// address the entire backing array via its [:numLayers*pleDim]
+	// extension.
+	layer0View := cs.Slice()
+	total := numLayers * pleDim
+	if cap(layer0View) < total {
+		return fmt.Errorf("refreshCPUStableBuffer: backing capacity %d < %d", cap(layer0View), total)
+	}
+	if len(src) != total {
+		return fmt.Errorf("refreshCPUStableBuffer: src len %d != expected %d", len(src), total)
+	}
+	full := layer0View[:total]
+	copy(full, src)
+	return nil
+}
+
+// refreshPerLayerSlicesFallback is the prefill / multi-row regime
+// (flatLen > 1). The last-dim slices are strided so a single view into
+// a full-width buffer cannot represent them. This is the pre-T99.2.1
+// path: scatter-gather on the CPU side, then either upload into fresh
+// per-layer GPU buffers (first call) or refresh existing GPU buffers
+// in place (subsequent calls). Called at most once per sequence (at
+// prefill), so the 2*numLayers memcpy launches are acceptable.
+func (p *pleCombinedProducer[T]) refreshPerLayerSlicesFallback(
+	ctx context.Context,
+	tokenPLE, modelProj *tensor.TensorNumeric[T],
+	batch, seqLen int,
+	firstCall bool,
+) error {
+	sliceElems := batch * seqLen * p.pleDim
 	tokenData := tokenPLE.Data()
 	if tokenData == nil {
 		return fmt.Errorf("tokenPLE has no readable data")
@@ -247,15 +446,12 @@ func (p *pleCombinedProducer[T]) refreshPerLayerSlices(
 	}
 
 	totalPLE := p.numLayers * p.pleDim
-
-	// Per-layer buffers: stride = totalPLE, offset = layer*pleDim per row.
 	flatLen := batch * seqLen
 	tokenScratch := make([]T, sliceElems)
 	projScratch := make([]T, sliceElems)
 
 	for layer := 0; layer < p.numLayers; layer++ {
 		offset := layer * p.pleDim
-		// Gather the per-layer strided slice into a contiguous CPU buffer.
 		for i := 0; i < flatLen; i++ {
 			src := tokenData[i*totalPLE+offset : i*totalPLE+offset+p.pleDim]
 			copy(tokenScratch[i*p.pleDim:(i+1)*p.pleDim], src)
@@ -264,11 +460,6 @@ func (p *pleCombinedProducer[T]) refreshPerLayerSlices(
 		}
 
 		if firstCall {
-			// Allocate a stable GPU buffer by wrapping the CPU data as a
-			// tensor and passing it through a no-op MulScalar. The GPU
-			// engine's getDevicePtr uploads the contents and returns a
-			// GPU-resident tensor whose device address is stable for the
-			// lifetime of the tensor.
 			tokenCPU, err := tensor.New[T]([]int{batch, seqLen, p.pleDim}, append([]T(nil), tokenScratch...))
 			if err != nil {
 				return fmt.Errorf("token slice layer=%d alloc: %w", layer, err)
@@ -291,9 +482,6 @@ func (p *pleCombinedProducer[T]) refreshPerLayerSlices(
 			continue
 		}
 
-		// Subsequent calls: refresh the stable GPU buffers in place.
-		// If the storage is CPU-backed (CPU engine), update the CPU
-		// data directly; no device copy is needed.
 		if err := refreshSliceStorage(p.tokenPLESlices[layer], tokenScratch); err != nil {
 			return fmt.Errorf("token slice layer=%d refresh: %w", layer, err)
 		}

@@ -975,3 +975,131 @@ func TestPLECombinedProducer_SliceBuffersReallocateOnShapeChange(t *testing.T) {
 		t.Fatalf("decode slice unexpected shape: %v", decodeShape)
 	}
 }
+
+// TestPLECombinedProducer_DecodeFastPathSharesBackingStorage pins the
+// T99.2.1 performance invariant: in the decode regime (seqLen == 1),
+// per-layer slice tensors must alias a single shared full-width
+// backing buffer, so refreshing them costs one memcpy instead of
+// numLayers small memcpys. For CPU storage this means the per-layer
+// slices' Slice() views all point into the same underlying []T; for
+// GPU storage this is enforced implicitly by the code path that
+// constructs NewGPUStorageView sub-slices of p.tokenPLEBuf and
+// p.modelProjBuf. This test covers the CPU variant end-to-end; the
+// GPU variant is verified by the DGX Spark gemma4 generate
+// throughput bench required for T99.2.1 acceptance.
+func TestPLECombinedProducer_DecodeFastPathSharesBackingStorage(t *testing.T) {
+	const (
+		numLayers = 4
+		pleDim    = 3
+		hidden    = 8
+		vocab     = 16
+	)
+	totalPLE := numLayers * pleDim
+
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	fill := func(shape []int, seed float32) *tensor.TensorNumeric[float32] {
+		n := 1
+		for _, d := range shape {
+			n *= d
+		}
+		data := make([]float32, n)
+		for i := range data {
+			data[i] = seed + 0.01*float32(i)
+		}
+		tn, err := tensor.New[float32](shape, data)
+		if err != nil {
+			t.Fatalf("tensor.New %v: %v", shape, err)
+		}
+		return tn
+	}
+
+	pleEmbed := fill([]int{vocab, totalPLE}, 1.0)
+	pleModelProj := fill([]int{hidden, totalPLE}, 2.0)
+
+	producer, err := newPLECombinedProducer[float32](engine, pleEmbed, pleModelProj, numLayers, pleDim, hidden)
+	if err != nil {
+		t.Fatalf("newPLECombinedProducer: %v", err)
+	}
+
+	// Decode-shaped pass (seqLen = 1): triggers the fast path.
+	ids := fill([]int{1, 1}, 0.0)
+	ids.Data()[0] = 2
+	hiddenIn := fill([]int{1, 1, hidden}, 0.5)
+	if _, err := producer.Forward(context.Background(), ids, hiddenIn); err != nil {
+		t.Fatalf("first Forward: %v", err)
+	}
+
+	// Invariant 1: the per-layer CPU slices must share a single backing
+	// []T of length totalPLE. Two different layers with the same
+	// underlying array implies sliceLayer0.Data() and sliceLayer1.Data()
+	// are contiguous segments within the same array.
+	for _, pair := range []struct {
+		name   string
+		slices []*tensor.TensorNumeric[float32]
+	}{
+		{"tokenPLESlices", producer.tokenPLESlices},
+		{"modelProjSlices", producer.modelProjSlices},
+	} {
+		if len(pair.slices) != numLayers {
+			t.Fatalf("%s len=%d want %d", pair.name, len(pair.slices), numLayers)
+		}
+		cs0, ok := pair.slices[0].GetStorage().(*tensor.CPUStorage[float32])
+		if !ok {
+			t.Fatalf("%s[0] storage type %T, want *tensor.CPUStorage[float32]", pair.name, pair.slices[0].GetStorage())
+		}
+		base0 := cs0.Slice()
+		// Sanity: layer 0's data is pleDim elements.
+		if len(base0) != pleDim {
+			t.Fatalf("%s[0] Slice len=%d want %d", pair.name, len(base0), pleDim)
+		}
+		// Capacity extends to the full backing array (totalPLE). Using
+		// cap to peek at the shared array.
+		if cap(base0) < totalPLE {
+			t.Fatalf("%s[0] Slice cap=%d want >= %d (per-layer view must share a backing array of length totalPLE)",
+				pair.name, cap(base0), totalPLE)
+		}
+		fullBacking := base0[:totalPLE]
+		// Invariant 2: layer k's slice must be &fullBacking[k*pleDim].
+		for layer := 1; layer < numLayers; layer++ {
+			csK, ok := pair.slices[layer].GetStorage().(*tensor.CPUStorage[float32])
+			if !ok {
+				t.Fatalf("%s[%d] storage type %T, want *tensor.CPUStorage[float32]", pair.name, layer, csK.Slice())
+			}
+			baseK := csK.Slice()
+			if len(baseK) != pleDim {
+				t.Fatalf("%s[%d] Slice len=%d want %d", pair.name, layer, len(baseK), pleDim)
+			}
+			// Elementwise: mutate a byte in fullBacking at the layer
+			// offset and verify it's visible through baseK.
+			sentinel := float32(1000.0 + float32(layer))
+			fullBacking[layer*pleDim] = sentinel
+			if baseK[0] != sentinel {
+				t.Fatalf("%s[%d] does not alias fullBacking at offset %d: want %f got %f",
+					pair.name, layer, layer*pleDim, sentinel, baseK[0])
+			}
+		}
+	}
+
+	// Invariant 3: a subsequent Forward call with the same shape must
+	// not allocate new slice tensor objects, and must refresh the
+	// backing array's contents (not allocate a new one). This is the
+	// per-step no-alloc property that makes the fast path fast.
+	ptrToken := producer.tokenPLESlices[0]
+	ptrProj := producer.modelProjSlices[0]
+	cs0 := ptrToken.GetStorage().(*tensor.CPUStorage[float32])
+	underlyingPre := &cs0.Slice()[:1][0] // pointer to first elem of the backing array
+
+	ids.Data()[0] = 5 // different token so content changes
+	if _, err := producer.Forward(context.Background(), ids, hiddenIn); err != nil {
+		t.Fatalf("second Forward: %v", err)
+	}
+	if producer.tokenPLESlices[0] != ptrToken || producer.modelProjSlices[0] != ptrProj {
+		t.Fatalf("fast-path decode allocated new slice tensor objects on second call")
+	}
+	cs0Post := producer.tokenPLESlices[0].GetStorage().(*tensor.CPUStorage[float32])
+	underlyingPost := &cs0Post.Slice()[:1][0]
+	if underlyingPre != underlyingPost {
+		t.Fatalf("fast-path decode reallocated the backing array on second call")
+	}
+}
