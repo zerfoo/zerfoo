@@ -2,6 +2,76 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-18: T99.2.2 -- gemma4e decode degeneracy code investigation
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, mmap, lmhead, tied-embeddings
+
+**Problem:** `gemma4_e2e -mode generate -device cpu -steps 32 -prompt "The quick brown fox"` produces degenerate output (`"ly\ns\ns\ns..."`) on every commit measured. GPU output is differently degenerate but also incoherent. Decode has never been validated for coherence on gemma4e in either mode on either device.
+
+**Local repro attempt (Mac mini M4, 16 Gi):** OOM-killed at exit 137 even on `-mode forward -seq 4`. Working set requires more headroom than available. Investigation continued via code reading only.
+
+### Established facts
+
+**F1. Q4→Q8 embedding upgrade only fires on the heap-load path.**
+- `inference/load_gguf.go:35-48`: `LoadFile` defaults `mmap: true`; only auto-disables for CUDA.
+- `inference/gguf.go:61,95,195,254`: `finishGGUFLoad(..., upgradeEmbed)` is `true` for heap loads, `false` for mmap.
+- `inference/gguf.go:122-125`: upgrade only runs when `upgradeEmbed` is true.
+- Implication: `-mode generate -device cpu` keeps `embed_tokens.weight` as raw Q4_K mmap. `-mode generate -device cuda` upgrades to Q8 (mmap auto-disabled). `-mode forward` always upgrades (always heap). The CPU and GPU degenerate outputs reach `lmHeadNode.Forward` via **different storage backings of the same tensor**; they may have different root causes that look the same to the caller.
+
+**F2. `lmHeadNode.Forward` (`inference/arch_llama.go:88-217`) has 5 storage-conditional branches:**
+
+| Storage detected | Branch | Math |
+|---|---|---|
+| `Q4Storage` (line 107) | virtual-transpose + `MatMul` | exploits native [N,K] block layout |
+| `Q4KStorage` (line 114) | virtual-transpose + `MatMul` | same pattern |
+| `MmapStorage` (line 121) | `MatMulTransposeB` (preferred) or fallback | comment claims "matMulMmap dispatch handles B-weight correctly" |
+| `TransposeBMatMuler` (line 134) | `MatMulTransposeB` | for upgraded Q8 / GPU |
+| default (line 137) | explicit `Transpose([1,0])` + `MatMul` | |
+
+**F3. CPUEngine does not implement `TransposeBMatMuler`.** Confirmed by grep across `ztensor/compute/cpu_engine*.go`. So on CPU mmap'd Q4_K:
+- lmHead enters MmapStorage branch (F2 row 3) → calls `EngineProxy.MatMulTransposeB`.
+- `engine_proxy.go:405-426`: proxy delegates if real engine implements `TransposeBMatMuler`; CPUEngine doesn't, so proxy falls back to `Transpose(b, [1,0])` + `MatMul`.
+- That fallback transposes a 262144×1536 Q4_K-backed mmap tensor — **a code path never exercised by the validated Gemma 3 inference flow** (Gemma 3 hits the Q4KStorage branch directly because non-mmap loaders dequantize/repack to Q4KStorage; mmap of Gemma 3 has not been the production reference path).
+
+**F4. Tied embedding wiring is correct.** `inference/arch_gemma4_edge.go:73,496` — same `embedWeight` pointer feeds both `newEmbeddingNode` (line 110, scaled by sqrt(hidden)) and `newLMHeadNode` (line 496). After mmap load, both see the same Mmap-backed Q4_K storage. After heap load + upgrade, both see the same upgraded Q8 tensor (since `tensors[name] = upgraded` happens before any graph construction).
+
+**F5. `gemma4.final_logit_softcapping` is present in the Q4_K_M GGUF metadata.** Parsed via `model/gguf/arch.go:186`. So softcap=30 is applied at lmHead per `arch_llama.go:167-214`. Same code path that gemma3 uses without issues.
+
+### Ranked hypotheses
+
+**H1 (highest):** `Transpose` on mmap-backed Q4_K is broken for 2D quantized weights.
+- Predicts degenerate CPU output. Does NOT explain GPU degeneracy (different code path on GPU — `matMulMmapB` at `gpu_engine.go:2240`).
+- Validate: unit-test `engine.Transpose(weight, [1,0])` on a small Mmap-backed Q4_K tensor; compare element-wise against the same tensor loaded via heap (Q4KStorage) and transposed.
+- Fix sketch: short-circuit the `MmapStorage` branch in `lmHeadNode.Forward` (line 121) for Q4_K storage to reuse the **virtual-transpose + MatMul** trick that the eager Q4KStorage branch already uses.
+
+**H2:** GPU path's `matMulMmapB` misroutes for tied LMHead, OR the GPU Q8-upgraded path has its own bug exposed only by 2D-B `MatMulTransposeB`.
+- Predicts degenerate GPU output via a different mechanism than H1.
+- Note ADR-089's MatMulTransposeB fallback in `gpu_engine.go:1248-1338` already raises "axes 3 must match dim 2" on 2D B during capture. If that same fallback fires uncaptured, output may be silently garbage instead of erroring.
+- Validate: log storage type entering lmHead on GPU; compare logits between GPU Q4 mmap path (forced via `WithMmap(true)` if such an option exists) and GPU Q8-upgraded path.
+
+**H3:** Embedding *lookup* (gather) on mmap'd Q4_K dequantizes wrong → cascading garbage from layer 0.
+- Predicts: hidden states wrong from the start; logits wrong regardless of LMHead correctness.
+- Validate: dump `hidden` after `embNode` (line 111) for a known prompt on heap vs mmap loads; should be identical up to FP noise.
+
+**H4 (lowest):** softcap sign/scale error.
+- The observed `"ly\ns\ns\ns..."` pattern is too degenerate for softcap-only bugs (greedy argmax would still pick *some* plausible tokens, not pure repetition). Deprioritize.
+
+### Two cheap discriminating tests (when local memory frees up)
+
+1. **Force heap load on CPU**: change `gemma4_e2e -mode generate` (or add a new flag) to call `inference.LoadFile(path, WithDevice("cpu"), WithMmap(false))`. May require adding `WithMmap` option. If decode becomes coherent → confirms H1/H3 (storage type / upgrade matters, not architecture logic).
+2. **Run on the Q8_0 GGUF** (`gemma-4-E2B-it-Q8_0.gguf`, cached locally, symlinked from Ollama): no Q4→Q8 upgrade needed, no Q4_K storage involved. If decode is coherent → exonerates the rest of gemma4e wiring; bug is fully in the Q4_K mmap or Q4→Q8 upgrade path. If decode is *also* degenerate on Q8_0 → the bug is upstream of storage, likely in gemma4e arch wiring itself.
+
+Test #2 is the highest-information single experiment.
+
+### Next session entry points
+
+- `inference/arch_llama.go:88-217` — `lmHeadNode.Forward`, the dispatch table.
+- `ztensor/compute/engine_proxy.go:405-426` — fallback `Transpose+MatMul` path on CPU mmap.
+- `ztensor/compute/gpu_engine.go:2240-2370` — `matMulMmapB`, the GPU mmap-B handler.
+- `inference/gguf.go:268-300` — `upgradeEmbeddingPrecision`, the Q4→Q8 upgrade and its mmap-skip semantics.
+- `inference/load_gguf.go:35-48` — the load-path branch; consider whether `WithMmap(false)` is wired or needs to be.
+
 ## 2026-04-17: T99.1.4a -- ztensor LMHead nonCapturable shipped, zerfoo bumped to v1.6.0
 
 **Type:** finding
