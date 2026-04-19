@@ -59,10 +59,25 @@ Investigation findings, debugging sessions, and benchmark results.
 
 ### Two cheap discriminating tests (when local memory frees up)
 
-1. **Force heap load on CPU**: change `gemma4_e2e -mode generate` (or add a new flag) to call `inference.LoadFile(path, WithDevice("cpu"), WithMmap(false))`. May require adding `WithMmap` option. If decode becomes coherent → confirms H1/H3 (storage type / upgrade matters, not architecture logic).
-2. **Run on the Q8_0 GGUF** (`gemma-4-E2B-it-Q8_0.gguf`, cached locally, symlinked from Ollama): no Q4→Q8 upgrade needed, no Q4_K storage involved. If decode is coherent → exonerates the rest of gemma4e wiring; bug is fully in the Q4_K mmap or Q4→Q8 upgrade path. If decode is *also* degenerate on Q8_0 → the bug is upstream of storage, likely in gemma4e arch wiring itself.
+`WithMmap` already exists in `inference.LoadFile`. Wired through to `gemma4_e2e -mmap` flag (default `true`). Both tests are single commands:
 
-Test #2 is the highest-information single experiment.
+1. **Force heap load on CPU** (tests H1/H3):
+   ```
+   gemma4_e2e -gguf .../gemma-4-E2B-it-Q4_K_M.gguf \
+     -mode generate -device cpu -mmap=false -steps 32 \
+     -prompt "The quick brown fox"
+   ```
+   If decode becomes coherent → confirms storage type / upgrade matters, not architecture logic. The heap path triggers `upgradeEmbeddingPrecision` which converts the Q4_K embed_tokens to Q8 and changes the lmHead dispatch branch from MmapStorage → TransposeBMatMuler.
+
+2. **Run on Q8_0 GGUF** (highest-information single experiment):
+   ```
+   gemma4_e2e -gguf .../gemma-4-E2B-it-Q8_0.gguf \
+     -mode generate -device cpu -steps 32 \
+     -prompt "The quick brown fox"
+   ```
+   No Q4→Q8 upgrade needed, no Q4_K storage. If coherent → exonerates the rest of gemma4e wiring; bug is fully in the Q4_K mmap or Q4→Q8 upgrade path. If *also* degenerate → bug is upstream of storage, likely gemma4e arch wiring itself. Q8_0 GGUF is symlinked locally at `/Users/dndungu/.cache/zerfoo/models/gemma-4-E2B-it-Q8_0.gguf`.
+
+Memory cost on this Mac mini: ~8 Gi working set per run; needs at least that much free.
 
 ### Next session entry points
 

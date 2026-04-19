@@ -41,6 +41,7 @@ func main() {
 	prompt := flag.String("prompt", "The quick brown fox", "[generate] prompt text")
 	steps := flag.Int("steps", 50, "[generate] max new tokens")
 	device := flag.String("device", "cpu", "[generate] compute device: cpu | cuda")
+	mmap := flag.Bool("mmap", true, "[generate] use mmap GGUF loader (false forces heap load + Q4->Q8 embedding upgrade)")
 	flag.Parse()
 
 	if *ggufPath == "" {
@@ -55,7 +56,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "generate":
-		if err := runGenerate(*ggufPath, *device, *prompt, *steps); err != nil {
+		if err := runGenerate(*ggufPath, *device, *prompt, *steps, *mmap); err != nil {
 			fmt.Fprintf(os.Stderr, "gemma4_e2e: %v\n", err)
 			os.Exit(1)
 		}
@@ -115,7 +116,7 @@ func runForward(ggufPath string, seqLen int) error {
 	return checkFiniteNonZero(output.Data())
 }
 
-func runGenerate(ggufPath, device, prompt string, steps int) error {
+func runGenerate(ggufPath, device, prompt string, steps int, mmap bool) error {
 	if strings.TrimSpace(prompt) == "" {
 		return fmt.Errorf("-prompt must be non-empty")
 	}
@@ -123,9 +124,10 @@ func runGenerate(ggufPath, device, prompt string, steps int) error {
 		return fmt.Errorf("-steps must be > 0")
 	}
 
-	fmt.Printf("gemma4_e2e: [generate] loading %s on %s\n", ggufPath, device)
+	fmt.Printf("gemma4_e2e: [generate] loading %s on %s (mmap=%v)\n", ggufPath, device, mmap)
 	mdl, err := inference.LoadFile(ggufPath,
 		inference.WithDevice(device),
+		inference.WithMmap(mmap),
 	)
 	if err != nil {
 		return fmt.Errorf("LoadFile: %w", err)
