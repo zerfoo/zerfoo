@@ -274,7 +274,6 @@ func upgradeEmbeddingPrecision(tensors map[string]*tensor.TensorNumeric[float32]
 	targets := []string{
 		"model.embed_tokens.weight",
 		"lm_head.weight",
-		"model.ple_embed_tokens.weight",
 	}
 	for _, name := range targets {
 		t, ok := tensors[name]
