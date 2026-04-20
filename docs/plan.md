@@ -1826,31 +1826,21 @@ everything else; this is a performance task, not a correctness blocker.
   surfaced two deeper issues tracked as T99.2.1 and T99.2.2. See
   `docs/devlog.md` 2026-04-16 entry.
 
-- [~] T99.1.4 Make LMHead CUDA-graph-capture compatible  Owner: TBD  Est: 2-4h  verifies: [UC-001]  (code shipped 2026-04-17, DGX verification deferred)
+- [x] T99.1.4 Make LMHead CUDA-graph-capture compatible  Owner: dndungu  Est: 2-4h  verifies: [UC-001]  Completed: 2026-04-20 (DGX verified)
   Deps: none (unblocks T99.1.3)
-  Problem: during gemma4e generate on cuda with capture enabled, the
-  capture region extends to the full [2, 569) graph but ends with
-  `cudaStreamEndCapture failed: operation failed due to a previous
-  error during capture` and the error message points at instruction
-  568 (LMHead): "number of axes 3 must match tensor dimensions 2".
-  Options: (a) register `LMHead` in ztensor's `nonCapturableOps` so it
-  runs post-capture on the host stream (mirrors T99.1.1's playbook for
-  `Gemma4PLECombinedProducer`), or (b) fix the axes/dims path in
-  LMHead so it is capture-safe. Pick based on how small the capture
-  region becomes in option (a) -- losing the last instruction is
-  fine; losing a larger tail is not.
-  AC: gemma4_e2e generate on cuda completes `cudaStreamEndCapture`
-  successfully with `ZERFOO_DISABLE_CUDA_GRAPH` unset, on a binary
-  built from current main (regardless of T99.2.1/T99.2.2 state).
-  Status (2026-04-17, code shipped): ztensor PR
-  [zerfoo/ztensor#98](https://github.com/zerfoo/ztensor/pull/98)
-  merged; v1.6.0 released. zerfoo `go.mod` bumped to ztensor v1.6.0
-  on branch `t99.1.4a-ztensor-v1.6.0-bump` (PR pending). DGX
-  verification of the capture-end AC deferred until DGX load clears
-  and T99.2.2 is addressed (or an explicit capture-only test path is
-  set up that tolerates degenerate decode output). Manifest env-var
-  drop (`ZERFOO_DISABLE_CUDA_GRAPH`) remains part of T99.1.3, not
-  this task.
+  Option A adopted: `LMHead` added to ztensor's `nonCapturableOps`
+  (ztensor PR #98, v1.6.0). zerfoo go.mod bumped via PR #491.
+  Verification (2026-04-20, Spark pod `gemma4-e2e-20260420-213715-cap`,
+  binary built on DGX from main `53ae3ef8`, `-mode generate -device
+  cuda -steps 32`, `ZERFOO_DISABLE_CUDA_GRAPH=0`): run completed with
+  exit PASS; logs contain no `cudaStreamEndCapture failed` line and
+  no `capture failed: instruction ... (LMHead)` line. Success per
+  ADR-089's acceptance criteria. Manifest env-var drop remains on
+  T99.1.3 (which is behaviorally blocked by T99.2.2 decode degeneracy).
+  Residual log (`CompileTraced plan validation failed, falling back
+  to Compile: instruction 0 (Gather): input tensors cannot be nil`)
+  is orthogonal noise -- present on both capture-on and capture-off;
+  tracked under T99.2.2 follow-up space.
 
 ### E99.2 Pre-existing gemma4e correctness + throughput issues (discovered 2026-04-16)
 

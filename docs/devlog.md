@@ -2,6 +2,48 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-20: T99.1.4 -- LMHead CUDA-graph capture-compat verified on DGX
+
+**Type:** verification
+**Tags:** gemma4e, cuda-graph, capture, lmhead, adr-089, ztensor-v1.6.0
+
+**AC (from ADR-089):** gemma4_e2e generate on cuda completes
+`cudaStreamEndCapture` successfully with `ZERFOO_DISABLE_CUDA_GRAPH`
+unset. Success = no `cudaStreamEndCapture failed` or `capture failed:
+instruction ... (LMHead)` in logs.
+
+**Setup:** DGX Spark binary built on host from main `53ae3ef8` (ztensor
+v1.6.0 with `LMHead` in `nonCapturableOps`). Submitted via one-shot
+Spark manifest `/tmp/gemma4-capture.yaml` (copy of
+`docs/bench/manifests/gemma4-e2e.yaml` with `ZERFOO_DISABLE_CUDA_GRAPH=0`
+instead of `"1"`), `-mode generate -device cuda -steps 32 -seq 4
+-prompt "The quick brown fox"`.
+
+**Result:** Spark pod `gemma4-e2e-20260420-213715-cap` completed:
+
+    gemma4_e2e: [generate] loading .../gemma-4-E2B-it-Q4_K_M.gguf on cuda (mmap=true)
+    INFO auto-disabled mmap for CUDA device device=cuda
+    INFO detected Gemma 4 edge variant from PLE/KV-sharing metadata
+    INFO upgraded tensor from Q4 to Q8 tensor=model.embed_tokens.weight
+    gemma4_e2e: arch=gemma4e layers=35 hidden=1536 vocab=262144
+    gemma4_e2e: prompt="The quick brown fox" steps=32
+    generate: CompileTraced plan validation failed, falling back to
+      Compile: instruction 0 (Gather): input tensors cannot be nil
+    gemma4_e2e: generated (55 bytes) in 20.90s (1.53 tok/s over 32 steps):
+      "overdaythe\ns\nsn\n▁Waven\nsn\ns▁определениеn"
+    gemma4_e2e: PASS
+
+No `cudaStreamEndCapture failed`. No `capture failed: instruction ...
+(LMHead)`. AC met.
+
+**Notes:**
+- Decode output still degenerate -- T99.2.2 (orthogonal).
+- `CompileTraced ... instruction 0 (Gather): input tensors cannot be
+  nil` is pre-existing noise, present on both capture-on and
+  capture-off paths. Tracked as a T99.2.2 follow-up.
+- Manifest env-var drop deferred to T99.1.3, which is behaviorally
+  blocked by T99.2.2 decode coherence.
+
 ## 2026-04-20: T99.2.1 -- gemma4e PLE decode regression fixed; 3.15 tok/s at capture-off
 
 **Type:** benchmark
