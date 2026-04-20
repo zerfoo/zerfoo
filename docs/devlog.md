@@ -2,6 +2,119 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-20: T99.2.2 -- gemma3 baseline + tensor-type diagnostic + H12 refutation
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, bfloat16, ple_model_proj, ple_embed_tokens, h11, h12
+
+### Step 1: Gemma3 Q4_K_M on the same binary -> COHERENT
+
+Ran the gemma4_e2e binary (main `53ae3ef8`) with gemma3:1b-it-Q4_K_M
+on DGX CPU (Spark pod `gemma3-e2e-20260420-221108-g3`):
+
+    generated (100 bytes) in 230.66s (0.14 tok/s): "is a quick brown
+    fox.\n\nThis is a simple sentence.\n\nIt is a word.\n\n..."
+
+Output is coherent English. Combined with the earlier Q8_0 gemma4e
+coherent run, this **narrows the bug to the intersection of
+gemma4e-specific nodes and Q4_K storage**. Q4_K is fine on gemma3;
+gemma4e is fine on Q8_0; the interaction fails.
+
+### Step 2: Storage-type diagnostic (ZERFOO_GEMMA4_DEBUG=1)
+
+Added `logTensorStorage` to `inference/arch_gemma4_edge.go` gated on
+`ZERFOO_GEMMA4_DEBUG=1`. Ran once on Q4_K_M forward (pod
+`gemma4-e2e-20260420-221908-diag`). Heap-load storage types:
+
+| Tensor                              | Storage             | Shape            |
+|-------------------------------------|---------------------|------------------|
+| `model.embed_tokens.weight`         | `*Q8Storage` (upgr) | `[262144, 1536]` |
+| `model.ple_embed_tokens.weight`     | `*Q4Storage` (**not upgraded**) | `[262144, 8960]` |
+| `model.ple_model_proj.weight.raw`   | `*BFloat16Storage` (**unusual!**) | `[8960, 1536]`  |
+| `model.ple_proj_norm.weight`        | `*CPUStorage[f32]`  | `[256]`          |
+| `model.ple_model_proj.weight.tw` (after `transposeWeight2D`) | `*CPUStorage[f32]` | `[1536, 8960]` |
+
+Two gemma4e-unique findings:
+
+1. `model.ple_embed_tokens.weight` is a huge **[262144, 8960]** tensor
+   that is *not* upgraded from Q4 to Q8. Gemma3 has no analogue.
+2. `model.ple_model_proj.weight` is **BFloat16**, not Q4_K/Q4_0. The
+   transpose wrapper (`inference/transpose_weight.go:94-101`) has a
+   CPU switch for Q4/Q8/Q4K/Q5_0/Q5K/Q6K and a special Float16 /
+   FP8E4M3 dequant+transpose path, but **NO BFloat16 case**. The
+   BF16 tensor falls through to `engine.Transpose`, which dequantizes
+   to F32 (log confirms `.tw storage=*CPUStorage[float32]`).
+
+### Step 3: H12 surgical test -- Q4->Q8 upgrade for ple_embed_tokens
+
+Added `model.ple_embed_tokens.weight` to `upgradeEmbeddingPrecision`
+targets and re-ran CPU heap Q4_K_M generate
+(`/var/lib/zerfoo/bin/gemma4_e2e`, SSH direct to capture full stdout):
+
+    upgraded tensor from Q4 to Q8 tensor=model.ple_embed_tokens.weight shape="[262144 8960]"
+    ...
+    generated (16 bytes) in 34.46s (0.93 tok/s): "lyes\nsn\nsn\nsn\nsn"
+
+**Same degenerate output as before the fix.** H12 (Q4→Q8 precision on
+the PLE embed table) is **refuted**. Reverted the one-line change
+(commit `cc85fe26`) since Q8 adds 1.9 GB memory for no correctness
+benefit.
+
+### Narrowed hypothesis space (supersedes H11/H12)
+
+- **H13 (NEW, most promising): `BFloat16Storage` path in
+  `pleCombinedProducer.Forward` has a bug.**
+  `p.pleModelProj.Data()` is called implicitly by `engine.MatMul` in
+  the combined producer (`inference/gemma4_edge_ple_nodes.go:211`).
+  Either the BF16 → F32 conversion at decode time, or the F32 matmul
+  against the dequantized weight, produces wrong values. This is the
+  ONLY BF16 2D weight in the gemma4e graph; gemma3 has no BF16 2D
+  weights on this path. Actionable next step: write a standalone
+  Go unit test that loads `model.ple_model_proj.weight` raw bytes,
+  dequantizes via `BFloat16Storage.Slice()`, and compares against the
+  HuggingFace reference weights element-wise.
+- **H14 (NEW): `pleSliceNode` or the per-layer PLE consumer code
+  mishandles the F32 result of the BF16→F32 transpose.** Less likely
+  given the transpose returns ordinary F32; a downstream consumer
+  would need a storage-type-specific branch.
+- **H15 (NEW): the CompileTraced fallback path ("instruction 0 (Gather|
+  MulScalar): input tensors cannot be nil") causes silent wrong
+  outputs.** Appears on Q4_K_M, Q8_0, and gemma3 runs alike, so may
+  not be gemma4e-specific, BUT the nil-input condition may be
+  triggered by the PLE producer specifically. Worth inspecting
+  `ztensor/graph/compile.go` CompileTraced's plan validation.
+- **H11 still open for weights other than ple_embed_tokens.** The
+  attention Q/K/V/O, FFN gate/up/down weights are all `*Q4Storage`
+  (Q4_K → Q4_0 re-quant) in gemma4e heap load, same as in gemma3
+  heap load. If gemma3 works, these kernels aren't intrinsically
+  broken. But gemma4e has `input_gate`, `ple_layer_proj`,
+  `layer_output_scale` as per-block weights not present in gemma3 --
+  auditing their storage types is a next step.
+
+### Residual instrumentation (kept in tree)
+
+`inference/arch_gemma4_edge.go` retains `logTensorStorage` gated on
+`ZERFOO_GEMMA4_DEBUG=1` for future debug sessions. Commit
+`f312a16b`.
+
+### Ideal next-session sequence
+
+1. Re-run the debug-mode forward with Q8_0 GGUF and compare raw
+   storage types against the Q4_K_M matrix above. Specifically: is
+   `model.ple_model_proj.weight` BF16 in the Q8_0 file too, or does
+   it become Q8? If it's BF16 in both and only Q4_K_M degenerates,
+   BF16 transpose is NOT the bug.
+2. Audit `inference/transpose_weight.go` BF16 fallback carefully --
+   `engine.Transpose` for BFloat16Storage may produce an F32 tensor
+   with wrong values if `CPUEngine.Transpose` reads raw uint16 as
+   if it were F32 bits.
+3. Audit `inference/gemma4_edge_ple_nodes.go:211` MatMul -- does
+   engine.MatMul handle BF16 correctly on CPU, or does it silently
+   reinterpret bits?
+4. Instrument `ztensor/graph/compile.go` CompileTraced to print
+   which input is nil at instruction 0 -- this may be a real bug
+   that has been hiding as "orthogonal noise" for weeks.
+
 ## 2026-04-20: T99.2.2 -- MAJOR: Q8_0 coherent, Q4_K_M degenerate; bug lives in Q4_K × gemma4e intersection
 
 **Type:** investigation

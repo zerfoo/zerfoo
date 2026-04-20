@@ -1878,21 +1878,33 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
   failed, falling back to Compile: instruction 0 (Gather|MulScalar):
   input tensors cannot be nil`; orthogonal noise (present on Q8_0
   coherent run too).
-  Current hypothesis space (after 2026-04-20 discriminating tests,
-  see `docs/devlog.md`):
-  - H11: Q4_K × gemma4e-specific node interaction
-    (`pleCombinedProducer`, `pleSliceNode`, KV-shared donor,
-    Gemma4-GELU / QKNormRoPE) -- one of these has a Q4_K-specific
-    bug that gemma3 never hits.
-  - H12: auto Q4→Q8 `model.embed_tokens.weight` upgrade creates a
-    storage-type mismatch that a downstream reader (LM head? PLE
-    producer?) mishandles. Q8_0 GGUF skips the upgrade code path.
-  Next actions: (a) grep for `upgraded tensor from Q4 to Q8` to
-  locate the upgrade call site, audit every reader of
-  `model.embed_tokens.weight`; (b) introduce
-  `-force-dequant-q4k-to-f32` load-time flag to bisect Q4_K GEMM
-  vs storage-mapping; (c) run gemma3:1b Q4_K_M on the same binary to
-  rule out a generic Q4_K regression.
+  Current hypothesis space (after 2026-04-20 pm investigation, see
+  `docs/devlog.md` 2026-04-20 T99.2.2 entries):
+  - **H11 partial**: Q4_K × gemma4e-specific node interaction.
+    Refuted for `model.ple_embed_tokens.weight` (Q4→Q8 upgrade does
+    not fix degeneracy -- H12 refuted below). Still plausible for
+    gemma4e per-block weights (`input_gate`, `ple_layer_proj`,
+    `layer_output_scale`).
+  - **H12 REFUTED (2026-04-20)**: upgrading
+    `model.ple_embed_tokens.weight` Q4→Q8 kept output identical
+    to the degenerate baseline (`lyes\nsn\n...`). Commit
+    `cc85fe26` reverted the change.
+  - **H13 (NEW, most promising)**: `model.ple_model_proj.weight` is
+    BF16 in the Q4_K_M GGUF. `inference/transpose_weight.go:94-101`
+    has no BF16 case on CPU, so BF16 tensors fall through to
+    `engine.Transpose`, which dequantizes to F32. Either the BF16→F32
+    conversion or the subsequent F32 matmul may produce wrong values.
+    Gemma3 has no BF16 2D weight on this path.
+  - **H14 (NEW)**: `pleSliceNode` or the per-layer PLE consumer
+    mishandles the F32 result of the BF16 transpose.
+  - **H15 (NEW)**: the CompileTraced fallback (`instruction 0
+    (Gather|MulScalar): input tensors cannot be nil`) appears on
+    Q4_K_M, Q8_0, and gemma3 runs alike but may be triggered by the
+    PLE producer specifically.
+  Proven facts: (i) gemma3 Q4_K_M on same binary decodes coherently;
+  (ii) gemma4e Q8_0 on same binary decodes coherently; (iii) gemma4e
+  Q4_K_M is degenerate on every device/mmap combination tested.
+  Next investigative steps documented in the devlog.
   AC: gemma4e generate on a standard prompt produces coherent
   English tokens on both CPU and GPU with Q4_K_M GGUF, verified by
   a committed regression test.
