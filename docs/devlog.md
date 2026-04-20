@@ -2,6 +2,38 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-19: T99.2.2 -- H1 invalidated at kernel level; investigation pivots to arch/sampling
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, mmap, lmhead, hypothesis-update
+
+**Update on yesterday's H1 ("Transpose on mmap-backed Q4_K is broken"):** invalidated at the kernel level by code reading.
+
+- `ztensor/compute/cpu_engine.go:1317-1329`: `CPUEngine.Transpose` for 2D `[1,0]` axes already has a virtual-transpose fast path for `MmapStorage` (and Q4/Q8). It returns a tensor with swapped shape and the same physical storage -- no data movement.
+- `ztensor/compute/cpu_engine.go:2443-2458`: subsequent `MatMul(flat, virtual_transposed_mmap_weight)` dispatches to `xblas.GemmF32MmapNT`, which for Q4_K calls `gemmF32MmapQ4KNT` (`internal/xblas/gemm_mmap.go:54-94`).
+- `ztensor/internal/xblas/gemm_mmap_test.go:47` -- `TestGemmF32MmapNT_Q4K` already verifies `GemmF32MmapNT == GemmF32Q4KNT` for the same Q4_K bytes (max diff 1e-5).
+
+So the lmHead CPU mmap path is mathematically equivalent to the heap Q4KStorage path at the matmul level. H1 cannot explain the degeneracy.
+
+**H3 (embedding lookup CPU path):** also re-examined. `inference/arch_llama.go:301-332` -- when storage is not Q8 (no `DequantizeRange` fast path), the code calls `e.weight.Data()` which materializes the entire embedding table to F32 (1.5 GB for gemma4e) then indexes by row. The dequant is the standard `MmapStorage.dequantizeQ4K` (`tensor/mmap_storage.go:286-302`). Layout is row-major `[vocab][hidden]` for both Mmap-Q4K and the raw `Q4KStorage` -- the row index `embData[id*hiddenDim+j]` is correct.
+
+So H3 is also unlikely to be a correctness bug -- only a memory bug (full materialization). On a 16 Gi Mac mini this OOMs; on DGX with 119 Gi it'd just be slow.
+
+**Pivot:** the bug is most likely **upstream of storage type**. T99.2.2 says decode has *never* been validated for coherence on gemma4e -- this is "never worked" not a regression. New hypothesis space:
+
+- **H5: gemma4e-specific arch wiring bug** in `inference/arch_gemma4_edge.go` (PLE handling, dual RoPE, KV sharing, layer ordering, residual connections).
+- **H6: KV-cache init bug for gemma4e's KV-shared-layers (last 20 of 35 share K=V)**. If donor resolution at `arch_gemma4_edge.go:128-141` puts wrong tensors in the cache, decode diverges immediately.
+- **H7: Sampling / generator setup wrong for gemma4e** (e.g., wrong special-token IDs, wrong stop tokens, BOS not prepended).
+- **H8: PLE producer/slicer bug**. T99.1.2 fixed CUDA capture compatibility but did not validate decode correctness. The PLE per-layer slice (`pleSliceNode`) is a gemma4e-only path; an off-by-one or shape bug there would corrupt every layer's hidden state.
+
+**Best next test (revised):** still run the two discriminating commands from yesterday's entry, but interpret the results differently:
+- If `-mmap=false` on Q4_K_M produces *coherent* output: bug is in storage/dispatch (re-examine H1/H3 with fresh eyes).
+- If `-mmap=false` on Q4_K_M is *also degenerate*: bug is upstream of storage -- pivot to H5-H8.
+- If Q8_0 GGUF is *coherent*: bug specifically in the Q4_K path.
+- If Q8_0 GGUF is *also degenerate*: confirms upstream-of-storage, pivot to H5-H8.
+
+The Q8_0 test is the highest-information single experiment (no Q4_K storage at all -> if still broken, the bug must be in gemma4e-specific code paths).
+
 ## 2026-04-18: T99.2.2 -- gemma4e decode degeneracy code investigation
 
 **Type:** investigation
