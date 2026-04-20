@@ -2,6 +2,38 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-20: T99.2.1 -- gemma4e PLE decode regression fixed; 3.15 tok/s at capture-off
+
+**Type:** benchmark
+**Tags:** gemma4e, decode, ple, h2d, d2d, throughput, pr-490
+
+**Problem:** gemma4e generate on cuda with `ZERFOO_DISABLE_CUDA_GRAPH=1`
+regressed from 2.69 tok/s (commit `72828131`, 2026-04-15) to 1.23 tok/s
+(main `6ad8bceb`, 2026-04-16). Same prompt ("The quick brown fox"),
+`-steps 64`, `-seq 4`, `-device cuda`. Root cause suspected: T99.1.2's
+per-step `CopyFromHost` refresh of 35 per-layer PLE slice buffers
+issued 70 H2D transfers per decode step.
+
+**Fix:** PR #490 (branch `t99.2.1-ple-decode-perf`, tip `8bb7e1a1`).
+Refactored `pleCombinedProducer` to upload the two full-width PLE
+tensors once per step, then refresh the 35 per-layer slice buffers via
+D2D `Copy` instead of H2D `CopyFromHost` -- 70 H2D → 2 H2D + 70 D2D,
+eliminating PCIe stalls.
+
+**Bench result (DGX Spark GB10, 2026-04-20 21:33 UTC, via Spark pod
+`gemma4-e2e-20260420-213311`):**
+
+    gemma4_e2e: generated (74 bytes) in 20.32s (3.15 tok/s over 64 steps)
+    model:   gemma-4-E2B-it-Q4_K_M.gguf (262144 vocab, 1536 hidden, 35 layers)
+    device:  cuda, capture-off (ZERFOO_DISABLE_CUDA_GRAPH=1)
+    prompt:  "The quick brown fox", steps=64, seq=4
+
+**Impact:** AC met (3.15 >= 2.69 tok/s). +17% above the
+`72828131` regression floor, +2.56x over the `6ad8bceb` regression.
+Output remains degenerate ("overdaythe\ns\nsn\n▁উল্লেখিত..."); decode
+coherence is T99.2.2, orthogonal to this throughput fix. PR #490
+ready to merge; CI 6/6 green, bench-gpu gate satisfied out-of-band.
+
 ## 2026-04-19: T99.2.2 -- H1 invalidated at kernel level; investigation pivots to arch/sampling
 
 **Type:** investigation

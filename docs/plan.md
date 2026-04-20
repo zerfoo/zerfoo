@@ -1859,17 +1859,20 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
 -- both reproduce on commit `72828131` (the prior "baseline"). See
 `docs/devlog.md` 2026-04-16 entry for the reproduction matrix.
 
-- [ ] T99.2.1 Bisect and fix gemma4e GPU decode throughput regression  Owner: TBD  Est: 4-8h  verifies: [infrastructure]
+- [x] T99.2.1 Bisect and fix gemma4e GPU decode throughput regression  Owner: dndungu  Est: 4-8h  verifies: [infrastructure]  Completed: 2026-04-20
   Deps: none
   Problem: gemma4e generate on cuda with `ZERFOO_DISABLE_CUDA_GRAPH=1`
   ran at 2.69 tok/s on commit `72828131` (2026-04-15) and at 1.23
-  tok/s on commit `6ad8bceb` (main, 2026-04-16). Same prompt, steps,
-  seq, device. Prime suspect is T99.1.2's per-step `CopyFromHost`
-  refresh of the 35 per-layer PLE slice buffers, but not yet bisected.
-  AC: restore gemma4e decode throughput to at least the 72828131
-  level (>= 2.69 tok/s at capture-off on the same bench params), with
-  the root cause identified and documented in the fix PR. Do NOT
-  revert T99.1.2 -- fix forward.
+  tok/s on commit `6ad8bceb` (main, 2026-04-16). Root cause: T99.1.2's
+  per-step `CopyFromHost` refresh issued 70 H2D launches per decode
+  step (35 layers × 2 PLE tensors). Fix: PR #490 refactored
+  `pleCombinedProducer` to do 2 full-width H2D uploads + 70 D2D slice
+  copies per step. Bench (DGX Spark, Spark pod
+  `gemma4-e2e-20260420-213311`, Q4_K_M, `-steps 64 -seq 4 -device cuda`,
+  `ZERFOO_DISABLE_CUDA_GRAPH=1`): **3.15 tok/s** at PR #490 tip
+  `8bb7e1a1`, +17% above the 2.69 AC floor. PR #490 merged at
+  `1001a37e` (2026-04-20). See `docs/devlog.md` 2026-04-20 entry and
+  `docs/benchmarks.md` row `****`.
 
 - [ ] T99.2.2 Fix gemma4e decode correctness (degenerate output)  Owner: TBD  Est: unknown (epic-level)  verifies: [UC-001]
   Deps: none

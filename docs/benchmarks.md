@@ -10,7 +10,7 @@ All benchmarks run on DGX Spark GB10 unless noted. Greedy sampling, 128 output t
 | DeepSeek-R1 1.5B | Q4_K_M | 186 | 168 | **1.11x** | 2026-03-30 |
 | Llama 3.2 3B | Q4_K_M | 92 | 93 | 0.99x | 2026-03-30 |
 | Mistral 7B | Q4_K_M | 44 | 44 | 1.00x | 2026-03-30 |
-| Gemma 4 E2B (edge) | Q4_K_M | 3.85* / 2.69** / 1.23*** | N/A | — | 2026-04-15 / 2026-04-16 |
+| Gemma 4 E2B (edge) | Q4_K_M | 3.85* / 2.69** / 1.23*** / 3.15**** | N/A | — | 2026-04-15 / 2026-04-16 / 2026-04-20 |
 
 \* The `3.85 tok/s` figure originally recorded for commit `72828131`
 could not be reproduced on 2026-04-16: the same binary at the same
@@ -36,6 +36,13 @@ D2D copies per decode step (numLayers per-layer tensors become
 non-owning `NewGPUStorageView` SubSlice views into two stable GPU
 buffers). DGX verification pending GPU availability (training pod
 holding the GPU at fix commit time).
+
+\*\*\*\* 3.15 tok/s = PR #490 tip `8bb7e1a1` gemma4e generate on GPU,
+capture disabled, measured 2026-04-20 via Spark pod
+`gemma4-e2e-20260420-213311`. Same bench params as the 2.69/1.23 rows
+(`-steps 64 -seq 4 -prompt "The quick brown fox"`). Fix: PLE decode
+refresh via 2 H2D + 70 D2D per step instead of 70 H2D. AC met
+(>= 2.69 tok/s). Degenerate decode output unchanged (T99.2.2).
 
 **Correctness caveat (2026-04-16):** gemma4e generate produces
 degenerate tokens (`"ly\ns\ns\ns..."` on CPU, multilingual gibberish
