@@ -3,7 +3,9 @@ package inference
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
+	"os"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -16,6 +18,25 @@ import (
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 )
+
+// logTensorStorage emits a diagnostic slog.Info with the tensor's concrete
+// storage type and shape. Used for T99.2.2 to distinguish Q4_K / Q6_K / Q8 /
+// MmapStorage / etc. at graph-build time. Gated on ZERFOO_GEMMA4_DEBUG=1 to
+// avoid noise in normal runs.
+func logTensorStorage(name string, t *tensor.TensorNumeric[float32]) {
+	if os.Getenv("ZERFOO_GEMMA4_DEBUG") != "1" {
+		return
+	}
+	if t == nil {
+		slog.Info("gemma4e tensor storage", "name", name, "storage", "<nil>")
+		return
+	}
+	slog.Info("gemma4e tensor storage",
+		"name", name,
+		"storage", fmt.Sprintf("%T", t.GetStorage()),
+		"shape", t.Shape(),
+	)
+}
 
 // buildGemma4EdgeGraph constructs a computation graph for the Gemma 4 edge
 // variants (E2B and E4B) from pre-loaded GGUF tensors. Per ADR-086 and ADR-087
@@ -96,10 +117,15 @@ func buildGemma4EdgeGraph(
 	if err != nil {
 		return nil, nil, fmt.Errorf("gemma4-edge: %w", err)
 	}
+	logTensorStorage("model.embed_tokens.weight", embedWeight)
+	logTensorStorage("model.ple_embed_tokens.weight", pleEmbed)
+	logTensorStorage("model.ple_model_proj.weight.raw", pleModelProjRaw)
+	logTensorStorage("model.ple_proj_norm.weight", pleProjNormGain)
 	pleModelProj, err := tw("model.ple_model_proj.weight", pleModelProjRaw)
 	if err != nil {
 		return nil, nil, err
 	}
+	logTensorStorage("model.ple_model_proj.weight.tw", pleModelProj)
 
 	proxy := compute.NewEngineProxy[float32](engine)
 	builder := graph.NewBuilder[float32](proxy)
