@@ -1866,22 +1866,36 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
 
 - [ ] T99.2.2 Fix gemma4e decode correctness (degenerate output)  Owner: TBD  Est: unknown (epic-level)  verifies: [UC-001]
   Deps: none
-  Problem: `gemma4_e2e -mode generate -device cpu -steps 32 -prompt
-  "The quick brown fox"` produces `"ly\ns\ns\ns..."` on both
-  `72828131` and `6ad8bceb`. GPU output is differently degenerate
-  (`"overdaythe\ns\nsn\n..."` on 72828131, multilingual gibberish on
-  6ad8bceb) but also incoherent. The existing plan note that the
-  E98 test pod gave "40 bytes non-degenerate output" referred to
-  `-mode forward`, not `-mode generate`; decode has never been
-  validated for coherence on gemma4e in either mode on either device.
-  Also: every generate run logs `CompileTraced plan validation failed,
-  falling back to Compile: instruction 0 (Gather|MulScalar): input
-  tensors cannot be nil`; unclear whether this is related to the
-  decode break or a separate noise.
+  Problem: `gemma4_e2e -mode generate` produces degenerate tokens
+  (`"ly/s/n..."` CPU mmap, `"lyes/sn..."` CPU heap, `"overdaythe..."`
+  CUDA) on every storage/device/mmap combination **when using
+  Q4_K_M**. Q8_0 GGUF on the same binary/arch produces **coherent**
+  English (`", the sun, the sun, ..."`), isolating the bug to the
+  Q4_K code paths intersecting gemma4e-specific nodes. Prior
+  hypotheses H5-H8 (arch wiring / KV-shared donor / sampling / PLE)
+  are **invalidated** -- they run on the Q8_0 path too.
+  Also: every generate run logs `CompileTraced plan validation
+  failed, falling back to Compile: instruction 0 (Gather|MulScalar):
+  input tensors cannot be nil`; orthogonal noise (present on Q8_0
+  coherent run too).
+  Current hypothesis space (after 2026-04-20 discriminating tests,
+  see `docs/devlog.md`):
+  - H11: Q4_K × gemma4e-specific node interaction
+    (`pleCombinedProducer`, `pleSliceNode`, KV-shared donor,
+    Gemma4-GELU / QKNormRoPE) -- one of these has a Q4_K-specific
+    bug that gemma3 never hits.
+  - H12: auto Q4→Q8 `model.embed_tokens.weight` upgrade creates a
+    storage-type mismatch that a downstream reader (LM head? PLE
+    producer?) mishandles. Q8_0 GGUF skips the upgrade code path.
+  Next actions: (a) grep for `upgraded tensor from Q4 to Q8` to
+  locate the upgrade call site, audit every reader of
+  `model.embed_tokens.weight`; (b) introduce
+  `-force-dequant-q4k-to-f32` load-time flag to bisect Q4_K GEMM
+  vs storage-mapping; (c) run gemma3:1b Q4_K_M on the same binary to
+  rule out a generic Q4_K regression.
   AC: gemma4e generate on a standard prompt produces coherent
-  English tokens on both CPU and GPU, verified by a committed
-  regression test. Likely touches sampling, logits/LMHead, tied
-  embeddings, or the Q4->Q8 upgrade path for `model.embed_tokens.weight`.
+  English tokens on both CPU and GPU with Q4_K_M GGUF, verified by
+  a committed regression test.
 
 ### E98 Risk Register
 

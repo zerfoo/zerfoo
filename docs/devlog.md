@@ -2,6 +2,79 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-20: T99.2.2 -- MAJOR: Q8_0 coherent, Q4_K_M degenerate; bug lives in Q4_K × gemma4e intersection
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, q8_0, degeneracy, discriminating-test
+
+**Experiment.** Two one-shot DGX runs (binary from main `53ae3ef8`,
+`-mode generate -device cpu -seq 4 -steps 32 -prompt "The quick brown fox"`):
+
+| # | Pod                              | GGUF    | mmap  | Output (first 80 chars)                                       | Verdict    |
+|---|----------------------------------|---------|-------|---------------------------------------------------------------|------------|
+| 1 | `gemma4-e2e-20260420-214158-t1`  | Q4_K_M  | false | `lyes\nsn\nsn\nsn\nsn`                                        | DEGENERATE |
+| 2 | `gemma4-e2e-20260420-214833-t2`  | Q8_0    | true  | `, the sun, the sun, the sun, the sun, the sun, the sun, ...` | **COHERENT** |
+
+Prior runs for context: Q4_K_M on Mac CPU mmap=true produced
+`ly\ns\ns\ns...`; Q4_K_M on DGX CUDA (capture-off) produced
+`overdaythe\ns\nsn\n▁উল্লেখিত...`. Every Q4_K_M combo is degenerate;
+the only coherent run is Q8_0.
+
+**Finding.** The Q4_K_M vs Q8_0 pair **isolates the bug to the Q4_K
+code paths**: dequant, GEMM, or the per-tensor format mapping in
+gemma4e-specific nodes. The Apr 19 devlog pivot to H5-H8
+(arch/KV-shared/sampling/PLE) is **invalidated** -- all of those run
+on the Q8_0 path too, and the Q8_0 path is coherent.
+
+**Narrowed hypothesis space (supersedes H5-H8).**
+
+- **H11: Q4_K tensor × gemma4e-specific node bug.** Gemma3 Q4_K_M
+  decodes coherently (241 tok/s, `benchmarks.md` row 1). Gemma4e
+  Q4_K_M is garbage. So the bug is at the intersection of Q4_K
+  storage and a gemma4e-only node (PLE producer/slicer, KV-shared
+  layer donor, dual-RoPE QK norm, gemma4-GELU fused op). Candidates
+  to inspect by code-read first:
+  1. `inference/gemma4_edge_ple_nodes.go` (pleCombinedProducer /
+     pleSliceNode): does it assume a specific storage type for
+     source embed_tokens? Recall: embed_tokens is auto-upgraded
+     Q4→Q8 for Q4_K_M, so the PLE producer sees Q8 there. But per-
+     layer PLE slice buffers are created fresh -- do they inherit
+     the wrong quant?
+  2. `inference/arch_gemma4_edge.go` KV-shared donor resolution
+     (last 20 of 35 layers share K=V). If donor layer's K/V tensor
+     is Q4_K and the donor read misinterprets the Q4 layout, decode
+     produces noise.
+  3. Fused Gemma4 GELU / QKNormRoPE operators -- if they have a
+     Q4_K-vs-F32 dispatch branch and the Q4_K branch has an
+     indexing bug, Q4_K inputs would produce noise.
+
+- **H12: Auto-Q4→Q8 embed_tokens upgrade creates storage-type
+  mismatch.** The log `upgraded tensor from Q4 to Q8 tensor=model.
+  embed_tokens.weight` appears only on Q4_K_M runs. If downstream
+  code (e.g., a tied-weight LM head or the PLE producer) reads the
+  weight assuming Q4 layout but it has been replaced with Q8 layout,
+  every per-token output would be scrambled. The Q8_0 GGUF path
+  doesn't hit the upgrade code, masking the bug.
+
+**Next investigative steps (not taken this session).**
+
+1. Grep `inference/` and `ztensor/` for `"upgraded tensor from Q4 to
+   Q8"` to find the upgrade code, then audit every reader of
+   `model.embed_tokens.weight` to confirm it handles Q8 layout after
+   the upgrade. A reader that assumes Q4 layout confirms H12.
+2. Add a load-time flag `-force-dequant-q4k-to-f32`. If Q4_K_M with
+   that flag is coherent, the Q4_K GEMM kernel has a bug in
+   gemma4e-specific call sites (H11 variant). If still degenerate,
+   the bug is in the upgrade/mapping (H12).
+3. Run gemma3:1b Q4_K_M through the same binary to rule out a
+   generic Q4_K regression -- gemma3's published 241 tok/s run was a
+   different binary.
+
+**Unchanged residual noise.** `CompileTraced plan validation failed,
+falling back to Compile: instruction 0 (Gather|MulScalar): input
+tensors cannot be nil` appears on every generate run including the
+coherent Q8_0 one, so it is orthogonal.
+
 ## 2026-04-20: T99.1.4 -- LMHead CUDA-graph capture-compat verified on DGX
 
 **Type:** verification
