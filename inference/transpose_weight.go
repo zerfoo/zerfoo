@@ -67,24 +67,6 @@ func transposeWeight2D(engine compute.Engine[float32], isGPUEngine bool, name st
 				return tensor.NewWithStorage[float32]([]int{cols, rows}, fp16)
 			}
 
-			// BFloat16: dequantize, transpose, re-encode to preserve BFloat16Storage.
-			// Same rationale as Float16: without this, engine.Transpose produces F32
-			// storage and the BF16 MatMul path is never invoked. For Gemma 4 edge
-			// Q4_K_M GGUFs, `model.ple_model_proj.weight` is stored as BF16 and was
-			// falling through to the dequant-to-F32 fallback, producing degenerate
-			// decode output (T99.2.2 H13).
-			if fs, ok := any(s).(*tensor.BFloat16Storage); ok {
-				f32 := fs.Slice()
-				transposed := make([]float32, len(f32))
-				for r := range rows {
-					for c := range cols {
-						transposed[c*rows+r] = f32[r*cols+c]
-					}
-				}
-				bf16 := tensor.NewBFloat16Storage(transposed)
-				return tensor.NewWithStorage[float32]([]int{cols, rows}, bf16)
-			}
-
 			// FP8 E4M3: dequantize, transpose, re-quantize to preserve FP8E4M3Storage.
 			// Without this, engine.Transpose produces F32 storage and the FP8 MatMul
 			// path is never invoked, causing degenerate output from double quantization
@@ -132,27 +114,6 @@ func transposeWeight2D(engine compute.Engine[float32], isGPUEngine bool, name st
 			}
 			fp16 := tensor.NewFloat16StorageFromF32(transposed)
 			return tensor.NewWithStorage[float32]([]int{cols, rows}, fp16)
-		}
-	}
-
-	// BFloat16: dequantize, transpose, re-encode to preserve BFloat16Storage.
-	// Without this, engine.Transpose produces F32 storage and the BF16 MatMul
-	// path is never invoked. Gemma 4 edge Q4_K_M GGUFs store
-	// `model.ple_model_proj.weight` as BF16; the F32 fallback caused degenerate
-	// decode output (T99.2.2 H13).
-	if fs, ok := any(s).(*tensor.BFloat16Storage); ok {
-		shape := t.Shape()
-		if len(shape) == 2 {
-			f32 := fs.Slice()
-			rows, cols := shape[0], shape[1]
-			transposed := make([]float32, len(f32))
-			for r := range rows {
-				for c := range cols {
-					transposed[c*rows+r] = f32[r*cols+c]
-				}
-			}
-			bf16 := tensor.NewBFloat16Storage(transposed)
-			return tensor.NewWithStorage[float32]([]int{cols, rows}, bf16)
 		}
 	}
 

@@ -191,46 +191,6 @@ func TestTransposeWeight2D_Q8GPU(t *testing.T) {
 	}
 }
 
-func TestTransposeWeight2D_BFloat16(t *testing.T) {
-	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
-
-	f32 := []float32{1, 2, 3, 4, 5, 6}
-	bf16 := tensor.NewBFloat16Storage(f32)
-	w, err := tensor.NewWithStorage[float32]([]int{2, 3}, bf16)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, gpu := range []bool{false, true} {
-		label := "cpu"
-		if gpu {
-			label = "gpu"
-		}
-		t.Run(label, func(t *testing.T) {
-			got, err := transposeWeight2D(engine, gpu, "test.bf16", w)
-			if err != nil {
-				t.Fatal(err)
-			}
-			shape := got.Shape()
-			if shape[0] != 3 || shape[1] != 2 {
-				t.Fatalf("expected shape [3,2], got %v", shape)
-			}
-			gotBF16, ok := got.GetStorage().(*tensor.BFloat16Storage)
-			if !ok {
-				t.Fatalf("expected BFloat16Storage to be preserved, got %T", got.GetStorage())
-			}
-			// Transposed values: [[1,4],[2,5],[3,6]].
-			result := gotBF16.Slice()
-			expected := []float32{1, 4, 2, 5, 3, 6}
-			for i, v := range expected {
-				if diff := result[i] - v; diff > 0.01 || diff < -0.01 {
-					t.Errorf("result[%d] = %f, want %f", i, result[i], v)
-				}
-			}
-		})
-	}
-}
-
 func TestTransposeWeight2D_FP8(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 
