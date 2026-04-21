@@ -2,6 +2,106 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-21: T99.2.2.7 -- H12 + H20 joint DGX validation (H12 REFUTED, H20 replicated; bug OFF the quantization axis)
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, ple, ple_embed_tokens, h12, h20, h21
+
+### Setup
+
+- Main at `7700621a` (PR #496 merged: `feat(inference): T99.2.2.7 --
+  ZERFOO_GEMMA4_PLE_EMBED_Q8 re-quantizes PLE table`).
+- DGX binary rebuilt from `7700621a`.
+- Model: `gemma-4-E2B-it-Q4_K_M.gguf`, CPU, `-mmap=false`, `-steps 32`,
+  prompt `"The quick brown fox"`.
+- Load-time log lines confirm flag routing:
+  - H20 only: one `upgraded tensor from Q4 to Q8` line for
+    `model.embed_tokens.weight` (default target).
+  - H12 on: a second `upgraded tensor from Q4 to Q8` line for
+    `model.ple_embed_tokens.weight shape=[262144 8960]` -- the gate
+    fires only when `ZERFOO_GEMMA4_PLE_EMBED_Q8=1`.
+
+### 2x2 matrix results
+
+| # | `ZERFOO_GEMMA4_PLE_TOKEN_NORM` | `ZERFOO_GEMMA4_PLE_EMBED_Q8` | Decode    | Output                    | Bytes |
+|---|---|---|---|---|---|
+| a | (unset)                        | (unset)                      | 3.64 t/s  | `"lyes\nsn\nsn\nsn\nsn"`  | 16    |
+| b | `1`                            | (unset)                      | 4.27 t/s  | `"sunnyo\n"`              | 7     |
+| c | (unset)                        | `1`                          | 0.95 t/s  | `"lyes\nsn\nsn\nsn\nsn"`  | 16    |
+| d | `1`                            | `1`                          | 1.81 t/s  | `"sunnyo\n"`              | 7     |
+
+### Interpretation
+
+- **(a) baseline** reproduces the Q4_K_M degenerate output exactly
+  (matches T99.2.2.6's 3.62 t/s / `"lyes\nsn\nsn\nsn\nsn"`). Load path
+  wiring is stable.
+- **(b) H20-only** replicates T99.2.2.6's `"sunnyo\n"` at 4.27 t/s.
+- **(c) H12-only** produces **identical** output to baseline
+  (`"lyes\nsn\nsn\nsn\nsn"`, same 16-byte string). The Q4->Q8 upgrade on
+  `model.ple_embed_tokens.weight` does not perturb the decode trajectory
+  at all. Decode throughput drops 3.8x (3.64 -> 0.95 t/s) because the Q8
+  table is ~2x larger (~2.3 GB vs ~1.1 GB) and the Q8 gather kernel path
+  is slower -- an observable but irrelevant side effect.
+- **(d) joint** produces **identical** output to H20-only
+  (`"sunnyo\n"`). Stacking the Q8 upgrade on top of the tokenSlice
+  RMSNorm gives zero additional correction.
+- Output invariance across the Q8 toggle (a==c and b==d, byte-exact) is
+  the dispositive signal: **the Q4_0 gather noise on
+  `ple_embed_tokens.weight` has no measurable effect on the sampled
+  token trajectory, even in greedy decode**, because RMSNorm downstream
+  absorbs it in `projNormed` and the additional magnitude carried by
+  `tokenSlice` changes only scale, not sign/ranking of the logits.
+
+### Decision
+
+Per the T99.2.2.7 plan clause:
+> "If (d) is coherent English: land the flags defaulted-on for gemma4e
+>  and close T99.2.2. If (d) is still degenerate: quantization is not
+>  the bug and investigation pivots off the quantization axis (new
+>  hypothesis H21 TBD -- likely the PLE RoPE/position handling or the
+>  residual combine scale)."
+
+**(d) is still degenerate. H12 is refuted (again, jointly).
+Investigation pivots off the quantization axis.**
+
+### Cumulative hypothesis status after T99.2.2.7
+
+- H12: REFUTED x2 (standalone and joint with H20).
+- H13: REFUTED (BF16 projection).
+- H16: CONFIRMED (PLE branch is on the bug vector).
+- H17: INFORMATIVE (uniform Q4 noise, no outlier rows).
+- H19: CONFIRMED (both tokenSlice and projNormed carry bad values).
+- H20: REFUTED (RMSNorm on tokenSlice alone insufficient).
+- H20 + H12 joint: REFUTED (quantization axis cleared).
+
+### Next steps (T99.2.2.8 / H21)
+
+With the quantization axis cleared, the remaining plausible loci in the
+PLE subsystem that were not yet probed are:
+
+1. **PLE RoPE / positional handling.** The pleSliceNode produces
+   per-token embeddings that carry positional information via the
+   pre-existing gather-then-scale path. If the positions used here are
+   off-by-one vs. the main attention block (or use a different theta
+   schedule than the main RoPE branch), the residual stream's positional
+   signal would silently drift across 35 layers.
+2. **Residual combine scale.** The `Add(projNormed, tokenSlice)` combine
+   is unweighted. Gemma 4 Edge's reference implementation may apply a
+   per-layer gain (similar to LayerScale in other transformers) that
+   we've dropped on the GGUF loader; an implicit 1.0 scale would skew
+   the residual balance.
+3. **PLE attention-to-MLP ordering.** The PLE slice joins the residual
+   stream at a specific plan-order location in Gemma 4 Edge; a one-off
+   ordering difference vs. the reference Python forward pass could
+   explain why both sub-paths carry "noise" that is actually structurally
+   correct but combined at the wrong step.
+
+File T99.2.2.8 to diff the GGUF-loaded PLE graph against the Gemma 4
+reference forward pass at the plan-order level, focusing on RoPE theta
+per-layer, any missing per-layer scale on the PLE combine, and the
+exact residual injection point. Expected to close T99.2.2 or expand it
+into a new epic depending on findings.
+
 ## 2026-04-21: T99.2.2.6 -- H20 DGX validation (REFUTED as standalone)
 
 **Type:** investigation
