@@ -2021,7 +2021,7 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     a T99.2.2.6 as a new task implementing the H20 candidate.
     Refresh `.claude-checkpoint.md`.
 
-  - [ ] T99.2.2.6 H20 fix candidate: RMSNorm the tokenSlice path
+  - [x] T99.2.2.6 H20 fix candidate: RMSNorm the tokenSlice path (SHIPPED 2026-04-21 via PR #494; H20 REFUTED on DGX)
     Owner: TBD  Est: 90m  verifies: [UC-001]  Deps: T99.2.2.5
     Bug locus (from H19 split + H17 L2): Q4 gather on
     `ple_embed_tokens.weight` (262144x8960) and Q4 matmul on
@@ -2041,6 +2041,45 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     confirms H20. If still degenerate, refute H20 and file T99.2.2.7
     to revisit H12 + H20 jointly (upgrade both PLE tensors to Q8
     together, measure).
+    OUTCOME 2026-04-21: DGX decode under Q4_K_M with
+    `ZERFOO_GEMMA4_PLE_TOKEN_NORM=1` changed trajectory from baseline
+    `"lyes\nsn\nsn\nsn\nsn"` (16 B) to `"sunnyo\n"` (7 B). Non-multilingual
+    and non-loop, but still degenerate. Per the plan's refute clause,
+    **H20 is refuted as a standalone fix.** T99.2.2.7 filed for the
+    joint H12 + H20 revisit. See devlog 2026-04-21 T99.2.2.6.
+
+  - [ ] T99.2.2.7 H20 + H12 joint: upgrade ple_embed_tokens.weight to Q8 with ple_token_norm enabled
+    Owner: TBD  Est: 60m  verifies: [UC-001]  Deps: T99.2.2.6
+    Context. H20 alone (normalize tokenSlice) leaves the decode
+    degenerate but non-multilingual (see T99.2.2.6 outcome). H12
+    (upgrade `ple_embed_tokens.weight` from Q4 to Q8 at load) was
+    refuted in isolation because it didn't fix coherence either, but
+    at that time `tokenSlice` was unnormalized and the bigger Q4
+    noise on `ple_model_proj` (H19.proj path) was not yet isolated.
+    With both axes now known to contribute, the joint experiment
+    tests whether reducing noise (Q4->Q8 on the embedding table)
+    plus bounding accumulation (RMSNorm) together restores
+    coherence.
+    Experiment plan.
+      1. In `inference/gguf.go`, extend the existing
+         `upgradeEmbeddingPrecision` hook to also re-quantize
+         `model.ple_embed_tokens.weight` Q4_K -> Q8_0. Gate behind
+         `ZERFOO_GEMMA4_PLE_EMBED_Q8=1` so the change is A/B-able and
+         the baseline is untouched.
+      2. Unit test that the flag routes the tensor through the
+         upgrade path and produces a Q8 storage type on load.
+      3. DGX run matrix (Q4_K_M GGUF, CPU, -mmap=false, -steps 32,
+         "The quick brown fox"):
+           a) baseline (no flags)                      — reproduce
+           b) ZERFOO_GEMMA4_PLE_TOKEN_NORM=1           — replicate T99.2.2.6 output
+           c) ZERFOO_GEMMA4_PLE_EMBED_Q8=1             — H12-only
+           d) ZERFOO_GEMMA4_PLE_TOKEN_NORM=1 + ZERFOO_GEMMA4_PLE_EMBED_Q8=1 — joint
+      4. Decision. If (d) is coherent English: land the flags
+         defaulted-on for gemma4e and close T99.2.2. If (d) is still
+         degenerate: quantization is not the bug and investigation
+         pivots off the quantization axis (new hypothesis H21 TBD —
+         likely the PLE RoPE/position handling or the residual
+         combine scale).
 
 ### T99.2.2 Next-Session Waves
 
@@ -2063,9 +2102,13 @@ assuming no surprises.
 
 - [x] T99.2.2.5 Analyze + propose fix candidate
 
-#### Wave 4 (queued): H20 implementation (1 agent)
+#### Wave 4: H20 implementation (1 agent) -- DONE 2026-04-21 via PR #494 (H20 REFUTED)
 
-- [ ] T99.2.2.6 H20 fix candidate: RMSNorm the tokenSlice path
+- [x] T99.2.2.6 H20 fix candidate: RMSNorm the tokenSlice path
+
+#### Wave 5 (queued): H20 + H12 joint revisit (1 agent)
+
+- [ ] T99.2.2.7 Upgrade ple_embed_tokens.weight to Q8 with ple_token_norm enabled
 
 ### E98 Risk Register
 

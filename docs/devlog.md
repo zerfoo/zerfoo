@@ -2,6 +2,54 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-21: T99.2.2.6 -- H20 DGX validation (REFUTED as standalone)
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, ple, pleSliceNode, h20, ple_token_norm
+
+### Setup
+
+- Main at `b2e6c1d9` (PR #494 merged: `feat(inference): T99.2.2.6 H20 --
+  RMSNorm tokenSlice under ZERFOO_GEMMA4_PLE_TOKEN_NORM`).
+- DGX binary rebuilt from `b2e6c1d9`.
+- Model: `gemma-4-E2B-it-Q4_K_M.gguf`, CPU, `-mmap=false`, `-steps 32`,
+  prompt `"The quick brown fox"`.
+
+### Results
+
+| `ZERFOO_GEMMA4_PLE_TOKEN_NORM` | Decode   | Output | Bytes |
+|---|---|---|---|
+| (unset, baseline)              | 3.62 t/s | `"lyes\nsn\nsn\nsn\nsn"` | 16 |
+| `1` (H20, RMSNorm tokenSlice)  | 4.23 t/s | `"sunnyo\n"`             | 7  |
+
+### Interpretation
+
+- **H20 has a measurable effect.** The decode trajectory changed and the
+  flag-unset baseline reproduces exactly — the code path is wired
+  correctly and the norm is bounding the tokenSlice magnitude as the
+  unit test predicted.
+- **H20 does not restore coherence.** The output is non-multilingual
+  (all-ASCII Latin) and non-punctuation-loop, satisfying the plan's
+  weakest criterion — but "sunnyo\n" is not a coherent English
+  continuation of "The quick brown fox", and the generation terminates
+  into EOS almost immediately. Per the plan's explicit guidance
+  ("If still degenerate, refute H20..."), **H20 is REFUTED as a
+  standalone fix.**
+- The Q4 gather noise contributes but normalizing alone cannot recover
+  the missing information. Evidence from the H17 L2 diagnostic showed
+  uniform per-row noise (p100/p50 = 1.49x with no single-row outliers),
+  consistent with this: RMSNorm rescales but cannot restore the signal
+  swamped by additive noise at every element.
+
+### Next steps
+
+Filing T99.2.2.7 for the joint H12 + H20 revisit: upgrade both
+`ple_embed_tokens.weight` and `ple_model_proj.weight` from Q4 to Q8 at
+load time (reverting the H12 revert and pairing it with the H20
+`ple_token_norm` gate), then re-measure. If the joint combination still
+fails, the bug is not in Q4 noise at all and the investigation moves off
+the quantization axis.
+
 ## 2026-04-21: T99.2.2 -- H19 split + H17 L2 diagnostic -> H20 fix candidate
 
 **Type:** investigation
