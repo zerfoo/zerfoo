@@ -2048,7 +2048,7 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     **H20 is refuted as a standalone fix.** T99.2.2.7 filed for the
     joint H12 + H20 revisit. See devlog 2026-04-21 T99.2.2.6.
 
-  - [ ] T99.2.2.7 H20 + H12 joint: upgrade ple_embed_tokens.weight to Q8 with ple_token_norm enabled
+  - [x] T99.2.2.7 H20 + H12 joint: upgrade ple_embed_tokens.weight to Q8 with ple_token_norm enabled (SHIPPED 2026-04-21 via PR #496; JOINT H12 REFUTED, bug OFF the quantization axis)
     Owner: TBD  Est: 60m  verifies: [UC-001]  Deps: T99.2.2.6
     Context. H20 alone (normalize tokenSlice) leaves the decode
     degenerate but non-multilingual (see T99.2.2.6 outcome). H12
@@ -2080,6 +2080,66 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
          pivots off the quantization axis (new hypothesis H21 TBD —
          likely the PLE RoPE/position handling or the residual
          combine scale).
+    OUTCOME 2026-04-21 (DGX main `7700621a`, Q4_K_M "The quick brown fox" 32 steps):
+      | # | TOKEN_NORM | PLE_EMBED_Q8 | Decode   | Output                    | Bytes |
+      |---|---|---|---|---|---|
+      | a | 0          | 0            | 3.64 t/s | `"lyes\nsn\nsn\nsn\nsn"`  | 16    |
+      | b | 1          | 0            | 4.27 t/s | `"sunnyo\n"`              | 7     |
+      | c | 0          | 1            | 0.95 t/s | `"lyes\nsn\nsn\nsn\nsn"`  | 16    |
+      | d | 1          | 1            | 1.81 t/s | `"sunnyo\n"`              | 7     |
+    (a)==(c) and (b)==(d) byte-exact; the Q4->Q8 upgrade on
+    `ple_embed_tokens.weight` has zero effect on the decode trajectory
+    standalone or jointly with H20. **H12 is refuted (joint).
+    Quantization axis cleared.** Per the decision rule, investigation
+    pivots off quantization. T99.2.2.8 filed below for the next
+    hypothesis (H21: PLE RoPE / residual combine scale / plan-order
+    reference diff). See devlog 2026-04-21 T99.2.2.7.
+
+  - [ ] T99.2.2.8 H21 diagnostic: PLE RoPE / residual combine scale / plan-order reference diff
+    Owner: TBD  Est: 120m  verifies: [UC-001]  Deps: T99.2.2.7
+    Motivation. T99.2.2.7 cleared the quantization axis: Q4_0 gather
+    noise on `ple_embed_tokens.weight` has no measurable effect on
+    the decode trajectory under greedy sampling, even when combined
+    with the tokenSlice RMSNorm (H20). The bug vector runs through
+    the PLE branch (H16 confirmed, H19 confirmed both sub-paths) but
+    is structural rather than numerical. Remaining candidate loci:
+      H21.a PLE RoPE / positional handling — the pleSliceNode uses
+            a gather-then-scale path; if the positions / theta
+            schedule differ from the main attention RoPE, positional
+            drift compounds across 35 layers.
+      H21.b Residual combine scale — `Add(projNormed, tokenSlice)`
+            is unweighted; the Gemma 4 Edge reference may apply a
+            per-layer scale that we are dropping.
+      H21.c Plan-order / injection point — the PLE slice may be
+            injected into the residual at the wrong position in the
+            per-layer forward pass vs. the reference Python forward.
+    Approach.
+      1. Read the Gemma 4 Edge reference PLE implementation (the
+         Python / flax or transformers-style reference that
+         `docs/plan.md` E99.2 or earlier E-blocks cite). Extract the
+         exact per-layer PLE forward pass: gather, scale, any RoPE,
+         any per-layer gain, residual injection point.
+      2. Side-by-side with `inference/gemma4_edge_ple_nodes.go`
+         `pleSliceNode.Forward` and the graph-order in
+         `inference/arch_gemma4_edge.go`, produce a named list of
+         deviations.
+      3. For each deviation, classify as (i) cosmetic / symmetric
+         (unlikely bug), (ii) numerical-scale only (should have
+         been caught by H17 uniform noise test), (iii) structural
+         / position / ordering (top suspicion).
+      4. Write a devlog entry listing the deviation set and
+         prioritizing the candidate fix. If exactly one structural
+         deviation emerges, file T99.2.2.9 as the fix candidate and
+         gate behind `ZERFOO_GEMMA4_PLE_*` to A/B on DGX. If no
+         deviation emerges, escalate: the bug may be outside PLE
+         (unlikely given H16/H19) or the reference being consulted
+         is not the one Google actually trained against, in which
+         case the reference itself becomes the blocker.
+    Artifacts.
+      - `docs/devlog.md` entry "T99.2.2.8 H21 reference diff".
+      - Named deviation list, with graph-code pointers.
+      - If a fix candidate emerges: T99.2.2.9 task + ZERFOO_GEMMA4_PLE_*
+        gate.
 
 ### T99.2.2 Next-Session Waves
 
@@ -2106,9 +2166,13 @@ assuming no surprises.
 
 - [x] T99.2.2.6 H20 fix candidate: RMSNorm the tokenSlice path
 
-#### Wave 5 (queued): H20 + H12 joint revisit (1 agent)
+#### Wave 5: H20 + H12 joint revisit (1 agent) -- DONE 2026-04-21 via PR #496 (H12 REFUTED jointly)
 
-- [ ] T99.2.2.7 Upgrade ple_embed_tokens.weight to Q8 with ple_token_norm enabled
+- [x] T99.2.2.7 Upgrade ple_embed_tokens.weight to Q8 with ple_token_norm enabled
+
+#### Wave 6 (queued): H21 reference diff (1 agent)
+
+- [ ] T99.2.2.8 PLE RoPE / residual combine scale / plan-order reference diff
 
 ### E98 Risk Register
 
