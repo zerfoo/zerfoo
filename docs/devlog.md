@@ -2,6 +2,89 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-20: T99.2.2 -- H13 refuted (BF16 storage preservation is not the fix)
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, bfloat16, ple_model_proj, transpose_weight, h13
+
+### Q4_K_M vs Q8_0 storage-type comparison (H13 discriminating test)
+
+Rebuilt `gemma4_e2e` on DGX from main `1b454814` and ran
+`ZERFOO_GEMMA4_DEBUG=1` on both GGUFs (`-mode forward -seq 4`):
+
+| Tensor | Q4_K_M (degenerate) | Q8_0 (coherent) |
+|---|---|---|
+| `model.embed_tokens.weight` | Q8Storage (upgraded from Q4) | Q8Storage |
+| `model.ple_embed_tokens.weight` (Gather) | **Q4Storage** | **BFloat16Storage** |
+| `model.ple_model_proj.weight.raw` (MatMul) | **BFloat16Storage** | **Q4Storage** |
+| `model.ple_model_proj.weight.tw` (post-transpose) | **CPUStorage[float32]** | **Q4Storage** |
+
+The MatMul weight and the Gather embedding table are effectively
+**swapped** between the two quantizations. Q8_0 never hits the BF16
+transpose fallback path on the MatMul side (its MatMul weight is Q4),
+and it decodes coherently. Q4_K_M falls through to
+`engine.Transpose`, which dequantizes BF16 -> F32 -- matching the
+failure mode the FP8 comment in `inference/transpose_weight.go:70-73`
+warned about.
+
+### Candidate fix: explicit BF16 case in transposeWeight2D
+
+Added BF16 dequantize -> transpose -> re-encode symmetric with the
+existing Float16/FP8 cases (commit `6c8f609e`, since reverted).
+Unit test `TestTransposeWeight2D_BFloat16` (cpu + gpu) passed. After
+rebuild on DGX, `ple_model_proj.weight.tw` storage is now
+`*tensor.BFloat16Storage shape=[1536 8960]` -- the explicit path is
+taken.
+
+### Decode test with BF16 preserved -> STILL DEGENERATE
+
+    gemma4_e2e -gguf gemma-4-E2B-it-Q4_K_M.gguf -mode generate \
+      -device cpu -mmap=false -steps 32 -prompt "The quick brown fox"
+
+Output: `"lyes\nsn\nsn\nsn\nsn"` (identical to the prior degenerate
+baseline). H13 refuted: the bug is **insensitive to whether
+`ple_model_proj.weight.tw` is F32 or BF16 storage**. The MatMul
+produces the same wrong result in both dispatches, so the bug is not
+a matmul-precision issue.
+
+### What this tells us (new signal)
+
+The degenerate output is invariant under:
+- H12: Q4 -> Q8 upgrade of `ple_embed_tokens.weight`.
+- H13: F32 -> BF16 storage of `ple_model_proj.weight.tw`.
+
+Three MatMul variants (F32xF32 via dequant, F32xBF16 native, and
+whatever H12 would have produced) all emit the same `lyes\nsn\n...`.
+Either (a) the MatMul result isn't what's driving the token choice
+at all and the bug is upstream/downstream of this code path, or
+(b) the bug is in a shared consumer of both BF16 and F32 storage
+(e.g. a cast or view that corrupts either one).
+
+### Next hypotheses to test
+
+- **H16**: Ablate the PLE path entirely (zero out the per-layer
+  contribution in `pleSliceNode`) and re-run Q4_K_M decode. If output
+  is still `lyes\nsn\n...`, the PLE branch is a red herring and the
+  bug is in the main transformer stack's interaction with Q4_K. If
+  output becomes white-noise-different or recovers coherence, the
+  bug is localised to the PLE path after all.
+- **H17**: Compare Q4_K_M vs Q8_0 Q4 `ple_embed_tokens.weight` Gather
+  results for the same token id. Dequantize both tables into F32 and
+  check per-row L2 diff. A large discrepancy would implicate the Q4
+  Gather on large (262144-row) tables.
+- **H18**: The `CompileTraced plan validation failed ... instruction
+  0 (MulScalar): input tensors cannot be nil` warning appears in
+  both coherent and degenerate runs but the post-fallback Compile
+  ordering may differ between Q4_K_M and Q8_0. Dump the fallback
+  graph ordering for both and diff.
+
+### Commit trail
+
+- `6c8f609e` fix(inference): T99.2.2 H13 -- preserve BFloat16 storage
+  in transposeWeight2D (candidate; tests pass; does NOT fix decode)
+- `6e901402` Revert H13 fix -- bug invariant to BF16 vs F32 on
+  ple_model_proj
+
 ## 2026-04-20: T99.2.2 -- gemma3 baseline + tensor-type diagnostic + H12 refutation
 
 **Type:** investigation

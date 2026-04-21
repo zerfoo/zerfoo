@@ -1889,18 +1889,33 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     `model.ple_embed_tokens.weight` Q4→Q8 kept output identical
     to the degenerate baseline (`lyes\nsn\n...`). Commit
     `cc85fe26` reverted the change.
-  - **H13 (NEW, most promising)**: `model.ple_model_proj.weight` is
-    BF16 in the Q4_K_M GGUF. `inference/transpose_weight.go:94-101`
-    has no BF16 case on CPU, so BF16 tensors fall through to
-    `engine.Transpose`, which dequantizes to F32. Either the BF16→F32
-    conversion or the subsequent F32 matmul may produce wrong values.
-    Gemma3 has no BF16 2D weight on this path.
+  - **H13 REFUTED (2026-04-20)**: commit `6c8f609e` added an explicit
+    BF16 case to `transposeWeight2D` so `ple_model_proj.weight.tw`
+    is preserved as `BFloat16Storage` through the transpose (verified
+    via `ZERFOO_GEMMA4_DEBUG=1`). Decode output on Q4_K_M was still
+    `"lyes\nsn\nsn\nsn\nsn"` — identical to the prior F32-fallback
+    baseline. The bug is invariant to whether the MatMul consumes
+    F32 or BF16 storage for this weight. Commit `6e901402` reverted.
   - **H14 (NEW)**: `pleSliceNode` or the per-layer PLE consumer
     mishandles the F32 result of the BF16 transpose.
   - **H15 (NEW)**: the CompileTraced fallback (`instruction 0
     (Gather|MulScalar): input tensors cannot be nil`) appears on
     Q4_K_M, Q8_0, and gemma3 runs alike but may be triggered by the
     PLE producer specifically.
+  - **H16 (NEW, post-H13 refutation)**: ablate the PLE branch
+    entirely (zero the per-layer contribution in `pleSliceNode`) on
+    Q4_K_M. If output remains `lyes\nsn\n...`, the PLE path is a red
+    herring and the bug is in the main transformer stack's
+    interaction with Q4_K. Cheap & decisive.
+  - **H17 (NEW)**: the Q4 `ple_embed_tokens.weight` Gather on a
+    262144-row table may produce wrong values. Test: dequantize both
+    the Q4_K_M and Q8_0 versions of this tensor into F32 and compute
+    per-row L2 diff against a reference decoder; large per-row
+    discrepancies would implicate the Q4 gather on large tables.
+  - **H18 (NEW)**: CompileTraced plan fallback ordering differs
+    between Q4_K_M (degenerate) and Q8_0 (coherent) runs even though
+    the traced-plan warning text is identical. Diff the fallback
+    Compile graph traversal order between the two quantizations.
   Proven facts: (i) gemma3 Q4_K_M on same binary decodes coherently;
   (ii) gemma4e Q8_0 on same binary decodes coherently; (iii) gemma4e
   Q4_K_M is degenerate on every device/mmap combination tested.
