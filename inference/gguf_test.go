@@ -156,3 +156,88 @@ func TestLoadGGUF_InvalidFile(t *testing.T) {
 		t.Error("expected error for invalid GGUF file")
 	}
 }
+
+// newQ4Tensor builds a Q4-backed tensor of numElements values filled with a
+// smooth ramp. Size must be a multiple of 32 (Q4_0 block size).
+func newQ4Tensor(t *testing.T, numElements int) *tensor.TensorNumeric[float32] {
+	t.Helper()
+	if numElements%32 != 0 {
+		t.Fatalf("numElements=%d must be a multiple of 32", numElements)
+	}
+	src := make([]float32, numElements)
+	for i := range src {
+		src[i] = float32(i-numElements/2) / float32(numElements/2)
+	}
+	q4 := tensor.QuantizeQ4(src)
+	tn, err := tensor.NewWithStorage[float32]([]int{numElements}, q4)
+	if err != nil {
+		t.Fatalf("NewWithStorage Q4: %v", err)
+	}
+	return tn
+}
+
+// TestUpgradeEmbeddingPrecision_PLEEmbedQ8Flag validates the T99.2.2.7 gate:
+// ZERFOO_GEMMA4_PLE_EMBED_Q8=1 routes `model.ple_embed_tokens.weight` through
+// the Q4->Q8 upgrade path; when the flag is unset, the PLE table is untouched
+// (baseline bit-identical). The default `model.embed_tokens.weight` and
+// `lm_head.weight` upgrades happen in both cases.
+func TestUpgradeEmbeddingPrecision_PLEEmbedQ8Flag(t *testing.T) {
+	makeTensors := func() map[string]*tensor.TensorNumeric[float32] {
+		return map[string]*tensor.TensorNumeric[float32]{
+			"model.embed_tokens.weight":     newQ4Tensor(t, 128),
+			"lm_head.weight":                newQ4Tensor(t, 128),
+			"model.ple_embed_tokens.weight": newQ4Tensor(t, 256),
+		}
+	}
+
+	t.Run("flag_unset_keeps_ple_embed_q4", func(t *testing.T) {
+		t.Setenv("ZERFOO_GEMMA4_PLE_EMBED_Q8", "")
+		tensors := makeTensors()
+		upgradeEmbeddingPrecision(tensors)
+
+		if _, ok := tensors["model.embed_tokens.weight"].GetStorage().(*tensor.Q8Storage); !ok {
+			t.Errorf("embed_tokens: expected Q8Storage, got %T",
+				tensors["model.embed_tokens.weight"].GetStorage())
+		}
+		if _, ok := tensors["lm_head.weight"].GetStorage().(*tensor.Q8Storage); !ok {
+			t.Errorf("lm_head: expected Q8Storage, got %T",
+				tensors["lm_head.weight"].GetStorage())
+		}
+		if _, ok := tensors["model.ple_embed_tokens.weight"].GetStorage().(*tensor.Q4Storage); !ok {
+			t.Errorf("ple_embed_tokens: expected Q4Storage (unchanged), got %T",
+				tensors["model.ple_embed_tokens.weight"].GetStorage())
+		}
+	})
+
+	t.Run("flag_set_upgrades_ple_embed_to_q8", func(t *testing.T) {
+		t.Setenv("ZERFOO_GEMMA4_PLE_EMBED_Q8", "1")
+		tensors := makeTensors()
+		upgradeEmbeddingPrecision(tensors)
+
+		if _, ok := tensors["model.embed_tokens.weight"].GetStorage().(*tensor.Q8Storage); !ok {
+			t.Errorf("embed_tokens: expected Q8Storage, got %T",
+				tensors["model.embed_tokens.weight"].GetStorage())
+		}
+		if _, ok := tensors["lm_head.weight"].GetStorage().(*tensor.Q8Storage); !ok {
+			t.Errorf("lm_head: expected Q8Storage, got %T",
+				tensors["lm_head.weight"].GetStorage())
+		}
+		if _, ok := tensors["model.ple_embed_tokens.weight"].GetStorage().(*tensor.Q8Storage); !ok {
+			t.Errorf("ple_embed_tokens: expected Q8Storage, got %T",
+				tensors["model.ple_embed_tokens.weight"].GetStorage())
+		}
+	})
+
+	t.Run("flag_set_no_ple_tensor_is_noop", func(t *testing.T) {
+		t.Setenv("ZERFOO_GEMMA4_PLE_EMBED_Q8", "1")
+		tensors := map[string]*tensor.TensorNumeric[float32]{
+			"model.embed_tokens.weight": newQ4Tensor(t, 128),
+		}
+		// Must not panic when ple_embed_tokens is absent.
+		upgradeEmbeddingPrecision(tensors)
+		if _, ok := tensors["model.embed_tokens.weight"].GetStorage().(*tensor.Q8Storage); !ok {
+			t.Errorf("embed_tokens: expected Q8Storage, got %T",
+				tensors["model.embed_tokens.weight"].GetStorage())
+		}
+	})
+}

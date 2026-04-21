@@ -270,10 +270,20 @@ func loadGGUFMmapSplit(sf *gguf.SplitFile) (*GGUFModel, io.Closer, error) {
 // so the Q4_0 GEMV speed advantage does not apply. The extra precision from Q8
 // (256 quantization levels vs 16) prevents the cumulative numerical errors that
 // cause garbage output in Q4_K models like Mistral 7B and Llama 3.x.
+//
+// T99.2.2.7 (Gemma 4 Edge PLE): when ZERFOO_GEMMA4_PLE_EMBED_Q8=1, also upgrade
+// `model.ple_embed_tokens.weight` (Q4_K re-quantized to Q4_0 at decode) to Q8.
+// This is the gather table for the PLE tokenSlice path; H12+H20 joint tests
+// whether lower gather noise plus the tokenSlice RMSNorm (H20) restores Q4_K_M
+// decode coherence. Baseline (flag unset) is bit-identical to the pre-T99.2.2.7
+// load path.
 func upgradeEmbeddingPrecision(tensors map[string]*tensor.TensorNumeric[float32]) {
 	targets := []string{
 		"model.embed_tokens.weight",
 		"lm_head.weight",
+	}
+	if os.Getenv("ZERFOO_GEMMA4_PLE_EMBED_Q8") == "1" {
+		targets = append(targets, "model.ple_embed_tokens.weight")
 	}
 	for _, name := range targets {
 		t, ok := tensors[name]
