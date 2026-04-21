@@ -1254,3 +1254,164 @@ func TestPLESliceNode_ZeroAblation(t *testing.T) {
 		}
 	})
 }
+
+// TestPLESliceNode_TokenNormAblation validates the T99.2.2 H20 fix candidate:
+// ZERFOO_GEMMA4_PLE_TOKEN_NORM=1 inserts a per-layer RMSNorm on tokenSlice
+// before the Add(projNormed, tokenSlice) combine. The normed path must:
+//  1. Still produce a non-zero output (contract: normalization, not zeroing).
+//  2. Differ from the baseline (observable behavior change).
+//  3. Produce a strictly smaller max-abs output than the raw-token baseline
+//     for a fixture whose token-identity contribution dominates, confirming
+//     the RMSNorm is bounding the tokenSlice magnitude.
+func TestPLESliceNode_TokenNormAblation(t *testing.T) {
+	const (
+		numLayers = 2
+		pleDim    = 4
+		hidden    = 8
+		vocab     = 16
+	)
+	totalPLE := numLayers * pleDim
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	ops := numeric.Float32Ops{}
+
+	fill := func(shape []int, seed float32) *tensor.TensorNumeric[float32] {
+		n := 1
+		for _, d := range shape {
+			n *= d
+		}
+		data := make([]float32, n)
+		for i := range data {
+			data[i] = seed + 0.01*float32(i)
+		}
+		tn, err := tensor.New[float32](shape, data)
+		if err != nil {
+			t.Fatalf("tensor.New %v: %v", shape, err)
+		}
+		return tn
+	}
+
+	// Amplify the tokenSlice contribution (seed=10) so its max-abs dominates
+	// projNormed (whose magnitude is bounded by the existing RMSNorm). This
+	// makes the H20 bound observable: enabling ple_token_norm should cut the
+	// output max-abs significantly.
+	pleEmbed := fill([]int{vocab, totalPLE}, 10.0)
+	pleModelProj := fill([]int{hidden, totalPLE}, 0.1)
+	normGain := fill([]int{pleDim}, 1.0)
+
+	runForward := func(t *testing.T, tokenNormEnv string) []float32 {
+		t.Helper()
+		// Keep the H19 env unset so both runs share the same ablation state.
+		t.Setenv("ZERFOO_GEMMA4_PLE_ZERO", "")
+		t.Setenv("ZERFOO_GEMMA4_PLE_TOKEN_NORM", tokenNormEnv)
+		producer, err := newPLECombinedProducer[float32](engine, pleEmbed, pleModelProj, numLayers, pleDim, hidden)
+		if err != nil {
+			t.Fatalf("newPLECombinedProducer: %v", err)
+		}
+		ids := fill([]int{1, 1}, 0.0)
+		ids.Data()[0] = 3
+		hiddenIn := fill([]int{1, 1, hidden}, 0.5)
+		if _, err := producer.Forward(context.Background(), ids, hiddenIn); err != nil {
+			t.Fatalf("producer Forward: %v", err)
+		}
+		node, err := newPLESliceNode[float32](engine, ops, producer, normGain, 1e-6, 0)
+		if err != nil {
+			t.Fatalf("newPLESliceNode: %v", err)
+		}
+		out, err := node.Forward(context.Background())
+		if err != nil {
+			t.Fatalf("pleSliceNode Forward: %v", err)
+		}
+		return append([]float32(nil), out.Data()...)
+	}
+
+	maxAbs := func(vs []float32) float32 {
+		var m float32
+		for _, v := range vs {
+			if v < 0 {
+				v = -v
+			}
+			if v > m {
+				m = v
+			}
+		}
+		return m
+	}
+
+	var baseline, normed []float32
+
+	t.Run("baseline_unset", func(t *testing.T) {
+		baseline = runForward(t, "")
+		if maxAbs(baseline) == 0 {
+			t.Fatalf("baseline all-zero; fixture cannot discriminate")
+		}
+	})
+
+	t.Run("token_norm_enabled", func(t *testing.T) {
+		normed = runForward(t, "1")
+		if maxAbs(normed) == 0 {
+			t.Fatalf("token-norm output all-zero; expected bounded non-zero value")
+		}
+		if len(normed) != len(baseline) {
+			t.Fatalf("output length %d != baseline %d", len(normed), len(baseline))
+		}
+		differs := false
+		for i := range normed {
+			d := normed[i] - baseline[i]
+			if d < 0 {
+				d = -d
+			}
+			if d > 1e-6 {
+				differs = true
+				break
+			}
+		}
+		if !differs {
+			t.Fatalf("token-norm output equals baseline; ple_token_norm had no effect")
+		}
+		if maxAbs(normed) >= maxAbs(baseline) {
+			t.Fatalf("token-norm max|out|=%v, want strictly < baseline %v (RMSNorm should bound tokenSlice magnitude)",
+				maxAbs(normed), maxAbs(baseline))
+		}
+	})
+
+	t.Run("frozen_registered", func(t *testing.T) {
+		t.Setenv("ZERFOO_GEMMA4_PLE_ZERO", "")
+		t.Setenv("ZERFOO_GEMMA4_PLE_TOKEN_NORM", "1")
+		producer, err := newPLECombinedProducer[float32](engine, pleEmbed, pleModelProj, numLayers, pleDim, hidden)
+		if err != nil {
+			t.Fatalf("newPLECombinedProducer: %v", err)
+		}
+		node, err := newPLESliceNode[float32](engine, ops, producer, normGain, 1e-6, 0)
+		if err != nil {
+			t.Fatalf("newPLESliceNode: %v", err)
+		}
+		frozen := node.EmbeddedFrozen()
+		if len(frozen) < 2 {
+			t.Fatalf("EmbeddedFrozen returned %d tensors, want >= 2 (proj_norm + token_norm gains)", len(frozen))
+		}
+		// At least one frozen tensor must be [pleDim]-shaped and all-ones
+		// (the freshly initialized ple_token_norm gain).
+		foundOnes := false
+		for _, f := range frozen {
+			s := f.Shape()
+			if len(s) != 1 || s[0] != pleDim {
+				continue
+			}
+			d := f.Data()
+			allOne := true
+			for _, v := range d {
+				if v != 1.0 {
+					allOne = false
+					break
+				}
+			}
+			if allOne {
+				foundOnes = true
+				break
+			}
+		}
+		if !foundOnes {
+			t.Fatalf("EmbeddedFrozen did not include an all-ones [%d] gain tensor for ple_token_norm", pleDim)
+		}
+	})
+}

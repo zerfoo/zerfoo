@@ -558,9 +558,16 @@ type pleSliceNode[T tensor.Numeric] struct {
 	engine    compute.Engine[T]
 	producer  *pleCombinedProducer[T]
 	normLayer *normalization.RMSNorm[T] // shared per-layer projection norm
-	layerIdx  int
-	pleDim    int
-	numLayers int
+	// tokenNormLayer is the T99.2.2 H20 fix candidate: a per-layer RMSNorm
+	// applied to tokenSlice before the Add(projNormed, tokenSlice) combine,
+	// so the Q4-gather noise on `ple_embed_tokens.weight` cannot compound
+	// across 35 layers. Nil when ZERFOO_GEMMA4_PLE_TOKEN_NORM is unset
+	// (baseline). Gain is freshly allocated with init 1.0 and frozen at
+	// graph build.
+	tokenNormLayer *normalization.RMSNorm[T]
+	layerIdx       int
+	pleDim         int
+	numLayers      int
 	// zeroMode is set from ZERFOO_GEMMA4_PLE_ZERO at graph build time.
 	// T99.2.2 H16 / H19 ablation: isolates whether the PLE branch, its
 	// tokenSlice sub-path, or its projNormed sub-path is on the bug vector.
@@ -596,7 +603,7 @@ func newPLESliceNode[T tensor.Numeric](
 	if err != nil {
 		return nil, fmt.Errorf("pleSliceNode: build RMSNorm: %w", err)
 	}
-	return &pleSliceNode[T]{
+	node := &pleSliceNode[T]{
 		engine:    engine,
 		producer:  producer,
 		normLayer: normLayer,
@@ -604,7 +611,45 @@ func newPLESliceNode[T tensor.Numeric](
 		pleDim:    producer.pleDim,
 		numLayers: producer.numLayers,
 		zeroMode:  parsePLEZeroMode(os.Getenv("ZERFOO_GEMMA4_PLE_ZERO")),
-	}, nil
+	}
+	if os.Getenv("ZERFOO_GEMMA4_PLE_TOKEN_NORM") == "1" {
+		tokenNorm, err := buildPLETokenNorm[T](engine, ops, eps, producer.pleDim, layerIdx)
+		if err != nil {
+			return nil, err
+		}
+		node.tokenNormLayer = tokenNorm
+	}
+	return node, nil
+}
+
+// buildPLETokenNorm constructs the T99.2.2 H20 per-layer RMSNorm applied to
+// tokenSlice. Gain is freshly allocated as ones of shape [pleDim] so the norm
+// is initially an identity-scaled (after rms) transform. The gain is frozen at
+// graph build (registered via EmbeddedFrozen on the owning pleSliceNode).
+func buildPLETokenNorm[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	eps float32,
+	pleDim, layerIdx int,
+) (*normalization.RMSNorm[T], error) {
+	gainData := make([]T, pleDim)
+	one := ops.FromFloat64(1.0)
+	for i := range gainData {
+		gainData[i] = one
+	}
+	gainTensor, err := tensor.New[T]([]int{pleDim}, gainData)
+	if err != nil {
+		return nil, fmt.Errorf("pleSliceNode: build ple_token_norm gain tensor: %w", err)
+	}
+	gainParam, err := graph.NewParameter[T](fmt.Sprintf("ple_token_norm.gain.layer_%d", layerIdx), gainTensor, tensor.New[T])
+	if err != nil {
+		return nil, fmt.Errorf("pleSliceNode: wrap ple_token_norm gain: %w", err)
+	}
+	tokenNorm, err := normalization.NewRMSNormFromParam[T](engine, ops, ops.FromFloat64(float64(eps)), gainParam)
+	if err != nil {
+		return nil, fmt.Errorf("pleSliceNode: build ple_token_norm RMSNorm: %w", err)
+	}
+	return tokenNorm, nil
 }
 
 func (n *pleSliceNode[T]) OpType() string                   { return "Gemma4PLESlice" }
@@ -614,6 +659,9 @@ func (n *pleSliceNode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
 func (n *pleSliceNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
 	params := n.normLayer.Parameters()
+	if n.tokenNormLayer != nil {
+		params = append(params, n.tokenNormLayer.Parameters()...)
+	}
 	frozen := make([]*tensor.TensorNumeric[T], 0, len(params))
 	for _, p := range params {
 		frozen = append(frozen, p.Value)
@@ -647,6 +695,16 @@ func (n *pleSliceNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeri
 	projNormed, err := n.normLayer.Forward(ctx, projSlice)
 	if err != nil {
 		return nil, fmt.Errorf("pleSliceNode(layer=%d): rmsnorm: %w", n.layerIdx, err)
+	}
+	// T99.2.2 H20 fix candidate: when ZERFOO_GEMMA4_PLE_TOKEN_NORM=1, apply a
+	// per-layer RMSNorm to tokenSlice before the combine so Q4-gather noise on
+	// `ple_embed_tokens.weight` cannot compound across 35 layers.
+	if n.tokenNormLayer != nil {
+		tokenNormed, err := n.tokenNormLayer.Forward(ctx, tokenSlice)
+		if err != nil {
+			return nil, fmt.Errorf("pleSliceNode(layer=%d): token rmsnorm: %w", n.layerIdx, err)
+		}
+		tokenSlice = tokenNormed
 	}
 	// T99.2.2 H19 ablation: suppress only the target sub-path BEFORE the
 	// combine, so "token" and "proj" are truly independent. Producer cache
