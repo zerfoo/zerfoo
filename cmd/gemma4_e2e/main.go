@@ -3,18 +3,23 @@
 // forward pass on CPU exceeds reasonable test timeouts, so these assertions
 // cannot live in the CPU `go test` path.
 //
-// Two modes:
+// Three modes:
 //   - forward (default, T93.4.1/E96): load GGUF, build the graph, run one
 //     forward pass, and verify finite non-zero logits.
 //   - generate (T97.1.1): load the model end-to-end via inference.LoadFile
 //     (which builds graph + extracts tokenizer + wires a Generator), then run
 //     greedy decode for N steps on the given prompt and verify finite logits
 //     and non-degenerate output.
+//   - ple-embed-diff (T99.2.2.2/H17): load `model.ple_embed_tokens.weight`
+//     from a Q4_K_M GGUF and a Q8_0 GGUF, dequantize both to F32, and print
+//     per-row L2-difference summary statistics plus the top-20 worst rows.
+//     No graph build, no generation -- purely a weight-level diagnostic.
 //
 // Usage (from Spark pod manifest):
 //
 //	gemma4_e2e -gguf /var/lib/zerfoo/models/gemma-4-E2B-it-Q4_K_M.gguf
 //	gemma4_e2e -gguf <path> -mode generate -prompt "The quick" -steps 50
+//	gemma4_e2e -mode ple-embed-diff -gguf-q4 <q4-path> -gguf-q8 <q8-path>
 //
 // Exit codes: 0 = all checks pass; 1 = any check fails.
 package main
@@ -35,33 +40,48 @@ import (
 )
 
 func main() {
-	ggufPath := flag.String("gguf", "", "path to Gemma 4 E2B GGUF file (required)")
-	mode := flag.String("mode", "forward", "mode: forward | generate")
+	ggufPath := flag.String("gguf", "", "path to Gemma 4 E2B GGUF file ([forward|generate] required)")
+	mode := flag.String("mode", "forward", "mode: forward | generate | ple-embed-diff")
 	seqLen := flag.Int("seq", 4, "[forward] sequence length for the single forward pass")
 	prompt := flag.String("prompt", "The quick brown fox", "[generate] prompt text")
 	steps := flag.Int("steps", 50, "[generate] max new tokens")
 	device := flag.String("device", "cpu", "[generate] compute device: cpu | cuda")
 	mmap := flag.Bool("mmap", true, "[generate] use mmap GGUF loader (false forces heap load + Q4->Q8 embedding upgrade)")
+	ggufQ4 := flag.String("gguf-q4", "", "[ple-embed-diff] absolute path to Q4_K_M GGUF (required for this mode)")
+	ggufQ8 := flag.String("gguf-q8", "", "[ple-embed-diff] absolute path to Q8_0 GGUF (required for this mode)")
+	pleMaxRows := flag.Int("ple-max-rows", 0, "[ple-embed-diff] if > 0, limit comparison to the first N rows (R99.2.2.A scoped run)")
 	flag.Parse()
-
-	if *ggufPath == "" {
-		fmt.Fprintln(os.Stderr, "gemma4_e2e: -gguf is required")
-		os.Exit(2)
-	}
 
 	switch *mode {
 	case "forward":
+		if *ggufPath == "" {
+			fmt.Fprintln(os.Stderr, "gemma4_e2e: -gguf is required for -mode forward")
+			os.Exit(2)
+		}
 		if err := runForward(*ggufPath, *seqLen); err != nil {
 			fmt.Fprintf(os.Stderr, "gemma4_e2e: %v\n", err)
 			os.Exit(1)
 		}
 	case "generate":
+		if *ggufPath == "" {
+			fmt.Fprintln(os.Stderr, "gemma4_e2e: -gguf is required for -mode generate")
+			os.Exit(2)
+		}
 		if err := runGenerate(*ggufPath, *device, *prompt, *steps, *mmap); err != nil {
 			fmt.Fprintf(os.Stderr, "gemma4_e2e: %v\n", err)
 			os.Exit(1)
 		}
+	case "ple-embed-diff":
+		if *ggufQ4 == "" || *ggufQ8 == "" {
+			fmt.Fprintln(os.Stderr, "gemma4_e2e: -gguf-q4 and -gguf-q8 are required for -mode ple-embed-diff")
+			os.Exit(2)
+		}
+		if err := runPLEEmbedDiff(*ggufQ4, *ggufQ8, *pleMaxRows, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "gemma4_e2e: %v\n", err)
+			os.Exit(1)
+		}
 	default:
-		fmt.Fprintf(os.Stderr, "gemma4_e2e: unknown -mode %q (want forward|generate)\n", *mode)
+		fmt.Fprintf(os.Stderr, "gemma4_e2e: unknown -mode %q (want forward|generate|ple-embed-diff)\n", *mode)
 		os.Exit(2)
 	}
 
