@@ -1934,11 +1934,113 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     is the bug vector.
   Proven facts: (i) gemma3 Q4_K_M on same binary decodes coherently;
   (ii) gemma4e Q8_0 on same binary decodes coherently; (iii) gemma4e
-  Q4_K_M is degenerate on every device/mmap combination tested.
+  Q4_K_M is degenerate on every device/mmap combination tested;
+  (iv) 2026-04-21 H16: zeroing per-layer PLE output changes the
+  degenerate trajectory (commit `cca5ea3b`).
   Next investigative steps documented in the devlog.
   AC: gemma4e generate on a standard prompt produces coherent
   English tokens on both CPU and GPU with Q4_K_M GGUF, verified by
   a committed regression test.
+
+  #### T99.2.2 Next-Session Subtasks (queued 2026-04-21)
+
+  Scope: discriminate between the Q4 Gather on
+  `ple_embed_tokens.weight` (262144-row table) and the Q4 MatMul on
+  `ple_model_proj.weight` as the bug carrier, then decide on a fix
+  candidate. Prereqs met: H16 confirmed PLE involvement; DGX binary
+  built from `cca5ea3b`; Q4_K_M and Q8_0 GGUFs present on DGX.
+
+  - [ ] T99.2.2.1 Extend ZERFOO_GEMMA4_PLE_ZERO to granular modes
+    Owner: TBD  Est: 45m  verifies: [UC-001]  Deps: none
+    Change the env var in `inference/gemma4_edge_ple_nodes.go` to
+    accept three values beyond "1" (zero all): "token" (zero only
+    the `tokenSlice` path, leave `projNormed` active), "proj" (zero
+    only the `projNormed` path, leave `tokenSlice` active), and
+    "both" (alias of "1"). Keep "1" as a shorthand for "both" to
+    preserve the H16 artifact. Add two new cases to
+    `TestPLESliceNode_ZeroAblation` to cover "token" and "proj"
+    modes; each must produce a non-zero output that is not the same
+    as the other. Tier 0/1 run. Commit and push.
+
+  - [ ] T99.2.2.2 H17 diagnostic: dequantize + diff ple_embed_tokens.weight
+    Owner: TBD  Est: 90m  verifies: [UC-001]  Deps: none (can run
+    in parallel with T99.2.2.1)
+    Write a diagnostic test or `-mode ple-embed-diff` in
+    `cmd/gemma4_e2e/` that: (a) loads the Q4_K_M GGUF and the Q8_0
+    GGUF; (b) dequantizes `model.ple_embed_tokens.weight` from both
+    into F32 slices; (c) computes, per row, the L2 norm of the
+    difference and stores the top-K largest-error rows with their
+    row indices; (d) prints a summary histogram. Shape is
+    [262144, 8960]. If Q8_0 is already post-dequant F32 from GGUF
+    loader, just consume it directly; otherwise use the same
+    dequantize helpers used by the inference loader. Do not diff
+    all 262144 rows visually; emit statistics only (p50, p95, p99,
+    p100, worst 20 rows by index and L2). Commit and push.
+
+  - [ ] T99.2.2.3 Run H19 split ablations on DGX
+    Owner: TBD  Est: 30m  verifies: [UC-001]  Deps: T99.2.2.1
+    Pull and rebuild on DGX. For each of mode=`token`, mode=`proj`,
+    mode=`both`, run `gemma4_e2e -mode generate` on Q4_K_M (CPU,
+    -mmap=false, -steps 32, same prompt). Record each generated
+    string. Compare against the two known points: baseline
+    `"lyes\nsn\n..."` and H16-ablation
+    `"▁PM▁Transport🇱▁KenЛSm..."`. Interpret:
+    * If `token`=baseline and `proj`=multilingual-noise, the
+      `projNormed` path is the sole bug carrier -> focus on the
+      Q4 MatMul on `ple_model_proj.weight`.
+    * If `proj`=baseline and `token`=multilingual-noise, the
+      `tokenSlice` path is the sole bug carrier -> focus on the
+      Q4 Gather on `ple_embed_tokens.weight`.
+    * If both intermediate modes produce coherent English, the
+      bug is driven only when both paths combine and Q4 magnitudes
+      interact.
+    * If both modes remain degenerate in different ways, the bug
+      is distributed across both paths.
+    Append the result to `docs/devlog.md`.
+
+  - [ ] T99.2.2.4 Run H17 ple_embed diagnostic on DGX
+    Owner: TBD  Est: 20m  verifies: [UC-001]  Deps: T99.2.2.2
+    Pull and rebuild on DGX. Run the diagnostic from T99.2.2.2 on
+    the two GGUFs. Record the L2 summary (p50/p95/p99/p100 and
+    worst 20 row indices). Cross-reference the worst-row indices
+    against token ids known to be emitted during the Q4_K_M
+    generate run (the "sn" / "\n" / "lyes" tokens; get these via
+    the tokenizer if needed). Append the result to
+    `docs/devlog.md`. If top-error rows align with emitted tokens,
+    the Q4 gather on large tables is directly implicated.
+
+  - [ ] T99.2.2.5 Analyze + propose fix candidate
+    Owner: TBD  Est: 45m  verifies: [UC-001]  Deps: T99.2.2.3,
+    T99.2.2.4
+    Combine the H19 split and H17 diagnostic findings. Write a
+    devlog entry "T99.2.2 fix candidate proposed" with: (1) the
+    narrowest bug locus supported by both experiments; (2) a named
+    fix hypothesis H20 with a concrete code pointer (file and
+    function) and expected behavior change; (3) a DISC test that
+    would refute H20. Update `docs/plan.md` T99.2.2 block and add
+    a T99.2.2.6 as a new task implementing the H20 candidate.
+    Refresh `.claude-checkpoint.md`.
+
+### T99.2.2 Next-Session Waves
+
+Wave 1 runs two independent diagnostics in parallel; Wave 2 runs the
+DGX executions (serialised on the single DGX, but each run is short);
+Wave 3 is a single synthesis task. Total wall time estimate 4.0h
+assuming no surprises.
+
+#### Wave 1: Instrument (2 agents)
+
+- [ ] T99.2.2.1 Extend ZERFOO_GEMMA4_PLE_ZERO to granular modes
+- [ ] T99.2.2.2 H17 diagnostic: dequantize + diff ple_embed_tokens.weight
+
+#### Wave 2: DGX execution (2 agents, serialised on DGX)
+
+- [ ] T99.2.2.3 Run H19 split ablations on DGX
+- [ ] T99.2.2.4 Run H17 ple_embed diagnostic on DGX
+
+#### Wave 3: Synthesise (1 agent)
+
+- [ ] T99.2.2.5 Analyze + propose fix candidate
 
 ### E98 Risk Register
 
@@ -1947,6 +2049,8 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
 | R98.1 | gemma3:1b repro also fails (bug is cross-arch, bigger scope) | T98.1.1 outcome decides direction; if cross-arch, scope expands and we file a new epic. |
 | R98.2 | Stack trace points at cuBLAS/cuDNN internals (bug is in ztensor CUDA kernel, not wiring) | Escalate to ztensor repo; may need 3+ extra days. |
 | R98.3 | TrySlice silently returning zero masks upstream bugs (bug is older and deeper) | Adopt ZERFOO_TRY_SLICE_STRICT (T98.1.3) as default for debug builds; keep permissive for prod until explicit cleanup. |
+| R99.2.2.A | H17 diagnostic takes far longer than 90m if the GGUF Q4 dequant path needs new helpers | Start by checking whether `inference/gguf.go` already exposes a re-quant or dequant helper for Q4_K to F32; if yes, reuse; if no, scope the diagnostic to just the first 64k rows as a first pass. |
+| R99.2.2.B | H19 split ablation produces three similar degenerate outputs (inconclusive) | Fall back to H18 CompileTraced plan-order diff; file a new T99.2.2.6 to dump fallback Compile graph traversals and diff Q4_K_M vs Q8_0. |
 
 ---
 
@@ -2335,6 +2439,25 @@ Task details removed during /tidy --apply. See git history for full lists.
 ---
 
 ## Progress Log
+
+### 2026-04-21: T99.2.2 next-session plan -- H17/H19 subtasks queued
+
+- **Change summary.** T99.2.2 H16 ablation test completed this session
+  (commits `cca5ea3b` code, `2804a116` docs, `cb75e079` unrelated
+  README cleanup). H16 CONFIRMED: zeroing per-layer PLE output changes
+  the Q4_K_M degenerate decode trajectory; PLE branch is on the bug
+  vector path but is not the sole cause.
+- **Plan delta.** Added five concrete subtasks under T99.2.2 for the
+  next /apply session: T99.2.2.1 (extend env gate to granular modes),
+  T99.2.2.2 (Q4 dequant + per-row L2 diagnostic), T99.2.2.3 and
+  T99.2.2.4 (DGX executions), T99.2.2.5 (synthesize + propose H20 fix
+  candidate). Three waves defined: Wave 1 (2 agents, instrument),
+  Wave 2 (2 agents serialised on DGX), Wave 3 (1 agent, synthesize).
+- **Risk register delta.** Added R99.2.2.A (H17 diagnostic could
+  overrun estimate if no Q4 dequant helper exists) and R99.2.2.B
+  (inconclusive H19 outputs fall back to H18 plan-order diff).
+- **No ADR needed.** This is continuation of an open investigation;
+  no architectural decision was made in this session.
 
 ### 2026-04-14 (later): E98.T98.2.1 dynamic instrumentation localizes bug to FusedRMSNormGPU
 
