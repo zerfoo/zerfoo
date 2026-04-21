@@ -2,6 +2,100 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-21: T99.2.2 -- H19 split + H17 L2 diagnostic -> H20 fix candidate
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, ple, pleSliceNode, h17, h19, h20
+
+### Wave 2 runs (DGX, main tip `b14c3075`, Q4_K_M GGUF, CPU, -mmap=false)
+
+#### T99.2.2.3 H19 split ablations (`-mode generate -steps 32 -prompt "The quick brown fox"`)
+
+| `ZERFOO_GEMMA4_PLE_ZERO` | Decode   | Output (first line) |
+|---|---|---|
+| (unset, baseline)        | 3.27 t/s | `"lyes\nsn\nsn\nsn\nsn"`                           |
+| `token` (zero tokenSlice, proj stays active) | 2.48 t/s | `"**************\n**\n**\n**\n**\n**\n**\n**"` |
+| `proj`  (zero projNormed, token stays active) | 2.65 t/s | `"ichloro▁kangarooလျှ▁Datashexa▁Fre…"` multilingual |
+| `both`  (zero both, regression guard) | 2.50 t/s | `"▁PM▁Transport🇱▁KenЛSm…"` (matches H16 artifact exactly) |
+
+Interpretation.
+- Neither sub-path alone restores coherence; each produces a *different*
+  degenerate output. The Q4 MatMul on `ple_model_proj.weight` drives a
+  short punctuation loop; the Q4 Gather on `ple_embed_tokens.weight`
+  drives multilingual noise. Both sub-paths carry bad values.
+- `both` reproduces the H16 multilingual-noise artifact byte-exactly —
+  `parsePLEZeroMode` regression guard PASSES.
+
+#### T99.2.2.4 H17 ple_embed_tokens.weight Q4 vs Q8 L2 diff (`-mode ple-embed-diff`)
+
+Tensor: `model.ple_embed_tokens.weight` shape `[262144, 8960]`,
+rows=262144, cols=8960, scoped=false.
+
+| Stat | L2   |
+|------|------|
+| p50  |  9.96 |
+| p95  | 10.57 |
+| p99  | 10.98 |
+| p100 | 14.82 |
+
+Top-20 worst rows (row, L2): `236743 14.82`, `236764 13.73`, `236761 13.34`,
+`236772 13.32`, `506 13.29`, `108 13.26`, `236770 12.91`, `236810 12.88`,
+`107 12.88`, `496 12.74`, `236771 12.69`, `532 12.64`, `529 12.58`,
+`236778 12.56`, `236800 12.54`, `0 12.51`, `236900 12.50`, `236919 12.47`,
+`236951 12.46`, `236825 12.44`.
+
+Interpretation.
+- The L2 distribution is tight: p100/p50 = 1.49x, p99/p50 = 1.10x.
+  There is no anomalously-quantized row carrying a disproportionate share
+  of the quantization error. Per-element RMS = L2 / sqrt(8960) ~ 0.10.
+- The worst-row indices concentrate in a narrow high-vocab band
+  (236743-236951, "extra-token" region) and a small low-index pocket
+  (0, 107-108, 496-532). These are added/special tokens whose rows are
+  likely sparser and therefore harder to quantize cleanly, but the
+  absolute error is still only ~1.5x median.
+- **H17 refuted as "bug-carrying row".** The Q4 Gather on large tables
+  does NOT emit a single catastrophic row; it emits uniformly-noisy rows.
+  Combining with H19, neither Q4 gather nor Q4 matmul alone is "the"
+  bug carrier — both contribute small uniform noise that cumulatively
+  poisons the residual stream.
+
+### H20 (proposed, 2026-04-21 post-H17/H19)
+
+Candidate locus: `pleSliceNode.Forward` in `inference/gemma4_edge_ple_nodes.go`,
+specifically the composition of the Q4-gathered `tokenSlice` with the
+Q4-matmul'd-and-RMSNormed `projNormed` via `Add` + `MulScalar(1/sqrt(2))`.
+
+**Mechanism.** HF `Gemma4TextModel.project_per_layer_inputs` does:
+```
+token_pe = per_layer_embed(ids) * sqrt(hidden_per_layer)   # token slice, unnormed
+proj     = rmsnorm(per_layer_proj(embeds * hidden**-0.5))  # normed
+out      = (proj + token_pe) * 1/sqrt(2)                   # combine
+```
+Only `proj` is RMSNormed. `token_pe` rides in raw. Q4 gather noise on
+`ple_embed_tokens.weight` (~0.10 per-element RMS) therefore propagates
+directly into `out` with only a 1/sqrt(2) attenuation, then gets injected
+into every decoder layer as `per_layer_input[i]` via gate+scale and added
+to the residual. Over 35 layers this small-but-persistent noise accumulates.
+
+**DISC test that would refute H20.** Add per-layer RMSNorm to the
+tokenSlice as well (even though HF does not), then run the same Q4_K_M
+generate. If output remains degenerate, H20 is refuted and we pivot to
+H18 (CompileTraced plan-order) or to the non-PLE residual path. If
+output becomes coherent English, H20 is the fix direction and T99.2.2.6
+becomes "apply upstream bias-correction / pre-dequant cast to F16
+before the Q4 gather, then re-benchmark."
+
+**Alternative H20 variant.** Instead of normalising tokenSlice, upgrade
+`ple_embed_tokens.weight` to Q8 at load (H12 tried this and it was
+refuted, but with `ple_model_proj.weight` still at Q4 — revisit jointly).
+
+### Plan update
+
+T99.2.2.3 and T99.2.2.4 complete. T99.2.2.5 is this devlog entry plus
+the T99.2.2.6 task that it files.
+
+---
+
 ## 2026-04-21: T99.2.2 -- H16 CONFIRMED (PLE branch is on the bug vector)
 
 **Type:** investigation

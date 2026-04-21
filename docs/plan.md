@@ -1950,7 +1950,7 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
   candidate. Prereqs met: H16 confirmed PLE involvement; DGX binary
   built from `cca5ea3b`; Q4_K_M and Q8_0 GGUFs present on DGX.
 
-  - [ ] T99.2.2.1 Extend ZERFOO_GEMMA4_PLE_ZERO to granular modes
+  - [x] T99.2.2.1 Extend ZERFOO_GEMMA4_PLE_ZERO to granular modes (DONE 2026-04-21, commit 30a34cbb via PR #492)
     Owner: TBD  Est: 45m  verifies: [UC-001]  Deps: none
     Change the env var in `inference/gemma4_edge_ple_nodes.go` to
     accept three values beyond "1" (zero all): "token" (zero only
@@ -1962,7 +1962,7 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     modes; each must produce a non-zero output that is not the same
     as the other. Tier 0/1 run. Commit and push.
 
-  - [ ] T99.2.2.2 H17 diagnostic: dequantize + diff ple_embed_tokens.weight
+  - [x] T99.2.2.2 H17 diagnostic: dequantize + diff ple_embed_tokens.weight (DONE 2026-04-21, commit b14c3075 via PR #492)
     Owner: TBD  Est: 90m  verifies: [UC-001]  Deps: none (can run
     in parallel with T99.2.2.1)
     Write a diagnostic test or `-mode ple-embed-diff` in
@@ -1977,7 +1977,7 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     all 262144 rows visually; emit statistics only (p50, p95, p99,
     p100, worst 20 rows by index and L2). Commit and push.
 
-  - [ ] T99.2.2.3 Run H19 split ablations on DGX
+  - [x] T99.2.2.3 Run H19 split ablations on DGX (DONE 2026-04-21, results in devlog 2026-04-21 entry)
     Owner: TBD  Est: 30m  verifies: [UC-001]  Deps: T99.2.2.1
     Pull and rebuild on DGX. For each of mode=`token`, mode=`proj`,
     mode=`both`, run `gemma4_e2e -mode generate` on Q4_K_M (CPU,
@@ -1998,7 +1998,7 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
       is distributed across both paths.
     Append the result to `docs/devlog.md`.
 
-  - [ ] T99.2.2.4 Run H17 ple_embed diagnostic on DGX
+  - [x] T99.2.2.4 Run H17 ple_embed diagnostic on DGX (DONE 2026-04-21, results in devlog 2026-04-21 entry)
     Owner: TBD  Est: 20m  verifies: [UC-001]  Deps: T99.2.2.2
     Pull and rebuild on DGX. Run the diagnostic from T99.2.2.2 on
     the two GGUFs. Record the L2 summary (p50/p95/p99/p100 and
@@ -2009,7 +2009,7 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     `docs/devlog.md`. If top-error rows align with emitted tokens,
     the Q4 gather on large tables is directly implicated.
 
-  - [ ] T99.2.2.5 Analyze + propose fix candidate
+  - [x] T99.2.2.5 Analyze + propose fix candidate (DONE 2026-04-21, devlog "T99.2.2 H19 split + H17 L2 diagnostic -> H20 fix candidate")
     Owner: TBD  Est: 45m  verifies: [UC-001]  Deps: T99.2.2.3,
     T99.2.2.4
     Combine the H19 split and H17 diagnostic findings. Write a
@@ -2021,6 +2021,27 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     a T99.2.2.6 as a new task implementing the H20 candidate.
     Refresh `.claude-checkpoint.md`.
 
+  - [ ] T99.2.2.6 H20 fix candidate: RMSNorm the tokenSlice path
+    Owner: TBD  Est: 90m  verifies: [UC-001]  Deps: T99.2.2.5
+    Bug locus (from H19 split + H17 L2): Q4 gather on
+    `ple_embed_tokens.weight` (262144x8960) and Q4 matmul on
+    `ple_model_proj.weight` both contribute small uniform noise
+    (~0.10 per-element RMS) that cumulatively poisons the residual
+    stream over 35 layers. Only `projNormed` is RMSNormed today;
+    `tokenSlice` rides in raw.
+    Fix: in `pleSliceNode.Forward` (`inference/gemma4_edge_ple_nodes.go`),
+    apply a new per-layer `ple_token_norm` RMSNorm (shape `[256]`,
+    gain init 1.0, frozen at graph build) to `tokenSlice` before
+    the `Add(projNormed, tokenSlice)` combine. Behind
+    `ZERFOO_GEMMA4_PLE_TOKEN_NORM=1` so we can A/B it. Tests add a
+    case that verifies the normed path produces a bounded output
+    whose max-abs is strictly smaller than the raw-token baseline.
+    DGX run: compare Q4_K_M generate with flag=on vs baseline; coherent
+    English (or at least non-multilingual non-punctuation-loop output)
+    confirms H20. If still degenerate, refute H20 and file T99.2.2.7
+    to revisit H12 + H20 jointly (upgrade both PLE tensors to Q8
+    together, measure).
+
 ### T99.2.2 Next-Session Waves
 
 Wave 1 runs two independent diagnostics in parallel; Wave 2 runs the
@@ -2028,19 +2049,23 @@ DGX executions (serialised on the single DGX, but each run is short);
 Wave 3 is a single synthesis task. Total wall time estimate 4.0h
 assuming no surprises.
 
-#### Wave 1: Instrument (2 agents)
+#### Wave 1: Instrument (2 agents) -- DONE 2026-04-21 via PR #492
 
-- [ ] T99.2.2.1 Extend ZERFOO_GEMMA4_PLE_ZERO to granular modes
-- [ ] T99.2.2.2 H17 diagnostic: dequantize + diff ple_embed_tokens.weight
+- [x] T99.2.2.1 Extend ZERFOO_GEMMA4_PLE_ZERO to granular modes
+- [x] T99.2.2.2 H17 diagnostic: dequantize + diff ple_embed_tokens.weight
 
-#### Wave 2: DGX execution (2 agents, serialised on DGX)
+#### Wave 2: DGX execution (2 agents, serialised on DGX) -- DONE 2026-04-21
 
-- [ ] T99.2.2.3 Run H19 split ablations on DGX
-- [ ] T99.2.2.4 Run H17 ple_embed diagnostic on DGX
+- [x] T99.2.2.3 Run H19 split ablations on DGX
+- [x] T99.2.2.4 Run H17 ple_embed diagnostic on DGX
 
-#### Wave 3: Synthesise (1 agent)
+#### Wave 3: Synthesise (1 agent) -- DONE 2026-04-21
 
-- [ ] T99.2.2.5 Analyze + propose fix candidate
+- [x] T99.2.2.5 Analyze + propose fix candidate
+
+#### Wave 4 (queued): H20 implementation (1 agent)
+
+- [ ] T99.2.2.6 H20 fix candidate: RMSNorm the tokenSlice path
 
 ### E98 Risk Register
 
