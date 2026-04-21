@@ -378,18 +378,28 @@ predictions, _ := model.Predict(ctx, testX)
 
 ```bash
 go install github.com/zerfoo/zerfoo/cmd/zerfoo@latest
-
-zerfoo pull gemma-3-1b-q4              # download a model
-zerfoo run gemma-3-1b-q4 "Hello"       # generate text
-zerfoo run --quarot model.gguf "Hello" # QuaRot weight fusion
-zerfoo serve gemma-3-1b-q4             # OpenAI-compatible API server
-zerfoo eagle-train --model m.gguf --corpus data.txt --output eagle.gguf  # train EAGLE head
-zerfoo transmla --input m.gguf --output m-mla.gguf  # MHA→MLA conversion
-zerfoo transmla-validate --original m.gguf --converted m-mla.gguf  # perplexity comparison
-zerfoo train -backend tabular ...      # train a tabular model
-zerfoo transcribe speech.wav --model whisper-large-v3  # speech to text
-zerfoo list                             # list cached models
 ```
+
+| Command             | Description                                                             |
+|---------------------|-------------------------------------------------------------------------|
+| `predict`           | Perform model inference on data using configurable model and data providers |
+| `tokenize`          | Tokenize text using the Zerfoo tokenizer                                |
+| `worker`            | Start a distributed training worker                                     |
+| `pull`              | Download and cache a model                                              |
+| `list`              | List cached models                                                      |
+| `rm`                | Remove a cached model                                                   |
+| `run`               | Run interactive chat with a model                                       |
+| `serve`             | Start an OpenAI-compatible inference server                             |
+| `version`           | Print the Zerfoo version                                                |
+| `automl`            | Run automated hyperparameter optimization                               |
+| `train`             | Train a model locally or distributed across multiple GPUs               |
+| `guard`             | Evaluate content safety using Granite Guardian                          |
+| `sentiment`         | Run sentiment classification on text                                    |
+| `finetune-sentiment`| Fine-tune a sentiment classification model                              |
+| `transmla`          | Convert MHA GGUF weights to multi-head latent attention (MLA) via truncated SVD |
+| `eagle-train`       | Train an EAGLE speculative decoding head                                |
+| `transcribe`        | Transcribe audio to text using a speech-to-text model                   |
+| `transmla-validate` | Compare perplexity between original and TransMLA-converted models       |
 
 ## Examples
 
