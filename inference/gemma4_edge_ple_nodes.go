@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/ztensor/compute"
@@ -531,6 +532,10 @@ type pleSliceNode[T tensor.Numeric] struct {
 	layerIdx  int
 	pleDim    int
 	numLayers int
+	// zeroOut is set when ZERFOO_GEMMA4_PLE_ZERO=1 at graph build time.
+	// T99.2.2 H16 ablation: zeroing per_layer_inputs[i] for every layer
+	// isolates whether the PLE branch is on the bug vector path.
+	zeroOut bool
 }
 
 func newPLESliceNode[T tensor.Numeric](
@@ -569,6 +574,7 @@ func newPLESliceNode[T tensor.Numeric](
 		layerIdx:  layerIdx,
 		pleDim:    producer.pleDim,
 		numLayers: producer.numLayers,
+		zeroOut:   os.Getenv("ZERFOO_GEMMA4_PLE_ZERO") == "1",
 	}, nil
 }
 
@@ -622,6 +628,17 @@ func (n *pleSliceNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeri
 	scaled, err := n.engine.MulScalar(ctx, combined, inputScale)
 	if err != nil {
 		return nil, fmt.Errorf("pleSliceNode(layer=%d): scale: %w", n.layerIdx, err)
+	}
+	// T99.2.2 H16 ablation: when ZERFOO_GEMMA4_PLE_ZERO=1, zero the
+	// per-layer PLE contribution. Preserves shape and storage so the
+	// downstream graph runs unmodified; if the decode output stays
+	// degenerate, the PLE branch is not the bug vector.
+	if n.zeroOut {
+		zeroed, err := n.engine.MulScalar(ctx, scaled, T(0))
+		if err != nil {
+			return nil, fmt.Errorf("pleSliceNode(layer=%d): zero ablation: %w", n.layerIdx, err)
+		}
+		return zeroed, nil
 	}
 	return scaled, nil
 }

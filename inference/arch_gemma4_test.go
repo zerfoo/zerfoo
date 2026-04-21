@@ -1103,3 +1103,99 @@ func TestPLECombinedProducer_DecodeFastPathSharesBackingStorage(t *testing.T) {
 		t.Fatalf("fast-path decode reallocated the backing array on second call")
 	}
 }
+
+// TestPLESliceNode_ZeroAblation validates the T99.2.2 H16 ablation gate:
+// when ZERFOO_GEMMA4_PLE_ZERO=1 is set at graph build time, pleSliceNode.Forward
+// returns an all-zero tensor of the same shape as the normal path. Without the
+// env var, the output is non-zero for non-zero inputs.
+func TestPLESliceNode_ZeroAblation(t *testing.T) {
+	const (
+		numLayers = 2
+		pleDim    = 4
+		hidden    = 8
+		vocab     = 16
+	)
+	totalPLE := numLayers * pleDim
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	ops := numeric.Float32Ops{}
+
+	fill := func(shape []int, seed float32) *tensor.TensorNumeric[float32] {
+		n := 1
+		for _, d := range shape {
+			n *= d
+		}
+		data := make([]float32, n)
+		for i := range data {
+			data[i] = seed + 0.01*float32(i)
+		}
+		tn, err := tensor.New[float32](shape, data)
+		if err != nil {
+			t.Fatalf("tensor.New %v: %v", shape, err)
+		}
+		return tn
+	}
+
+	pleEmbed := fill([]int{vocab, totalPLE}, 1.0)
+	pleModelProj := fill([]int{hidden, totalPLE}, 2.0)
+	normGain := fill([]int{pleDim}, 1.0)
+
+	runForward := func(zeroEnv string) []float32 {
+		t.Helper()
+		if zeroEnv != "" {
+			t.Setenv("ZERFOO_GEMMA4_PLE_ZERO", zeroEnv)
+		} else {
+			// Clear the env var so the "off" branch is exercised.
+			t.Setenv("ZERFOO_GEMMA4_PLE_ZERO", "")
+		}
+		producer, err := newPLECombinedProducer[float32](engine, pleEmbed, pleModelProj, numLayers, pleDim, hidden)
+		if err != nil {
+			t.Fatalf("newPLECombinedProducer: %v", err)
+		}
+		ids := fill([]int{1, 1}, 0.0)
+		ids.Data()[0] = 3
+		hiddenIn := fill([]int{1, 1, hidden}, 0.5)
+		if _, err := producer.Forward(context.Background(), ids, hiddenIn); err != nil {
+			t.Fatalf("producer Forward: %v", err)
+		}
+		node, err := newPLESliceNode[float32](engine, ops, producer, normGain, 1e-6, 0)
+		if err != nil {
+			t.Fatalf("newPLESliceNode: %v", err)
+		}
+		out, err := node.Forward(context.Background())
+		if err != nil {
+			t.Fatalf("pleSliceNode Forward: %v", err)
+		}
+		gotShape := out.Shape()
+		wantShape := []int{1, 1, pleDim}
+		if len(gotShape) != len(wantShape) {
+			t.Fatalf("output rank %d, want %d", len(gotShape), len(wantShape))
+		}
+		for i := range gotShape {
+			if gotShape[i] != wantShape[i] {
+				t.Fatalf("output shape %v, want %v", gotShape, wantShape)
+			}
+		}
+		return append([]float32(nil), out.Data()...)
+	}
+
+	// Off: output must contain at least one non-zero value.
+	off := runForward("")
+	anyNonZero := false
+	for _, v := range off {
+		if v != 0 {
+			anyNonZero = true
+			break
+		}
+	}
+	if !anyNonZero {
+		t.Fatalf("off path produced all-zero output; test fixture cannot discriminate ablation")
+	}
+
+	// On: output must be exactly zero element-wise.
+	on := runForward("1")
+	for i, v := range on {
+		if v != 0 {
+			t.Fatalf("ZERFOO_GEMMA4_PLE_ZERO=1 output[%d] = %v, want 0", i, v)
+		}
+	}
+}
