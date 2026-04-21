@@ -1104,10 +1104,10 @@ func TestPLECombinedProducer_DecodeFastPathSharesBackingStorage(t *testing.T) {
 	}
 }
 
-// TestPLESliceNode_ZeroAblation validates the T99.2.2 H16 ablation gate:
-// when ZERFOO_GEMMA4_PLE_ZERO=1 is set at graph build time, pleSliceNode.Forward
-// returns an all-zero tensor of the same shape as the normal path. Without the
-// env var, the output is non-zero for non-zero inputs.
+// TestPLESliceNode_ZeroAblation validates the T99.2.2 H16 / H19 ablation gates:
+// ZERFOO_GEMMA4_PLE_ZERO=1/both zero the entire PLE output; =token zeros only
+// the tokenSlice contribution; =proj zeros only the projNormed contribution.
+// Unset keeps the normal path.
 func TestPLESliceNode_ZeroAblation(t *testing.T) {
 	const (
 		numLayers = 2
@@ -1139,14 +1139,11 @@ func TestPLESliceNode_ZeroAblation(t *testing.T) {
 	pleModelProj := fill([]int{hidden, totalPLE}, 2.0)
 	normGain := fill([]int{pleDim}, 1.0)
 
-	runForward := func(zeroEnv string) []float32 {
+	// runForward rebuilds the pleSliceNode after setting the env var so the
+	// constructor re-reads ZERFOO_GEMMA4_PLE_ZERO under the current subtest.
+	runForward := func(t *testing.T, zeroEnv string) []float32 {
 		t.Helper()
-		if zeroEnv != "" {
-			t.Setenv("ZERFOO_GEMMA4_PLE_ZERO", zeroEnv)
-		} else {
-			// Clear the env var so the "off" branch is exercised.
-			t.Setenv("ZERFOO_GEMMA4_PLE_ZERO", "")
-		}
+		t.Setenv("ZERFOO_GEMMA4_PLE_ZERO", zeroEnv)
 		producer, err := newPLECombinedProducer[float32](engine, pleEmbed, pleModelProj, numLayers, pleDim, hidden)
 		if err != nil {
 			t.Fatalf("newPLECombinedProducer: %v", err)
@@ -1178,24 +1175,82 @@ func TestPLESliceNode_ZeroAblation(t *testing.T) {
 		return append([]float32(nil), out.Data()...)
 	}
 
-	// Off: output must contain at least one non-zero value.
-	off := runForward("")
-	anyNonZero := false
-	for _, v := range off {
-		if v != 0 {
-			anyNonZero = true
-			break
+	maxAbs := func(vs []float32) float32 {
+		var m float32
+		for _, v := range vs {
+			if v < 0 {
+				v = -v
+			}
+			if v > m {
+				m = v
+			}
 		}
+		return m
 	}
-	if !anyNonZero {
-		t.Fatalf("off path produced all-zero output; test fixture cannot discriminate ablation")
+	allZero := func(vs []float32) bool { return maxAbs(vs) == 0 }
+	differs := func(a, b []float32) bool {
+		if len(a) != len(b) {
+			return true
+		}
+		for i := range a {
+			d := a[i] - b[i]
+			if d < 0 {
+				d = -d
+			}
+			if d > 1e-6 {
+				return true
+			}
+		}
+		return false
 	}
 
-	// On: output must be exactly zero element-wise.
-	on := runForward("1")
-	for i, v := range on {
-		if v != 0 {
-			t.Fatalf("ZERFOO_GEMMA4_PLE_ZERO=1 output[%d] = %v, want 0", i, v)
+	// Capture each mode in its own subtest so t.Setenv scoping rebuilds the
+	// node against a fresh env var each time.
+	var baseline, tokenOnly []float32
+
+	t.Run("unset", func(t *testing.T) {
+		baseline = runForward(t, "")
+		if allZero(baseline) {
+			t.Fatalf("baseline all-zero; fixture cannot discriminate ablations")
 		}
-	}
+	})
+
+	t.Run("one", func(t *testing.T) {
+		// Regression guard for the H16 artifact (commit cca5ea3b): "1"
+		// must zero the entire PLE output, byte-for-byte identical to "both".
+		got := runForward(t, "1")
+		if !allZero(got) {
+			t.Fatalf("ZERFOO_GEMMA4_PLE_ZERO=1 max|out| = %v, want 0", maxAbs(got))
+		}
+	})
+
+	t.Run("both", func(t *testing.T) {
+		got := runForward(t, "both")
+		if !allZero(got) {
+			t.Fatalf("ZERFOO_GEMMA4_PLE_ZERO=both max|out| = %v, want 0", maxAbs(got))
+		}
+	})
+
+	t.Run("token", func(t *testing.T) {
+		tokenOnly = runForward(t, "token")
+		if allZero(tokenOnly) {
+			t.Fatalf("token mode produced all-zero output; expected projNormed contribution to remain")
+		}
+		if !differs(tokenOnly, baseline) {
+			t.Fatalf("token mode output equals baseline; tokenSlice suppression not observable")
+		}
+	})
+
+	t.Run("proj", func(t *testing.T) {
+		projOnly := runForward(t, "proj")
+		if allZero(projOnly) {
+			t.Fatalf("proj mode produced all-zero output; expected tokenSlice contribution to remain")
+		}
+		if !differs(projOnly, baseline) {
+			t.Fatalf("proj mode output equals baseline; projNormed suppression not observable")
+		}
+		if !differs(projOnly, tokenOnly) {
+			t.Fatalf("proj output equals token output; modes are not independently discriminating")
+		}
+	})
 }
