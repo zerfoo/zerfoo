@@ -520,6 +520,35 @@ func (p *pleCombinedProducer[T]) Backward(_ context.Context, _ types.BackwardMod
 	return nil, nil
 }
 
+// pleZeroMode selects which portion of the PLE slice path to zero at graph
+// build time. See ZERFOO_GEMMA4_PLE_ZERO parsing in newPLESliceNode for the
+// accepted string values.
+type pleZeroMode int
+
+const (
+	pleZeroNone  pleZeroMode = iota // no ablation
+	pleZeroBoth                     // zero final scaled output (legacy "1" / "both")
+	pleZeroToken                    // zero only the tokenSlice contribution
+	pleZeroProj                     // zero only the projNormed contribution
+)
+
+// parsePLEZeroMode maps the raw ZERFOO_GEMMA4_PLE_ZERO env value to a mode.
+// "1" and "both" map to pleZeroBoth (preserves the H16 artifact). "token" and
+// "proj" select granular ablations for T99.2.2 H19 discrimination. Anything
+// else (including unset / empty) is pleZeroNone.
+func parsePLEZeroMode(raw string) pleZeroMode {
+	switch raw {
+	case "1", "both":
+		return pleZeroBoth
+	case "token":
+		return pleZeroToken
+	case "proj":
+		return pleZeroProj
+	default:
+		return pleZeroNone
+	}
+}
+
 // pleSliceNode extracts the per-layer [B, S, pleDim] slice from the producer's
 // cached full-width tensors, applies the shared per-layer projection RMSNorm
 // to the projection slice, adds the token-identity PLE slice, and scales by
@@ -532,10 +561,10 @@ type pleSliceNode[T tensor.Numeric] struct {
 	layerIdx  int
 	pleDim    int
 	numLayers int
-	// zeroOut is set when ZERFOO_GEMMA4_PLE_ZERO=1 at graph build time.
-	// T99.2.2 H16 ablation: zeroing per_layer_inputs[i] for every layer
-	// isolates whether the PLE branch is on the bug vector path.
-	zeroOut bool
+	// zeroMode is set from ZERFOO_GEMMA4_PLE_ZERO at graph build time.
+	// T99.2.2 H16 / H19 ablation: isolates whether the PLE branch, its
+	// tokenSlice sub-path, or its projNormed sub-path is on the bug vector.
+	zeroMode pleZeroMode
 }
 
 func newPLESliceNode[T tensor.Numeric](
@@ -574,7 +603,7 @@ func newPLESliceNode[T tensor.Numeric](
 		layerIdx:  layerIdx,
 		pleDim:    producer.pleDim,
 		numLayers: producer.numLayers,
-		zeroOut:   os.Getenv("ZERFOO_GEMMA4_PLE_ZERO") == "1",
+		zeroMode:  parsePLEZeroMode(os.Getenv("ZERFOO_GEMMA4_PLE_ZERO")),
 	}, nil
 }
 
@@ -619,6 +648,24 @@ func (n *pleSliceNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeri
 	if err != nil {
 		return nil, fmt.Errorf("pleSliceNode(layer=%d): rmsnorm: %w", n.layerIdx, err)
 	}
+	// T99.2.2 H19 ablation: suppress only the target sub-path BEFORE the
+	// combine, so "token" and "proj" are truly independent. Producer cache
+	// tensors must not be mutated -- allocate zeroed replacements via
+	// MulScalar and substitute them into the local variables.
+	switch n.zeroMode {
+	case pleZeroToken:
+		zeroedToken, err := n.engine.MulScalar(ctx, tokenSlice, T(0))
+		if err != nil {
+			return nil, fmt.Errorf("pleSliceNode(layer=%d): zero token: %w", n.layerIdx, err)
+		}
+		tokenSlice = zeroedToken
+	case pleZeroProj:
+		zeroedProj, err := n.engine.MulScalar(ctx, projNormed, T(0))
+		if err != nil {
+			return nil, fmt.Errorf("pleSliceNode(layer=%d): zero proj: %w", n.layerIdx, err)
+		}
+		projNormed = zeroedProj
+	}
 	combined, err := n.engine.Add(ctx, projNormed, tokenSlice)
 	if err != nil {
 		return nil, fmt.Errorf("pleSliceNode(layer=%d): add: %w", n.layerIdx, err)
@@ -629,11 +676,12 @@ func (n *pleSliceNode[T]) Forward(ctx context.Context, _ ...*tensor.TensorNumeri
 	if err != nil {
 		return nil, fmt.Errorf("pleSliceNode(layer=%d): scale: %w", n.layerIdx, err)
 	}
-	// T99.2.2 H16 ablation: when ZERFOO_GEMMA4_PLE_ZERO=1, zero the
+	// T99.2.2 H16 ablation: when ZERFOO_GEMMA4_PLE_ZERO=1/both, zero the
 	// per-layer PLE contribution. Preserves shape and storage so the
 	// downstream graph runs unmodified; if the decode output stays
-	// degenerate, the PLE branch is not the bug vector.
-	if n.zeroOut {
+	// degenerate, the PLE branch is not the bug vector. Kept as a post-scale
+	// zero so the legacy "1" artifact (commit cca5ea3b) is bit-identical.
+	if n.zeroMode == pleZeroBoth {
 		zeroed, err := n.engine.MulScalar(ctx, scaled, T(0))
 		if err != nil {
 			return nil, fmt.Errorf("pleSliceNode(layer=%d): zero ablation: %w", n.layerIdx, err)
