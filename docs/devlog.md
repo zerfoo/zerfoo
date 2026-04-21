@@ -2,6 +2,85 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-21: T99.2.2 -- H16 CONFIRMED (PLE branch is on the bug vector)
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, ple, pleSliceNode, h16
+
+### Ablation: zero per_layer_inputs[i] for every layer
+
+Commit `cca5ea3b` adds a `ZERFOO_GEMMA4_PLE_ZERO=1` env flag to
+`pleSliceNode.Forward`; when set at graph build time the node returns
+`engine.MulScalar(scaled, 0)` so every per-layer PLE input is zeroed
+but shape/storage/downstream wiring are preserved.
+
+### Discriminating run (DGX, commit `cca5ea3b`, CPU, -mmap=false, -steps 32, prompt "The quick brown fox")
+
+| Config | Output | Bytes | Decode |
+|---|---|---|---|
+| Baseline (`ZERFOO_GEMMA4_PLE_ZERO` unset) | `"lyes\nsn\nsn\nsn\nsn"` | 16 | 3.27 tok/s |
+| Ablation (`ZERFOO_GEMMA4_PLE_ZERO=1`) | `"▁PM▁Transport🇱▁KenЛSmWalterCaCl▁Node▁Scotts▁Description▁Terr▁j▁Nob▁Model▁An▁Web▁Kear▁An▁An▁An▁wid▁ran▁a▁ലാ▁Pra▁সামnar▁bioactive▁abrus▁Sosial"` | 204 | 2.44 tok/s |
+
+The `CompileTraced plan validation failed ... instruction 0 (MulScalar)`
+warning fires identically in both runs, so the fallback Compile path is
+the one executing in both cases (rules out plan-ordering sensitivity to
+the flag). The per-step cost rises ~34% (3.27 -> 2.44 tok/s) because the
+ablation adds one MulScalar per layer per step; the slowdown is expected
+instrumentation overhead, not signal.
+
+### Interpretation
+
+H16 **CONFIRMED**: the PLE branch is on the bug vector path.
+
+- The ablation output is *different* from the baseline, which means the
+  PLE-produced tensors were flowing into the main transformer stack
+  meaningfully and influencing the decode trajectory.
+- Zeroing PLE removes the specific attractor that collapsed the decode
+  into the "sn\n" loop. The new output is also degenerate (multilingual
+  token noise, no coherent English) but qualitatively distinct.
+- This rules out the "PLE branch is a red herring, bug is purely in
+  attention/MLP + Q4_K interaction" interpretation proposed alongside H16.
+
+### Next steps
+
+Promote H17 (Q4 Gather correctness on `model.ple_embed_tokens.weight`,
+262144-row table) from "if H16 implicates PLE" to **top priority**:
+
+1. Dequantize `ple_embed_tokens.weight` from Q4_K_M and from Q8_0 into F32.
+2. Compute per-row L2 diff against llama.cpp's reference decoder output
+   for the same rows (or against the Q8_0 copy if we trust the converter).
+3. A large per-row L2 on small token ids (the row indices actually hit
+   during the generate run) would implicate the Q4 gather on large
+   (262144-row) tables.
+
+Secondary: since the ablation output uses rare multilingual tokens rather
+than english, consider whether `model.ple_model_proj.weight` (the
+[hidden, 8960] projection) is *also* contributing — i.e. the bug may
+live in the MatMul consuming the non-identity PLE table, not the Gather
+consuming the identity one. A future ablation could zero the token-PLE
+input alone (not the projection) or vice versa to separate them.
+
+### Artifact state
+
+- Binary `/var/lib/zerfoo/bin/gemma4_e2e` on DGX built from `cca5ea3b`.
+- Q4_K_M GGUF at `/var/lib/zerfoo/models/gemma-4-E2B-it-Q4_K_M.gguf`.
+
+## 2026-04-21: Deep-reviews 001/002 -- architecture and documentation audits
+
+**Type:** finding
+**Tags:** review, architecture, documentation, readme
+
+**Problem:** Two tidy-surfaced external audits (deep-reviews/001 architectural
+cleanliness, deep-reviews/002 documentation correctness).
+**Root cause:** N/A (review reports).
+**Fix:** 001 -- no remediation required; architecture rated 5/5, layered,
+composable, extensible, with verify-architecture Makefile target cited as
+exemplary. 002 -- docs rated 5/5 overall; one low-impact gap: `README.md`
+CLI section is missing the `predict`, `tokenize`, `rm`, `version`, `automl`,
+and `guard` commands. Cross-reference `cmd/zerfoo/main.go` to complete the
+list.
+**Impact:** README CLI table update is the only actionable follow-up.
+
 ## 2026-04-20: T99.2.2 -- H13 refuted (BF16 storage preservation is not the fix)
 
 **Type:** investigation

@@ -1902,20 +1902,36 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     (Gather|MulScalar): input tensors cannot be nil`) appears on
     Q4_K_M, Q8_0, and gemma3 runs alike but may be triggered by the
     PLE producer specifically.
-  - **H16 (NEW, post-H13 refutation)**: ablate the PLE branch
-    entirely (zero the per-layer contribution in `pleSliceNode`) on
-    Q4_K_M. If output remains `lyes\nsn\n...`, the PLE path is a red
-    herring and the bug is in the main transformer stack's
-    interaction with Q4_K. Cheap & decisive.
-  - **H17 (NEW)**: the Q4 `ple_embed_tokens.weight` Gather on a
-    262144-row table may produce wrong values. Test: dequantize both
-    the Q4_K_M and Q8_0 versions of this tensor into F32 and compute
-    per-row L2 diff against a reference decoder; large per-row
-    discrepancies would implicate the Q4 gather on large tables.
+  - **H16 CONFIRMED (2026-04-21)**: commit `cca5ea3b` added a
+    `ZERFOO_GEMMA4_PLE_ZERO=1` ablation gate in `pleSliceNode.Forward`.
+    Running the DGX Q4_K_M generate with the flag set changed the
+    output from the baseline `"lyes\nsn\nsn\nsn\nsn"` to
+    `"▁PM▁Transport🇱▁KenЛSmWalterCa..."` (multilingual token noise,
+    204 bytes). The decode trajectory moved, so the PLE branch IS on
+    the bug vector path. Output is still degenerate (no coherent
+    English) so PLE may not be the sole cause; H17 is now the highest
+    priority follow-up.
+  - **H17 PROMOTED TO TOP PRIORITY (2026-04-21)**: after H16 confirmed
+    PLE involvement, test whether the Q4 `ple_embed_tokens.weight`
+    Gather on the 262144-row table produces wrong values. Plan:
+    dequantize that tensor from Q4_K_M and Q8_0 into F32, diff per-row
+    against a reference decoder (llama.cpp or the Q8_0 copy), and
+    identify whether specific row ranges -- particularly the ones
+    actually hit by the generate run -- show large L2 error.
   - **H18 (NEW)**: CompileTraced plan fallback ordering differs
     between Q4_K_M (degenerate) and Q8_0 (coherent) runs even though
-    the traced-plan warning text is identical. Diff the fallback
-    Compile graph traversal order between the two quantizations.
+    the traced-plan warning text is identical. The same warning fires
+    in both the baseline and H16-ablation Q4_K_M runs, so it is not
+    sensitive to the PLE path; still worth diffing if H17 comes back
+    inconclusive.
+  - **H19 (NEW, post-H16)**: the MatMul consuming
+    `ple_model_proj.weight` may be producing corrupt output, rather
+    than (or in addition to) the Gather on `ple_embed_tokens.weight`.
+    Plan: extend the ablation gate so we can zero the token-identity
+    PLE contribution alone (leaving the projection active) or vice
+    versa. If zeroing only the Gather output still breaks decode but
+    zeroing only the MatMul output recovers it, the MatMul consumer
+    is the bug vector.
   Proven facts: (i) gemma3 Q4_K_M on same binary decodes coherently;
   (ii) gemma4e Q8_0 on same binary decodes coherently; (iii) gemma4e
   Q4_K_M is degenerate on every device/mmap combination tested.
