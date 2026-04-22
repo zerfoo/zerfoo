@@ -2095,51 +2095,124 @@ the capture-compatibility work in E99.1. Neither is caused by T99.1.2
     hypothesis (H21: PLE RoPE / residual combine scale / plan-order
     reference diff). See devlog 2026-04-21 T99.2.2.7.
 
-  - [ ] T99.2.2.8 H21 diagnostic: PLE RoPE / residual combine scale / plan-order reference diff
-    Owner: TBD  Est: 120m  verifies: [UC-001]  Deps: T99.2.2.7
-    Motivation. T99.2.2.7 cleared the quantization axis: Q4_0 gather
-    noise on `ple_embed_tokens.weight` has no measurable effect on
-    the decode trajectory under greedy sampling, even when combined
-    with the tokenSlice RMSNorm (H20). The bug vector runs through
-    the PLE branch (H16 confirmed, H19 confirmed both sub-paths) but
-    is structural rather than numerical. Remaining candidate loci:
-      H21.a PLE RoPE / positional handling — the pleSliceNode uses
-            a gather-then-scale path; if the positions / theta
-            schedule differ from the main attention RoPE, positional
-            drift compounds across 35 layers.
-      H21.b Residual combine scale — `Add(projNormed, tokenSlice)`
-            is unweighted; the Gemma 4 Edge reference may apply a
-            per-layer scale that we are dropping.
-      H21.c Plan-order / injection point — the PLE slice may be
-            injected into the residual at the wrong position in the
-            per-layer forward pass vs. the reference Python forward.
+  - [x] T99.2.2.8 H21 diagnostic: PLE RoPE / residual combine scale / plan-order reference diff (SHIPPED 2026-04-21; zerfoo PLE faithful to HF; top structural candidate is Q4_K -> Q4_0 re-quantization on gather tables -> T99.2.2.9 filed)
+    Owner: main  Est: 120m  verifies: [UC-001]  Deps: T99.2.2.7
+    OUTCOME 2026-04-21. Completed side-by-side diff against
+    HuggingFace `transformers/src/transformers/models/gemma4/modeling_gemma4.py`
+    (`Gemma4TextModel`, `Gemma4TextDecoderLayer`, `Gemma4RMSNorm`,
+    `Gemma4TextScaledWordEmbedding`, `get_per_layer_inputs`,
+    `project_per_layer_inputs`) at HF main. Results:
+      - H21.a (PLE RoPE / positional handling): REFUTED. The PLE
+        path has NO RoPE -- the slice is a pure gather scaled by
+        `sqrt(pleDim)=16` plus a projection RMSNorm, with no
+        position dependence. zerfoo matches HF.
+      - H21.b (residual combine scale): REFUTED. HF combines
+        `(per_layer_projection + per_layer_inputs) * per_layer_input_scale`
+        with `per_layer_input_scale = 1/sqrt(2)`; zerfoo applies
+        `(projNormed + tokenSlice) * 1/sqrt(2)` at
+        `inference/gemma4_edge_ple_nodes.go:732-736`. Identical.
+      - H21.c (plan-order / injection point): REFUTED. HF
+        `Gemma4TextDecoderLayer.forward` PLE block order is
+        `residual; inp_gate; act_fn; * per_layer_input;
+        per_layer_projection; post_per_layer_input_norm;
+        residual + ple_output` followed by `hidden_states *=
+        self.layer_scalar`. zerfoo `arch_gemma4_edge.go:475-509`
+        emits `inpGate -> GELU -> * pleSlice -> pleLayerProj ->
+        post_layernorm -> + afterFFN -> layer_output_scale`.
+        Identical order.
+      - **Novel H21 (structural, ranks first).** zerfoo-vs-zerfoo:
+        `model/gguf/loader.go:223` `decodeQ4KTensor` unconditionally
+        re-quantizes every Q4_K tensor to Q4_0 via a lossy
+        `Q4_K -> f32 -> Q4_0` round-trip, but the Q8_0 decoder at
+        `decodeQ8Tensor` (line 398-417) already guards the
+        re-quant with `isEmbedding := shape[0] > 50000` and keeps
+        Q8 native for embedding tables. `decodeQ4KTensor`,
+        `decodeQ5KTensor`, and `decodeQ6KTensor` have NO such
+        guard. For `model.ple_embed_tokens.weight` (shape
+        `[262144, 8960]`, pure gather target), this demotes the
+        Q4_K file tensor to Q4_0 at load. The Q4_0 gather noise
+        compounds uniformly across 35 layers on the PLE
+        tokenSlice path -- matching the H17 evidence of
+        uniform per-row noise (p100/p50 = 1.49x, no outlier rows).
+        It also explains why T99.2.2.7 `ZERFOO_GEMMA4_PLE_EMBED_Q8`
+        was refuted: the `upgradeEmbeddingPrecision` step runs
+        AFTER `decodeQ4KTensor`, so the Q4_0 -> Q8 upgrade
+        preserves the Q4_K -> Q4_0 loss instead of recovering
+        from it. Unsloth's Gemma 4 documentation independently
+        confirms `per_layer_token_embd` needs Q8_0 precision (or
+        a native lower-precision quant like Q4_0 / Q4_1 / Q5_0 /
+        Q5_1 -- NOT a doubly-lossy round-trip).
+      - All other per-layer PLE operations match HF (embed scale
+        `sqrt(hidden)`, token-identity scale `sqrt(pleDim)=16`,
+        projection scale `hidden**-0.5`, RMSNorm `normed * weight`
+        with weight init `ones`, GELU tanh approximation,
+        bias-free linears, FFN `down(gelu(gate(x)) * up(x))`,
+        final `Gemma4RMSNorm` after the layer loop,
+        `layer_output_scale` at the very end of each decoder
+        layer).
+    Decision rule. Exactly one structural deviation emerged
+    (novel H21). T99.2.2.9 filed below as the H21 fix candidate,
+    gated behind `ZERFOO_GEMMA4_PLE_NATIVE_Q4K=1` for DGX A/B.
+    See `docs/devlog.md` 2026-04-21 T99.2.2.8 entry.
+
+  - [ ] T99.2.2.9 H21 fix candidate: keep native Q4_K storage for embedding-shaped tensors in the GGUF loader
+    Owner: TBD  Est: 120m  verifies: [UC-001]  Deps: T99.2.2.8
+    Motivation. T99.2.2.8 identified that zerfoo's
+    `model/gguf/loader.go:223` `decodeQ4KTensor` re-quantizes
+    every Q4_K tensor to Q4_0 at load time via a lossy round-trip,
+    while the parallel Q8_0 decoder already guards embeddings
+    (`shape[0] > 50000`) and keeps Q8 native. For the Gemma 4
+    E2B/E4B Q4_K_M GGUFs, this silently degrades
+    `model.ple_embed_tokens.weight` (pure gather target) from
+    Q4_K to Q4_0, and the Q4_0 gather noise compounds across 35
+    layers on the PLE tokenSlice path. T99.2.2.7's
+    `upgradeEmbeddingPrecision` Q8 upgrade cannot recover because
+    it runs AFTER the round-trip. Unsloth's docs confirm
+    `per_layer_token_embd` needs at least Q8_0 precision, or a
+    native simpler quant (Q4_0, Q4_1, Q5_0, Q5_1) -- not a
+    doubly-lossy conversion.
     Approach.
-      1. Read the Gemma 4 Edge reference PLE implementation (the
-         Python / flax or transformers-style reference that
-         `docs/plan.md` E99.2 or earlier E-blocks cite). Extract the
-         exact per-layer PLE forward pass: gather, scale, any RoPE,
-         any per-layer gain, residual injection point.
-      2. Side-by-side with `inference/gemma4_edge_ple_nodes.go`
-         `pleSliceNode.Forward` and the graph-order in
-         `inference/arch_gemma4_edge.go`, produce a named list of
-         deviations.
-      3. For each deviation, classify as (i) cosmetic / symmetric
-         (unlikely bug), (ii) numerical-scale only (should have
-         been caught by H17 uniform noise test), (iii) structural
-         / position / ordering (top suspicion).
-      4. Write a devlog entry listing the deviation set and
-         prioritizing the candidate fix. If exactly one structural
-         deviation emerges, file T99.2.2.9 as the fix candidate and
-         gate behind `ZERFOO_GEMMA4_PLE_*` to A/B on DGX. If no
-         deviation emerges, escalate: the bug may be outside PLE
-         (unlikely given H16/H19) or the reference being consulted
-         is not the one Google actually trained against, in which
-         case the reference itself becomes the blocker.
+      1. Add a flag-gated guard in `model/gguf/loader.go`
+         `decodeQ4KTensor` (and symmetrically `decodeQ5KTensor`,
+         `decodeQ6KTensor`) that, when `ZERFOO_GEMMA4_PLE_NATIVE_Q4K=1`,
+         skips the `Dequantize -> QuantizeQ4` round-trip for
+         embedding-shaped tensors (`len(shape) == 2 && shape[0] > 50000`)
+         and returns native `Q4KStorage` / `Q5KStorage` / `Q6KStorage`
+         via the existing `decodeTensorNative` helper.
+      2. Confirm native Q4_K storage supports the gather paths
+         used by `pleCombinedProducer` (it already does -- H17 used
+         the same native dequant helper for its per-row diff).
+      3. Build on DGX; run the 2x4 matrix (Q4_K_M x
+         {PLE_NATIVE_Q4K=0, PLE_NATIVE_Q4K=1} x
+         {PLE_EMBED_Q8=0, PLE_EMBED_Q8=1}) on the `"The quick
+         brown fox"` 32-step greedy trajectory.
+      4. Decision rule:
+         - If `PLE_NATIVE_Q4K=1` alone produces coherent decode,
+           H21 is confirmed; promote the guard to unconditional
+           (remove the flag) and file the Q5_K / Q6_K symmetry
+           fixes in a follow-up ADR.
+         - If `PLE_NATIVE_Q4K=1` still degenerate but
+           `PLE_NATIVE_Q4K=1 + PLE_EMBED_Q8=1` recovers, the
+           cumulative Q4_K gather noise itself (not the Q4_0
+           downgrade) is the issue -- requires a separate ADR on
+           embedding-table precision policy for edge models.
+         - If both fail, H21 is refuted; escalate to checking the
+           `model.ple_model_proj.weight` BFloat16 -> F32 path
+           (H13, cleared on prior evidence but worth re-testing
+           with native-K gather) and/or a byte-level trace diff
+           against Ollama on the same file.
     Artifacts.
-      - `docs/devlog.md` entry "T99.2.2.8 H21 reference diff".
-      - Named deviation list, with graph-code pointers.
-      - If a fix candidate emerges: T99.2.2.9 task + ZERFOO_GEMMA4_PLE_*
-        gate.
+      - `model/gguf/loader.go` patch adding the embedding-shape
+        guard under `ZERFOO_GEMMA4_PLE_NATIVE_Q4K`.
+      - `model/gguf/loader_test.go` table-driven test proving the
+        guard keeps native `*Q4KStorage` for a
+        `shape[0] > 50000` tensor when the flag is set, and still
+        re-quantizes to `*Q4Storage` when unset.
+      - `docs/devlog.md` entry "T99.2.2.9 H21 native-Q4K
+        A/B DGX results" with the 2x2 / 2x4 matrix.
+      - If H21 is confirmed: ADR-089 `gguf-embedding-precision-policy.md`
+        documenting the unified embedding-shape guard across
+        Q4_K / Q5_K / Q6_K / Q8_0 decoders.
 
 ### T99.2.2 Next-Session Waves
 
@@ -2170,9 +2243,13 @@ assuming no surprises.
 
 - [x] T99.2.2.7 Upgrade ple_embed_tokens.weight to Q8 with ple_token_norm enabled
 
-#### Wave 6 (queued): H21 reference diff (1 agent)
+#### Wave 6: H21 reference diff (1 agent) -- DONE 2026-04-21 (docs-only; no code change; novel H21 filed as T99.2.2.9)
 
-- [ ] T99.2.2.8 PLE RoPE / residual combine scale / plan-order reference diff
+- [x] T99.2.2.8 PLE RoPE / residual combine scale / plan-order reference diff
+
+#### Wave 7 (queued): H21 fix candidate -- native Q4_K embedding storage (1 agent)
+
+- [ ] T99.2.2.9 Keep native Q4_K storage for embedding-shaped tensors in the GGUF loader (gated by `ZERFOO_GEMMA4_PLE_NATIVE_Q4K=1`)
 
 ### E98 Risk Register
 
