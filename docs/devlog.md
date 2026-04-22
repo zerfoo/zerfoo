@@ -2,6 +2,155 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-04-21: T99.2.2.8 -- H21 reference diff (HF vs zerfoo PLE; structural candidate identified: Q4_K -> Q4_0 re-quantization in gather tables)
+
+**Type:** investigation
+**Tags:** gemma4e, decode, q4_k, q4_0, ple, ple_embed_tokens, h21, reference-diff
+
+### Setup
+
+- Main at `55c5b594` (T99.2.2.7 docs merged; Wave 5 closed with H12
+  refuted jointly, quantization axis cleared).
+- Task scope per T99.2.2.8: read the Gemma 4 Edge reference PLE
+  implementation, side-by-side diff against
+  `inference/gemma4_edge_ple_nodes.go` `pleSliceNode.Forward` and
+  `inference/arch_gemma4_edge.go` graph-order, emit a named deviation
+  list, and file the top structural candidate as T99.2.2.9.
+- Reference consulted: HuggingFace
+  `transformers/src/transformers/models/gemma4/modeling_gemma4.py`
+  `Gemma4TextModel`, `Gemma4TextDecoderLayer`, `Gemma4RMSNorm`,
+  `Gemma4TextScaledWordEmbedding`, `get_per_layer_inputs`,
+  `project_per_layer_inputs` (verbatim fetches of current HF main).
+
+### Named deviation list (HF reference <-> zerfoo)
+
+Every per-layer PLE forward operation was compared side-by-side. Only
+deviations are listed; matching ops (scale factors, residual bookkeeping,
+final norm, layer_scalar placement, GELU tanh approximation, bias-free
+linears, RMSNorm `normed * weight` semantics with `ones` init) are
+omitted. File/line pointers are zerfoo main `55c5b594`.
+
+- **D1 (cosmetic).** zerfoo applies `per_layer_model_projection_scale`
+  to `hidden` BEFORE the matmul (`hidden * 1/sqrt(hidden_size)` then
+  `MatMul(scaled, pleModelProj)`); HF applies it AFTER
+  (`per_layer_model_projection(inputs_embeds) * hidden_size**-0.5`).
+  Mathematically equivalent for a bias-free linear, bit-identical up to
+  float ordering. `inference/gemma4_edge_ple_nodes.go:206-212` vs HF
+  `Gemma4TextModel.project_per_layer_inputs`. Classification: cosmetic.
+
+- **D2 (cosmetic).** zerfoo slices the full-width `[B, S, 8960]` PLE
+  tensor per-layer and applies RMSNorm to each `[B, S, 256]` slice; HF
+  reshapes to `[B, S, num_layers, ple_dim]` and RMSNorms over the last
+  dim. Equivalent per-layer values because RMSNorm reduces over the
+  last dim in both cases. `gemma4_edge_ple_nodes.go:688-698` vs HF
+  `project_per_layer_inputs`. Classification: cosmetic.
+
+- **D3 (cosmetic).** zerfoo allocates a RoPE module per-layer
+  (`arch_gemma4_edge.go:277`); HF caches position embeddings once per
+  forward and indexes by `layer_type` (`Gemma4TextModel.forward`).
+  Same numerical output; a later perf win but not correctness.
+  Classification: cosmetic.
+
+- **D4 (structural, top candidate).** zerfoo's GGUF loader re-quantizes
+  every Q4_K tensor to Q4_0 at load time via
+  `model/gguf/loader.go:223` `decodeQ4KTensor`:
+  ```go
+  q4k.Dequantize(f32)
+  q4 := tensor.QuantizeQ4(f32)
+  ```
+  This round-trip is UNCONDITIONAL, regardless of whether the tensor
+  is used for GEMV (where Q4_0's block_size=32 layout speeds decode)
+  or GATHER (where block format is irrelevant). The Q8_0 decoder at
+  `decodeQ8Tensor` (line 398-417) guards the re-quantization with
+  `isEmbedding := shape[0] > 50000` and keeps Q8 native for embedding
+  tables, but `decodeQ4KTensor`, `decodeQ5KTensor`, `decodeQ6KTensor`
+  have NO such guard. For `model.ple_embed_tokens.weight` (shape
+  `[262144, 8960]`, a pure gather target on the PLE tokenSlice path),
+  this yields a doubly-lossy `Q4_K -> f32 -> Q4_0` conversion:
+    * Q4_K noise: 6-bit sub-scales over 256-element super-blocks.
+    * Q4_0 noise: f16 scale per 32-element block, independent.
+    * The two errors STACK; Q4_0 alone would be 20-30% higher RMSE
+      than Q4_K, and the round-trip adds a second quantization step
+      on top.
+  Unsloth's documentation (https://unsloth.ai/docs/models/gemma-4)
+  explicitly calls this out: "The per_layer_token_embd layer should
+  be Q8_0 in precision... Q4_0, Q4_1, Q5_0, and Q5_1 have been
+  confirmed to work in Ollama" -- i.e., a NATIVE Q4_0 embedding table
+  works, but not a doubly-lossy round-trip. Ollama consumes the
+  shipped Q4_K_M file as-is (Q4_K for ple_embed_tokens stays Q4_K);
+  zerfoo silently degrades to Q4_0 at load. This matches the H17
+  L2 evidence of uniform Q4 gather noise (p100/p50 = 1.49x, no outlier
+  rows) and explains why H12 (Q4_0 -> Q8 at the `upgradeEmbeddingPrecision`
+  step) was refuted: by the time `upgradeEmbeddingPrecision` runs, the
+  tensor is already a degraded Q4_0 tensor; re-quantizing Q4_0 to Q8
+  preserves the loss. Classification: **structural, top fix candidate**.
+
+- **D5 (numerical-scale; secondary).** `model.ple_model_proj.weight`
+  ships as BFloat16 in the E2B GGUF (devlog 2026-04-21 T99.2.2
+  storage-type diagnostic, line 437: `*BFloat16Storage [8960, 1536]`).
+  `transposeWeight2D` dequantizes BF16 to F32 via `engine.Transpose`
+  (no BF16-specialized case). H13 refuted BF16 as the cause by
+  comparing against a fully-F32 run. Still listed here for completeness;
+  cleared on prior evidence. Classification: numerical-scale, cleared.
+
+### Items explicitly verified as matching HF
+
+- Main `inputs_embeds = embed_tokens(ids) * sqrt(hidden_size)`
+  (`arch_gemma4_edge.go:135-137`).
+- Token-identity PLE scaled by `sqrt(hidden_size_per_layer_input)=16`
+  via `Gemma4TextScaledWordEmbedding(..., embed_scale=sqrt(256))`
+  (`gemma4_edge_ple_nodes.go:194-199`).
+- `per_layer_input_scale = 1/sqrt(2)` applied to `(projNormed + tokenSlice)`
+  (`gemma4_edge_ple_nodes.go:732-736`).
+- Per-layer PLE sub-block order exactly matches HF
+  `Gemma4TextDecoderLayer.forward` lines 1401-1408:
+  `residual; inp_gate; act_fn; * per_layer_input; per_layer_projection;
+  post_per_layer_input_norm; residual + ple_output`.
+- `layer_output_scale` / `layer_scalar` applied at the very end of the
+  decoder block, after PLE residual add (`arch_gemma4_edge.go:509`).
+- Final `self.norm` / `RMSNormFromParam(model.norm.weight)` applied
+  after the layer loop (`arch_gemma4_edge.go:513-519`).
+- `Gemma4RMSNorm` uses `normed * weight` (NOT `(1 + weight)`, despite
+  the folklore); weight init is `ones`. zerfoo standard RMSNorm matches.
+- `embed_tokens_per_layer` uses `vocab_size_per_layer_input`; the
+  unsloth E2B GGUF `per_layer_token_embd.weight` has shape
+  `[8960, 262144]` confirming full vocab == vocab_size_per_layer_input.
+- Layer-major packing of PLE slices within the `num_layers * ple_dim`
+  flat last-dim: HF reshape and zerfoo `[:, :, N*256:(N+1)*256]` slice
+  both assume layer 0's 256 values come first. Preserved by the GGUF
+  converter.
+- GELU is tanh-approximate in both (`layers/activations/gelu.go:47` =
+  `0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))`, matching
+  `F.gelu(x, approximate='tanh')` aka `gelu_pytorch_tanh`).
+- FFN is `down(gelu(gate(x)) * up(x))`, bias-free, matching HF
+  `Gemma4TextMLP`.
+
+### Conclusion
+
+The zerfoo PLE forward pass is **structurally faithful to the HF
+reference** at the math level. No HF-vs-zerfoo deviation explains the
+bug. The top structural deviation is NOT against HF but against zerfoo's
+own Q8_0 decoder policy: `decodeQ4KTensor` is missing the
+`isEmbedding` guard that `decodeQ8Tensor` applies. For a Gemma 4 E2B
+Q4_K_M GGUF, this silently demotes `model.ple_embed_tokens.weight`
+from Q4_K to Q4_0 at load, and the Q4_0 gather noise compounds across
+35 layers on the PLE tokenSlice path.
+
+### Next step -- T99.2.2.9 (H21 fix candidate)
+
+Gate a new flag `ZERFOO_GEMMA4_PLE_NATIVE_Q4K=1`: when set, make
+`decodeQ4KTensor` (and, for symmetry, `decodeQ5KTensor`,
+`decodeQ6KTensor`) skip the re-quantization for embedding-shaped
+tensors (`shape[0] > 50000`) or for a tight allowlist of tensor names
+(`model.ple_embed_tokens.weight`, `model.embed_tokens.weight`,
+`lm_head.weight`). A/B test on DGX:
+- Baseline unset: Q4_K -> Q4_0 (current, degenerate).
+- Flag set: Q4_K native, no loss beyond the original Q4_K quantization.
+If the flag produces coherent decode, the patch becomes unconditional
+for embedding-shaped Q4_K tensors (the same policy Q8_0 already has).
+
+---
+
 ## 2026-04-21: T99.2.2.7 -- H12 + H20 joint DGX validation (H12 REFUTED, H20 replicated; bug OFF the quantization axis)
 
 **Type:** investigation
