@@ -6,11 +6,41 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"os"
 	"strings"
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/ztensor/tensor"
 )
+
+// embeddingVocabThreshold is the vocab-dimension floor used to classify a 2D
+// tensor as an embedding table. Mirrors the existing Q8_0 embedding guard in
+// decodeQ8Tensor; Gemma 4 Edge uses 262144 (per_layer_token_embd) and 256000
+// (token_embd), both well above 50000, while ordinary weight matrices stay
+// under 50000 on production transformer shapes.
+const embeddingVocabThreshold = 50000
+
+// isEmbeddingShape reports whether a tensor's shape looks like a 2D embedding
+// lookup table (shape[0] is the vocab dimension).
+func isEmbeddingShape(shape []int) bool {
+	return len(shape) == 2 && shape[0] > embeddingVocabThreshold
+}
+
+// pleNativeKQuantEnabled reports whether ZERFOO_GEMMA4_PLE_NATIVE_Q4K=1 is set.
+// When enabled, Q4_K / Q5_K / Q6_K embedding-shaped tensors keep their native
+// K-quant storage instead of being re-quantized to Q4_0 at load time.
+//
+// Motivation (T99.2.2.9 / H21). The default decode path for K-quant tensors
+// takes a lossy round-trip: raw bytes -> K-quant storage -> f32 -> Q4_0
+// storage. For weight matrices this is fine — the GEMV kernels need the Q4_0
+// layout. For gather targets like `model.ple_embed_tokens.weight` (Gemma 4
+// Edge Q4_K_M), the doubly-lossy conversion compounds per-row noise across
+// the 35 PLE layers and was identified as the top structural candidate for
+// the T99.2.2 PLE-decode degeneracy bug. This flag gates the fix so it can
+// be A/B'd on DGX before being promoted.
+func pleNativeKQuantEnabled() bool {
+	return os.Getenv("ZERFOO_GEMMA4_PLE_NATIVE_Q4K") == "1"
+}
 
 // LoadTensors reads tensor data from a parsed GGUF file and returns them as
 // float32 tensors keyed by name. Quantized tensors (Q4_0, Q8_0) are stored
@@ -225,6 +255,13 @@ func decodeQ4KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q4_K decode: %w", err)
 	}
+	// T99.2.2.9 H21 guard: for embedding-shaped tensors, keep native Q4_K
+	// storage when ZERFOO_GEMMA4_PLE_NATIVE_Q4K=1. Avoids the lossy
+	// Q4_K -> f32 -> Q4_0 round-trip for gather targets such as
+	// model.ple_embed_tokens.weight.
+	if pleNativeKQuantEnabled() && isEmbeddingShape(shape) {
+		return tensor.NewWithStorage[float32](shape, q4k)
+	}
 	// Re-quantize Q4_K → Q4_0 for uniform fast GEMV decode path.
 	// Q4_0 block_size=32 works with any hidden_size divisible by 32 (all models).
 	// Q4_K block_size=256 fails when hidden_size%256!=0 (e.g., Gemma3-1B=1152).
@@ -240,6 +277,12 @@ func decodeQ5KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	if err != nil {
 		return nil, fmt.Errorf("Q5_K decode: %w", err)
 	}
+	// T99.2.2.9 H21 guard: symmetric with decodeQ4KTensor. Kept behind the
+	// same flag so Q5_K_M / Q6_K_M GGUF variants of the same family inherit
+	// the embedding-precision fix.
+	if pleNativeKQuantEnabled() && isEmbeddingShape(shape) {
+		return tensor.NewWithStorage[float32](shape, q5k)
+	}
 	f32 := make([]float32, numElements)
 	q5k.Dequantize(f32)
 	q4 := tensor.QuantizeQ4(f32)
@@ -250,6 +293,10 @@ func decodeQ6KTensor(shape []int, numElements int, raw []byte) (*tensor.TensorNu
 	q6k, err := tensor.NewQ6KStorageFromRaw(raw, numElements)
 	if err != nil {
 		return nil, fmt.Errorf("Q6_K decode: %w", err)
+	}
+	// T99.2.2.9 H21 guard: see decodeQ4KTensor.
+	if pleNativeKQuantEnabled() && isEmbeddingShape(shape) {
+		return tensor.NewWithStorage[float32](shape, q6k)
 	}
 	f32 := make([]float32, numElements)
 	q6k.Dequantize(f32)
