@@ -1914,3 +1914,201 @@ func clampTestInt(v, lo, hi int) int {
 	}
 	return v
 }
+
+// TestDecodeKQuant_NativeEmbeddingGuard exercises the T99.2.2.9 / H21 guard:
+// when ZERFOO_GEMMA4_PLE_NATIVE_Q4K=1 AND the tensor is 2D with shape[0] above
+// the embedding-vocab threshold (>50000), decodeQ4KTensor / decodeQ5KTensor /
+// decodeQ6KTensor must return native *Q4KStorage / *Q5KStorage / *Q6KStorage
+// instead of re-quantizing to *Q4Storage. With the flag unset, all three must
+// fall back to the existing Q4_0 path; non-embedding shapes must re-quantize
+// regardless of the flag.
+//
+// Motivation: the default decoders take a lossy round-trip
+// (K-quant -> f32 -> Q4_0) that degrades embedding gather tables on the
+// Gemma 4 Edge PLE path. See docs/plan.md T99.2.2.9 and docs/devlog.md H21.
+func TestDecodeKQuant_NativeEmbeddingGuard(t *testing.T) {
+	// Embedding-shape tensor: 2D with shape[0] = 50176 (> 50000) and 256 total
+	// elements per row chosen so numElements is a multiple of 256 for K-quant
+	// block alignment. Small shape[1] keeps raw block allocation modest.
+	const embedVocab = 50176
+	const embedDim = 2
+	const embedElements = embedVocab * embedDim // 100352 = 392 * 256
+
+	// Non-embedding shape: 2D with shape[0] below threshold. Same numElements
+	// so we can reuse the same raw buffer per type.
+	const nonEmbedRows = 1024
+	const nonEmbedCols = embedElements / nonEmbedRows // 98
+
+	type decoder func(shape []int, n int, raw []byte) (*tensor.TensorNumeric[float32], error)
+
+	type kind struct {
+		name       string
+		decode     decoder
+		blockBytes int
+		// isNativeStorage returns true if the tensor's storage is the native
+		// K-quant type (as opposed to the re-quantized *Q4Storage).
+		isNativeStorage func(t *tensor.TensorNumeric[float32]) bool
+	}
+
+	kinds := []kind{
+		{
+			name:       "Q4_K",
+			decode:     decodeQ4KTensor,
+			blockBytes: 144,
+			isNativeStorage: func(tn *tensor.TensorNumeric[float32]) bool {
+				_, ok := tn.GetStorage().(*tensor.Q4KStorage)
+				return ok
+			},
+		},
+		{
+			name:       "Q5_K",
+			decode:     decodeQ5KTensor,
+			blockBytes: 176,
+			isNativeStorage: func(tn *tensor.TensorNumeric[float32]) bool {
+				_, ok := tn.GetStorage().(*tensor.Q5KStorage)
+				return ok
+			},
+		},
+		{
+			name:       "Q6_K",
+			decode:     decodeQ6KTensor,
+			blockBytes: 210,
+			isNativeStorage: func(tn *tensor.TensorNumeric[float32]) bool {
+				_, ok := tn.GetStorage().(*tensor.Q6KStorage)
+				return ok
+			},
+		},
+	}
+
+	type scenario struct {
+		name       string
+		shape      []int
+		flag       string // value for ZERFOO_GEMMA4_PLE_NATIVE_Q4K ("" = unset)
+		wantNative bool
+	}
+
+	scenarios := []scenario{
+		{
+			name:       "flag-off-embedding-shape-rewrites-to-Q4",
+			shape:      []int{embedVocab, embedDim},
+			flag:       "",
+			wantNative: false,
+		},
+		{
+			name:       "flag-on-embedding-shape-keeps-native",
+			shape:      []int{embedVocab, embedDim},
+			flag:       "1",
+			wantNative: true,
+		},
+		{
+			name:       "flag-on-non-embedding-shape-still-rewrites-to-Q4",
+			shape:      []int{nonEmbedRows, nonEmbedCols},
+			flag:       "1",
+			wantNative: false,
+		},
+		{
+			name:       "flag-on-1D-shape-still-rewrites-to-Q4",
+			shape:      []int{embedElements},
+			flag:       "1",
+			wantNative: false,
+		},
+		// Any other truthy-looking value is treated as unset (strict "1" check).
+		{
+			name:       "flag-true-string-not-recognized-rewrites-to-Q4",
+			shape:      []int{embedVocab, embedDim},
+			flag:       "true",
+			wantNative: false,
+		},
+	}
+
+	for _, k := range kinds {
+		nBlocks := (embedElements + 255) / 256
+		raw := make([]byte, nBlocks*k.blockBytes) // zero-filled: a valid block.
+
+		for _, sc := range scenarios {
+			t.Run(k.name+"/"+sc.name, func(t *testing.T) {
+				t.Setenv("ZERFOO_GEMMA4_PLE_NATIVE_Q4K", sc.flag)
+
+				tn, err := k.decode(sc.shape, embedElements, raw)
+				if err != nil {
+					t.Fatalf("%s decode: %v", k.name, err)
+				}
+				if tn == nil {
+					t.Fatalf("%s decode returned nil tensor", k.name)
+				}
+
+				// Shape must be preserved regardless of branch taken.
+				got := tn.Shape()
+				if len(got) != len(sc.shape) {
+					t.Fatalf("shape rank = %d, want %d", len(got), len(sc.shape))
+				}
+				for i := range sc.shape {
+					if got[i] != sc.shape[i] {
+						t.Fatalf("shape[%d] = %d, want %d", i, got[i], sc.shape[i])
+					}
+				}
+
+				native := k.isNativeStorage(tn)
+				_, isQ4 := tn.GetStorage().(*tensor.Q4Storage)
+
+				switch {
+				case sc.wantNative && !native:
+					t.Fatalf("storage = %T, want native (e.g., *Q%sStorage)",
+						tn.GetStorage(), k.name)
+				case !sc.wantNative && !isQ4:
+					t.Fatalf("storage = %T, want *tensor.Q4Storage "+
+						"(re-quantized %s->Q4_0 default path)",
+						tn.GetStorage(), k.name)
+				}
+			})
+		}
+	}
+}
+
+// TestPLENativeKQuantEnabled checks the env-var helper is strictly "1".
+func TestPLENativeKQuantEnabled(t *testing.T) {
+	cases := []struct {
+		val  string
+		want bool
+	}{
+		{"", false},
+		{"0", false},
+		{"1", true},
+		{"true", false},
+		{"yes", false},
+		{" 1 ", false}, // whitespace is not trimmed
+	}
+	for _, c := range cases {
+		t.Run("val="+c.val, func(t *testing.T) {
+			t.Setenv("ZERFOO_GEMMA4_PLE_NATIVE_Q4K", c.val)
+			if got := pleNativeKQuantEnabled(); got != c.want {
+				t.Fatalf("pleNativeKQuantEnabled()=%v, want %v (val=%q)",
+					got, c.want, c.val)
+			}
+		})
+	}
+}
+
+// TestIsEmbeddingShape validates the shape classifier used by the guard.
+func TestIsEmbeddingShape(t *testing.T) {
+	cases := []struct {
+		name  string
+		shape []int
+		want  bool
+	}{
+		{"2D-vocab-above-threshold", []int{262144, 8960}, true},
+		{"2D-vocab-at-threshold+1", []int{50001, 1}, true},
+		{"2D-vocab-at-threshold", []int{50000, 256}, false},
+		{"2D-vocab-below-threshold", []int{49999, 4096}, false},
+		{"1D-even-if-large", []int{262144}, false},
+		{"3D-even-if-large-first", []int{262144, 4, 4}, false},
+		{"empty-shape", []int{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isEmbeddingShape(c.shape); got != c.want {
+				t.Fatalf("isEmbeddingShape(%v)=%v, want %v", c.shape, got, c.want)
+			}
+		})
+	}
+}
