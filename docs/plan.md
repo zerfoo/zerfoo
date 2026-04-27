@@ -2649,6 +2649,30 @@ Task details removed during /tidy --apply. See git history for full lists.
 
 ## Progress Log
 
+### 2026-04-27: E124 added -- Architectural layout cleanup from deep-review-001
+
+- **Change summary.** Added E124 (Architectural Layout Cleanup) covering the
+  findings from `docs/deep-reviews/001-design-alignment-architectural-cleanliness.md`
+  that are NOT already covered by the composition epics (E61-E89). Scope: root-
+  level package consolidation (~18 unsanctioned dirs to move under existing
+  parents), naming hazards (`testing/` shadows stdlib; `integration/` vs
+  `integrations/`), activation API unification (Node + functional surfaces
+  collapsed), CI layout-allowlist lint, open-core scope ADR for
+  `cloud/`/`marketplace/`/`compliance/`, and a `design.md` refresh.
+- **Tasks added:** T124.1.1-T124.1.4 (quick wins), T124.2.1-T124.2.4
+  (activations), T124.3.1-T124.3.5 (serve/), T124.4.1-T124.4.7 (training/),
+  T124.5.1-T124.5.7 (layers+inference+model), T124.6.1-T124.6.3 (tests),
+  T124.7.1-T124.7.2 (open-core), T124.8.1 (design.md refresh). Six waves,
+  largest is 10 agents (with R124.1 mitigation noted).
+- **Milestone added:** M-LAYOUT-1 targeting 2026-Q3.
+- **No ADRs created yet.** T124.7.1 will create the open-core scope ADR.
+  T124.8.1 may either revise design.md in place or spawn an ADR depending on
+  the decision shape.
+- **Cross-references.** E89 (timeseries Engine[T] migration, DONE) is the
+  composition counterpart; E124 only covers the structural sweep that
+  composition epics left behind. The deep review explicitly does not redo
+  E89's work.
+
 ### 2026-04-21: T99.2.2 next-session plan -- H17/H19 subtasks queued
 
 - **Change summary.** T99.2.2 H16 ablation test completed this session
@@ -3513,3 +3537,300 @@ PRs: #334, #336, #338, #341. Detailed task breakdowns removed during /tidy. See 
 | M-COMP-2 | Composition Phase 2 Complete | E66-E73 all compose from layers/ or Engine; architecture test in CI | DONE 2026-04-03 |
 | M-COMP-3 | Composition Phase 3 Complete | E74 backward composition done; E75 inference .Data() eliminated; E76 allowlist removed; zero raw backward loops in timeseries/; dirty-architecture.md violations at 0 | 2026-Q3 |
 | M-COMP-4 | Composition Phase 4 Complete | E77-E84 complete; dirty-architecture.md violations reduced from ~9,800 to <2,000 lines; tabular/, layers/, generate/, inference/, training/, serve/, modeldsl/ all compose from layers/ or Engine | DONE 2026-04-06 |
+
+---
+
+## E124: Architectural Layout Cleanup (from deep-review-001)
+
+### Context
+
+Source: docs/deep-reviews/001-design-alignment-architectural-cleanliness.md
+(2026-04-27). The composition-remediation work (E61-E84, E89) eliminated the
+worst arithmetic violations, but the physical package layout still drifts
+from the original design.md@d18e20d9. Specifically:
+
+- 47 top-level Go directories vs 8 in the original design. Approximately 18
+  unsanctioned top-level dirs created in a 48-hour parallel-agent wave on
+  2026-03-17/18. Cross-imports already make most consolidations a mechanical
+  `git mv`.
+- `testing/` shadows the Go stdlib `testing` package. `integration/` and
+  `integrations/` coexist with totally different purposes (smoke tests vs
+  LangChain/Weaviate adapters).
+- `layers/activations/` (Node form) and `layers/functional/activations.go`
+  (function form) are parallel API surfaces for the same math; no
+  delegation, so a fix in one path does not propagate.
+- `cloud/`, `marketplace/`, `compliance/` carry SaaS/enterprise concerns
+  that ADR-057 (open-core licensing) suggests may belong in a sibling
+  `zerfoo-enterprise/` repo. Decision deferred for explicit ADR.
+
+E89 already covered the `timeseries/` Engine[T] migration (DONE). E124 does
+NOT redo that work; it covers the structural sweep the composition epics
+left behind.
+
+### Acceptance Criteria
+
+- Root-level Go directory count reduced from ~47 to <=20.
+- `testing/` directory no longer exists at root (renamed or absorbed).
+- `integration/` and `integrations/` no longer coexist at root.
+- A CI lint fails any PR that creates a new top-level Go package without a
+  referenced ADR slug in the package's `doc.go`.
+- `layers/functional/activations.go` delegates to the `layers/activations/`
+  Node registry instead of reimplementing math.
+- All test suites green; no new files added under root that were not on the
+  allowlist.
+
+### Work Breakdown
+
+#### E124.1: Quick wins (this week)
+
+- [ ] T124.1.1 Rename `testing/` to `tests/testutil/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Move all Go files under `testing/{benchmark,compare,...}` to
+  `tests/testutil/...`. Update all imports. Run `go test ./...` and
+  `go vet ./...`. The directory name `testing/` shadows the stdlib package
+  and is harmful regardless of any larger remediation.
+  Acceptance: `find . -maxdepth 1 -name testing -type d` returns empty;
+  `go build ./...` and `go test ./...` pass.
+
+- [ ] T124.1.2 Resolve `integration/` vs `integrations/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  `integration/` (2 files: production smoke tests) -> `tests/integration/`.
+  `integrations/` (4 files: LangChain + Weaviate adapters) -> `sdk/integrations/`.
+  Update imports and any CI workflow refs.
+  Acceptance: `ls -d integration integrations` returns "No such file";
+  `go build ./...` and `go test ./...` pass.
+
+- [ ] T124.1.3 Add CI lint: top-level package allowlist  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Add `tests/architecture/layout_test.go` (or extend the existing
+  composition_test.go) that lists allowed top-level Go directories. The
+  allowlist is the original design's 8 + ADR-sanctioned additions:
+  `layers, training, model, distributed, inference, generate, serve,
+  tabular, mobile, cloud (until enterprise split decision), cmd, internal,
+  tests, docs, examples, scripts, benchmarks, bin, deploy, infra, config`.
+  Any other top-level dir with `*.go` files fails the test unless its
+  `doc.go` references an ADR slug (e.g., `// See docs/adr/NNN-...md`).
+  Acceptance: test passes today (with grandfathered exemptions for current
+  unsanctioned dirs); fails when a new top-level pkg is added without an
+  ADR ref.
+  Decision rationale: deep-review-001 identifies this as the highest-ROI
+  guardrail to prevent the next 48-hour wave from undoing cleanup.
+
+- [ ] T124.1.4 Run linters + go vet after E124.1  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T124.1.1, T124.1.2, T124.1.3
+  Acceptance: `golangci-lint run`, `go vet ./...`, `go build ./...` clean.
+
+#### E124.2: Activation API unification (this sprint)
+
+- [ ] T124.2.1 Audit activation parallel paths  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Enumerate every implementation of GELU, ReLU, Sigmoid, SiLU, Softmax,
+  FastGelu in `layers/activations/`, `layers/functional/`, and any
+  remaining inline copies in `inference/`, `tabular/`, `layers/vision/`,
+  `layers/audio/`. Output a table: activation -> [Node loc, functional loc,
+  inline copies].
+  Acceptance: audit table written to `docs/activation-audit.md`.
+
+- [ ] T124.2.2 Make `layers/functional/activations.go` thin wrappers  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Deps: T124.2.1
+  Convert each function in `layers/functional/activations.go` to construct
+  the corresponding Node from `layers/activations/registry.go` and
+  delegate. Delete duplicated math. Same for `gelu_backward.go`.
+  Acceptance: `layers/functional/activations.go` contains no arithmetic
+  loops; all callers compile; parity tests pass.
+
+- [ ] T124.2.3 Replace inline activation copies  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: T124.2.2
+  Replace inline GELU/SiLU computations in `layers/core/ffn.go`,
+  `layers/vision/clip_encoder.go`, `layers/audio/whisper_encoder.go`, and
+  any tabular files with calls to the canonical Node or functional
+  wrapper.
+  Acceptance: `grep -rn "math.Erf\|math.Tanh.*0.044715" layers/ inference/
+  tabular/` returns only `layers/activations/`.
+
+- [ ] T124.2.4 Tests + lint  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Deps: T124.2.3
+  Run full parity suite, race detector, golangci-lint.
+  Acceptance: all green.
+
+#### E124.3: serve/ consolidation (this sprint)
+
+- [ ] T124.3.1 Move `health/` -> `serve/health/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  3 files; pure HTTP liveness/readiness probes. `cmd/cli/serve.go` already
+  imports it.
+
+- [ ] T124.3.2 Move `shutdown/` -> `serve/shutdown/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  3 files; graceful shutdown coordinator used only by `cmd/cli/`.
+
+- [ ] T124.3.3 Move `support/` -> `serve/support/` (or rename to clarify SaaS scope)  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  8 files; customer-support webhook handlers (multi-tenant SaaS feature).
+  Note: this is a candidate for the open-core split (T124.6.1).
+
+- [ ] T124.3.4 Move `security/` -> `serve/security/`  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  SOC 2 access control, API keys, rate limit. All HTTP-server-side.
+
+- [ ] T124.3.5 Tests + lint after serve/ consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T124.3.1, T124.3.2, T124.3.3, T124.3.4
+
+#### E124.4: training/ consolidation (this sprint)
+
+- [ ] T124.4.1 Move `rl/` -> `training/rl/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  8 files; RL is a training paradigm.
+
+- [ ] T124.4.2 Move `meta/` -> `training/meta/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  3 files; MAML meta-learning.
+
+- [ ] T124.4.3 Move `gp/` -> `training/gp/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  3 files; tree-based genetic programming.
+
+- [ ] T124.4.4 Move `monitor/` + `recover/` -> `training/mlops/{monitor,recover}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+  6 files total. `recover/retrain.go` already imports `monitor`.
+
+- [ ] T124.4.5 Move `provenance/` -> `training/provenance/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  Hash-chain model lifecycle audit.
+
+- [ ] T124.4.6 Move `federated/` -> `training/federated/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  FedAvg coordinator.
+
+- [ ] T124.4.7 Tests + lint after training/ consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T124.4.1, T124.4.2, T124.4.3, T124.4.4, T124.4.5, T124.4.6
+
+#### E124.5: layers/ + inference/ consolidation (this sprint)
+
+- [ ] T124.5.1 Move `gnn/` -> `layers/gnn/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  4 files; literal GNN layers.
+
+- [ ] T124.5.2 Move `synth/` -> `layers/generative/synth/` (or experimental/)  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  5 files; VAE-based synthetic data generation.
+
+- [ ] T124.5.3 Rename + relocate `shared/` -> `layers/shared_latent/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  3 files; cross-model latent space. `shared/` is the canonical
+  anti-pattern bucket name.
+
+- [ ] T124.5.4 Move `causal/`, `features/`, `regime/` -> `inference/timeseries/{causal,features,regime}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+  All three are TS-domain experimental packages (13 files total).
+
+- [ ] T124.5.5 Move `modelcache/`, `modeldsl/`, `registry/` -> `model/{cache,dsl,registry}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+  Tightly coupled to model loading/serving.
+
+- [ ] T124.5.6 Move `autoopt/` -> `internal/autoopt/` (or upstream to ztensor/internal/codegen/)  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  15 files; kernel/codegen concern, not a top-level ML package.
+
+- [ ] T124.5.7 Tests + lint after layers/inference/model consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T124.5.1 .. T124.5.6
+
+#### E124.6: tests/ + parity helpers
+
+- [ ] T124.6.1 Move `mobile/` -> `tests/mobile/`  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Single test file; not a framework package.
+
+- [ ] T124.6.2 Extract parity helpers to `tests/parity/testutil/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+  Move `makeTensor`, `setup`, `loadGolden`, `getFloat32s`, `getInts`,
+  `getFloat`, `assertClose` from `tests/parity/layer_parity_test.go` into
+  a non-`_test.go` `testutil` subpackage so all parity-style suites can
+  import them. Graphify identified these as the most-connected nodes in
+  the entire graph (76-88 edges each) -- single source of truth needed.
+  Acceptance: `tests/parity/testutil/` exists with these helpers; all
+  parity tests still pass.
+
+- [ ] T124.6.3 Tests + lint  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T124.6.1, T124.6.2
+
+#### E124.7: Open-core split decision (this quarter)
+
+- [ ] T124.7.1 Write ADR: scope of `cloud/`, `marketplace/`, `compliance/` in zerfoo OSS  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  Decide whether SaaS-billing/marketplace/compliance code belongs in this
+  Apache-2.0 repo or in a sibling `zerfoo-enterprise/` repo per
+  ADR-057's open-core direction. ADR-084 is the precedent (crossasset/
+  -> wolf). Output: docs/adr/NNN-zerfoo-oss-scope.md.
+  Acceptance: ADR Accepted; clear placement decision with rationale.
+
+- [ ] T124.7.2 Execute the placement decision (move or keep + document)  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Deps: T124.7.1
+  If split: extract dirs to new repo. If keep: add doc.go ADR refs to
+  satisfy T124.1.3 lint. Either way, update the layout-test allowlist.
+
+#### E124.8: Refresh design.md
+
+- [ ] T124.8.1 Refresh `docs/design.md` to mandate the post-cleanup layout  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  Deps: E124.1-E124.7 substantially complete
+  Update the "Modular Package Structure" section to reflect the
+  consolidated layout: original 8 (with ztensor extraction noted), plus
+  ADR-sanctioned additions, plus aspirational sub-packages. Make it a
+  GATE again, not a reflective inventory.
+  Acceptance: design.md describes the current layout AND lists the rule
+  ("new top-level packages require an ADR"). The lint in T124.1.3
+  references this section.
+
+### E124 Parallel Tracks
+
+| Track | Tasks | Notes |
+|-------|-------|-------|
+| Track A: Quick wins | T124.1.1, T124.1.2, T124.1.3 | All independent of each other. |
+| Track B: Activations | T124.2.1 -> T124.2.2 -> T124.2.3 -> T124.2.4 | Sequential within track. |
+| Track C: serve/ | T124.3.1, T124.3.2, T124.3.3, T124.3.4 (parallel) -> T124.3.5 | `git mv` ops are independent. |
+| Track D: training/ | T124.4.1..T124.4.6 (parallel) -> T124.4.7 | Independent moves. |
+| Track E: layers+inference+model | T124.5.1..T124.5.6 (parallel) -> T124.5.7 | Independent moves. |
+| Track F: tests/ | T124.6.1, T124.6.2 (parallel) -> T124.6.3 | Independent. |
+| Track G: Open core | T124.7.1 -> T124.7.2 | Sequential; ADR first. |
+| Track H: Design refresh | T124.8.1 | After A-F substantially done. |
+
+Tracks A-F can all run concurrently; G can start anytime; H is the final
+sync.
+
+### E124 Waves
+
+#### Wave E124-1: Quick wins + activation audit (4 agents)
+- [ ] T124.1.1 Rename testing/  verifies: [infrastructure]
+- [ ] T124.1.2 Resolve integration/ vs integrations/  verifies: [infrastructure]
+- [ ] T124.1.3 CI layout lint  verifies: [infrastructure]
+- [ ] T124.2.1 Activation parallel-paths audit  verifies: [infrastructure]
+
+#### Wave E124-2: Bulk consolidation (10 agents)
+- [ ] T124.3.1 health/ -> serve/health/  verifies: [infrastructure]
+- [ ] T124.3.2 shutdown/ -> serve/shutdown/  verifies: [infrastructure]
+- [ ] T124.3.3 support/ -> serve/support/  verifies: [infrastructure]
+- [ ] T124.3.4 security/ -> serve/security/  verifies: [infrastructure]
+- [ ] T124.4.1 rl/ -> training/rl/  verifies: [infrastructure]
+- [ ] T124.4.2 meta/ -> training/meta/  verifies: [infrastructure]
+- [ ] T124.4.3 gp/ -> training/gp/  verifies: [infrastructure]
+- [ ] T124.4.4 monitor+recover -> training/mlops/  verifies: [infrastructure]
+- [ ] T124.5.1 gnn/ -> layers/gnn/  verifies: [infrastructure]
+- [ ] T124.6.2 Parity helpers to tests/parity/testutil/  verifies: [infrastructure]
+
+(Note: 10-agent cap from MEMORY-recorded pre-flight wisdom -- if any of
+these fail in worktree isolation, drop to 4 per wave.)
+
+#### Wave E124-3: Tail consolidation + activation unification (8 agents)
+- [ ] T124.4.5 provenance/ -> training/provenance/  verifies: [infrastructure]
+- [ ] T124.4.6 federated/ -> training/federated/  verifies: [infrastructure]
+- [ ] T124.5.2 synth/ -> layers/generative/synth/  verifies: [infrastructure]
+- [ ] T124.5.3 shared/ -> layers/shared_latent/  verifies: [infrastructure]
+- [ ] T124.5.4 causal+features+regime -> inference/timeseries/  verifies: [infrastructure]
+- [ ] T124.5.5 modelcache+modeldsl+registry -> model/  verifies: [infrastructure]
+- [ ] T124.5.6 autoopt/ -> internal/autoopt/  verifies: [infrastructure]
+- [ ] T124.6.1 mobile/ -> tests/mobile/  verifies: [infrastructure]
+
+#### Wave E124-4: Activation unification (1 agent, sequential)
+- [ ] T124.2.2 -> T124.2.3 -> T124.2.4
+
+#### Wave E124-5: Validation + ADR (3 agents)
+- [ ] T124.1.4 Lint sweep  verifies: [infrastructure]
+- [ ] T124.3.5 + T124.4.7 + T124.5.7 + T124.6.3 (combined into one validation run)
+- [ ] T124.7.1 Open-core scope ADR  verifies: [infrastructure]
+
+#### Wave E124-6: Open-core execute + design refresh (2 agents)
+- [ ] T124.7.2 Execute placement decision  verifies: [infrastructure]
+- [ ] T124.8.1 Refresh docs/design.md  verifies: [infrastructure]
+
+### E124 Risk Register
+
+| ID | Risk | Impact | Likelihood | Mitigation |
+|----|------|--------|------------|------------|
+| R124.1 | Worktree isolation freezes when wave size >4 (per MEMORY feedback_agent_parallelism) | Wave stalls mid-way | Medium | Cap waves at 4 agents in practice; the 10-agent wave above is best-case. Manual-rerun fallback documented. |
+| R124.2 | A `git mv` cascade breaks an external integration that depends on the old import path | Downstream breakage | Low | Use `gofmt -r` style import rewrites; run `go build ./...` after each move; CI catches before merge. |
+| R124.3 | The CI layout lint (T124.1.3) traps an unrelated PR that legitimately needs a new top-level dir | Friction | Medium | Lint message must say "add an ADR ref to your doc.go to allowlist". Easy escape valve. |
+| R124.4 | Activation unification (T124.2.2) changes numerical behavior on a subtle edge case | Parity test fail | Low | E86 PyTorch parity suite catches deviations to 1e-6; run before merge. |
+| R124.5 | Open-core split (T124.7) gets stuck in legal/licensing review | Blocked indefinitely | Medium | T124.7.2 has a "keep + document" branch that does not require legal sign-off; ADR can land first and execution deferred. |
+
+### E124 Milestone
+
+| ID | Milestone | Exit Criteria | Target |
+|----|-----------|---------------|--------|
+| M-LAYOUT-1 | Architectural layout aligned with design | E124.1-E124.6 complete; root-level Go dirs <=20; CI layout lint passes; activation API unified; design.md refreshed (T124.8.1) | 2026-Q3 |
