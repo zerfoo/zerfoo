@@ -3,8 +3,8 @@
     ".": {
       "release-type": "go",
       "release-as": "1.49.0",
-      "bootstrap-sha": "d94e62777634a3d1f3c6d3d49b8568bf37b5cef7",
-      "last-release-sha": "d94e62777634a3d1f3c6d3d49b8568bf37b5cef7",
+      "bootstrap-sha": "22205c8d0db8bb78d7d6ae6ca7d59af8e8eb42a0",
+      "last-release-sha": "22205c8d0db8bb78d7d6ae6ca7d59af8e8eb42a0",
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },
