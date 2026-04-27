@@ -446,8 +446,7 @@ func decodeQ8Tensor(shape []int, numElements int, raw []byte) (*tensor.TensorNum
 	// fast GEMV decode path. Embeddings (large vocab dim) keep Q8 for precision.
 	// Without this, Q8_0 attn_v weights block the merged QKV optimization.
 	if len(shape) == 2 && numElements > 0 {
-		isEmbedding := shape[0] > 50000
-		if !isEmbedding {
+		if !isEmbeddingShape(shape) {
 			f32 := make([]float32, numElements)
 			for bi := range nBlocks {
 				s := scales[bi]
