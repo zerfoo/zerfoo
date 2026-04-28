@@ -3625,7 +3625,7 @@ left behind.
   Acceptance: `ls -d integration integrations` returns "No such file";
   `go build ./...` and `go test ./...` pass.
 
-- [ ] T124.1.3 Add CI lint: top-level package allowlist  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T124.1.3 Add CI lint: top-level package allowlist  DONE 2026-04-28  verifies: [infrastructure]
   Add `tests/architecture/layout_test.go` (or extend the existing
   composition_test.go) that lists allowed top-level Go directories. The
   allowlist is the original design's 8 + ADR-sanctioned additions:
@@ -3807,7 +3807,7 @@ sync.
 #### Wave E124-1: Quick wins + activation audit (4 agents)
 - [x] T124.1.1 Rename testing/  DONE 2026-04-27  verifies: [infrastructure]
 - [ ] T124.1.2 Resolve integration/ vs integrations/  verifies: [infrastructure]
-- [ ] T124.1.3 CI layout lint  verifies: [infrastructure]
+- [x] T124.1.3 CI layout lint  DONE 2026-04-28  verifies: [infrastructure]
 - [x] T124.2.1 Activation parallel-paths audit  verifies: [infrastructure]  DONE 2026-04-27 (docs/audits/T124.2.1-activations.md)
 
 #### Wave E124-2: Bulk consolidation (10 agents)
