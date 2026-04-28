@@ -20,12 +20,12 @@ type GATConfig struct {
 type GAT struct {
 	config GATConfig
 	// Per-head parameters for the first attention layer.
-	wHeads  [][][]float64 // [head][input_dim][hidden_dim]
-	aLeft   [][]float64   // [head][hidden_dim] — attention vector left
-	aRight  [][]float64   // [head][hidden_dim] — attention vector right
+	wHeads [][][]float64 // [head][input_dim][hidden_dim]
+	aLeft  [][]float64   // [head][hidden_dim] — attention vector left
+	aRight [][]float64   // [head][hidden_dim] — attention vector right
 	// Output projection: from NHeads*HiddenDim to OutputDim.
-	wOut    [][]float64 // [NHeads*HiddenDim][OutputDim]
-	bOut    []float64   // [OutputDim]
+	wOut [][]float64 // [NHeads*HiddenDim][OutputDim]
+	bOut []float64   // [OutputDim]
 }
 
 // NewGAT creates a GAT with Xavier-initialized weights.
