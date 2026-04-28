@@ -85,12 +85,10 @@ func TestSoftmax_ForwardInputError(t *testing.T) {
 func TestSoftmax_Backward(t *testing.T) {
 	eng := makeEngine()
 	sm := NewSoftmax[float32](eng, -1)
-	grads, err := sm.Backward(context.Background(), types.FullBackprop, nil)
-	if err != nil {
-		t.Fatalf("Softmax.Backward failed: %v", err)
-	}
-	if grads != nil {
-		t.Error("expected nil grads from Softmax.Backward")
+	// Backward before Forward must error: there is no cached softmax output
+	// to differentiate against.
+	if _, err := sm.Backward(context.Background(), types.FullBackprop, nil); err == nil {
+		t.Error("expected error when Backward is called before Forward")
 	}
 }
 

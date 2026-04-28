@@ -194,18 +194,75 @@ func TestSoftmaxForwardInputCountError(t *testing.T) {
 	}
 }
 
-func TestSoftmaxBackward(t *testing.T) {
+func TestSoftmaxBackwardErrors(t *testing.T) {
 	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
 	ctx := context.Background()
-	softmax := NewSoftmax(engine, -1)
 
-	// Backward returns nil (not implemented for inference-only layer)
-	grads, err := softmax.Backward(ctx, types.FullBackprop, nil)
+	// Backward before Forward must error.
+	softmax := NewSoftmax(engine, -1)
+	dOut := makeTensor(t, []int{1, 3}, []float32{0.1, 0.2, 0.3})
+	if _, err := softmax.Backward(ctx, types.FullBackprop, dOut); err == nil {
+		t.Errorf("expected error when Backward is called before Forward")
+	}
+
+	// nil dOut must error.
+	softmax2 := NewSoftmax(engine, -1)
+	in := makeTensor(t, []int{1, 3}, []float32{1, 2, 3})
+	if _, err := softmax2.Forward(ctx, in); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if _, err := softmax2.Backward(ctx, types.FullBackprop, nil); err == nil {
+		t.Errorf("expected error for nil dOut")
+	}
+}
+
+// TestSoftmaxBackwardKnownValues verifies the analytical gradient for a
+// hand-computable case. For input x = [1, 2, 3] with softmax output
+// y = exp(x)/sum(exp(x)), and upstream gradient dOut = [1, 0, 0]:
+//
+//	dot     = sum(dOut * y) = y[0]
+//	dInput  = y * (dOut - dot)
+//	        = [y[0]*(1-y[0]), -y[0]*y[1], -y[0]*y[2]]
+//
+// which is the first row of the softmax Jacobian.
+func TestSoftmaxBackwardKnownValues(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	ctx := context.Background()
+
+	softmax := NewSoftmax(engine, -1)
+	in := makeTensor(t, []int{1, 3}, []float32{1, 2, 3})
+	yT, err := softmax.Forward(ctx, in)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	y := yT.Data()
+
+	dOut := makeTensor(t, []int{1, 3}, []float32{1, 0, 0})
+	grads, err := softmax.Backward(ctx, types.FullBackprop, dOut)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	if grads != nil {
-		t.Errorf("expected nil gradients, got %v", grads)
+	if len(grads) != 1 {
+		t.Fatalf("expected 1 gradient, got %d", len(grads))
+	}
+
+	got := grads[0].Data()
+	want := []float32{y[0] * (1 - y[0]), -y[0] * y[1], -y[0] * y[2]}
+	for i := range want {
+		if math.Abs(float64(got[i]-want[i])) > 1e-6 {
+			t.Errorf("dInput[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+
+	// Sum of dInput along the softmax axis must be ~0 because
+	// sum_j d softmax_i / d x_j = 0 for each i, hence
+	// sum_j (sum_i dOut_i * J_ij) = sum_i dOut_i * sum_j J_ij = 0.
+	var s float32
+	for _, v := range got {
+		s += v
+	}
+	if math.Abs(float64(s)) > 1e-6 {
+		t.Errorf("sum(dInput) = %v, want ~0", s)
 	}
 }
 
