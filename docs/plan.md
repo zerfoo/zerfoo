@@ -3646,13 +3646,13 @@ left behind.
 
 #### E124.2: Activation API unification (this sprint)
 
-- [ ] T124.2.1 Audit activation parallel paths  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.2.1 Audit activation parallel paths  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   Enumerate every implementation of GELU, ReLU, Sigmoid, SiLU, Softmax,
   FastGelu in `layers/activations/`, `layers/functional/`, and any
   remaining inline copies in `inference/`, `tabular/`, `layers/vision/`,
   `layers/audio/`. Output a table: activation -> [Node loc, functional loc,
   inline copies].
-  Acceptance: audit table written to `docs/activation-audit.md`.
+  Acceptance: audit table written to `docs/audits/T124.2.1-activations.md`.
 
 - [ ] T124.2.2 Make `layers/functional/activations.go` thin wrappers  Owner: TBD  Est: 3h  verifies: [infrastructure]
   Deps: T124.2.1
@@ -3807,7 +3807,7 @@ sync.
 - [ ] T124.1.1 Rename testing/  verifies: [infrastructure]
 - [ ] T124.1.2 Resolve integration/ vs integrations/  verifies: [infrastructure]
 - [ ] T124.1.3 CI layout lint  verifies: [infrastructure]
-- [ ] T124.2.1 Activation parallel-paths audit  verifies: [infrastructure]
+- [x] T124.2.1 Activation parallel-paths audit  verifies: [infrastructure]  DONE 2026-04-27 (docs/audits/T124.2.1-activations.md)
 
 #### Wave E124-2: Bulk consolidation (10 agents)
 - [ ] T124.3.1 health/ -> serve/health/  verifies: [infrastructure]
