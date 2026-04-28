@@ -3883,6 +3883,11 @@ stress validation. Original plan archived at
   `cudaHostRegister` on the mmap'd region to enable fast DMA without bounce
   buffers. Acceptance: GPU upload of mmap'd tensors >= 90% speed of
   heap-allocated upload.
+  blocked: 2026-04-27 -- ztensor/internal/cuda purego layer exposes no
+  cudaHostRegister/cuMemHostRegister symbol. Must add the purego binding in
+  ztensor (runtime_purego.go) before zerfoo's mmap loader can call it. Per
+  zero-stub policy, no zerfoo-side wiring shipped until the upstream binding
+  exists. Filed as the first step of this task; tracked under repo: ztensor.
 
 - [ ] T125.1.2 Layer-at-a-time GPU transfer with prefetch  Owner: TBD  Est: 4h  verifies: [UC-MMAP-72B]
   Deps: T125.1.1
