@@ -3726,7 +3726,7 @@ left behind.
 - [x] T124.5.2 Move `synth/` -> `layers/generative/synth/` (or experimental/)  Owner: TBD  Est: 1h  verifies: [infrastructure] DONE 2026-04-27
   5 files; VAE-based synthetic data generation.
 
-- [ ] T124.5.3 Rename + relocate `shared/` -> `layers/shared_latent/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.5.3 Rename + relocate `shared/` -> `layers/shared_latent/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   3 files; cross-model latent space. `shared/` is the canonical
   anti-pattern bucket name.
 
@@ -3829,7 +3829,7 @@ these fail in worktree isolation, drop to 4 per wave.)
 - [x] T124.4.5 provenance/ -> training/provenance/  verifies: [infrastructure] DONE 2026-04-27
 - [x] T124.4.6 federated/ -> training/federated/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.5.2 synth/ -> layers/generative/synth/  verifies: [infrastructure] DONE 2026-04-27
-- [ ] T124.5.3 shared/ -> layers/shared_latent/  verifies: [infrastructure]
+- [x] T124.5.3 shared/ -> layers/shared_latent/  verifies: [infrastructure]  DONE 2026-04-27
 - [ ] T124.5.4 causal+features+regime -> inference/timeseries/  verifies: [infrastructure]
 - [ ] T124.5.5 modelcache+modeldsl+registry -> model/  verifies: [infrastructure]
 - [x] T124.5.6 DONE 2026-04-27 autoopt/ -> internal/autoopt/  verifies: [infrastructure]
