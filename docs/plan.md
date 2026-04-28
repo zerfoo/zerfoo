@@ -3945,6 +3945,12 @@ Annapurna Labs partnership pitch. Original plan archived at
   Acquire/build PJRT CPU plugin .so. Load Gemma3-1B with WithPJRT(CPU
   plugin) and compare first-token logits to Engine CPU within 1e-4.
   Acceptance: logits match within tolerance.
+  Status 2026-04-27: scaffold landed (build tag, README, table-driven case
+  list, tolerance constant) on branch test/pjrt-cpu-parity-T126.1.1.
+  blocked: (a) PJRT CPU plugin .so not yet vendored/built in repo; (b)
+  inference.Model exposes no first-token logits accessor (Generate*
+  variants all sample internally), so the numerical assertion cannot be
+  written. See tests/parity/README.md for the follow-up needed.
 
 - [ ] T126.1.2 PJRT CUDA plugin integration test  Owner: TBD  Est: 2h  verifies: [UC-PJRT-001]
   Deps: T126.1.1
