@@ -19,4 +19,4 @@
 // models through the shared embedding.
 //
 // (Stability: alpha)
-package shared
+package shared_latent
