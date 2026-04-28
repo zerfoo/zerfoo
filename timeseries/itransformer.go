@@ -23,6 +23,11 @@ type ITransformerConfig struct {
 	DFF       int // feed-forward dimension
 	NHeads    int // number of attention heads
 	NLayers   int // number of encoder layers
+
+	// Seed, if non-zero, makes parameter initialization deterministic.
+	// Zero preserves the historical behavior of using the package-global
+	// math/rand/v2 source.
+	Seed uint64
 }
 
 // iTransformerLayer holds weights for one encoder layer.
@@ -105,42 +110,51 @@ func NewITransformer(config ITransformerConfig, engine compute.Engine[float32], 
 
 	m := &ITransformer{config: config, engine: engine, ops: ops}
 
+	var rng *rand.Rand
+	if config.Seed != 0 {
+		rng = rand.New(rand.NewPCG(config.Seed, config.Seed^0x9e3779b97f4a7c15))
+	}
+
 	// Variate embedding: inputLen -> dModel.
-	m.embedW = xavierMatrix(config.InputLen, config.DModel)
+	m.embedW = xavierMatrix(config.InputLen, config.DModel, rng)
 	m.embedB = make([]float64, config.DModel)
 
 	// Encoder layers.
 	m.layers = make([]iTransformerLayer, config.NLayers)
 	for i := range m.layers {
-		m.layers[i] = newITransformerLayer(config.DModel, config.DFF)
+		m.layers[i] = newITransformerLayer(config.DModel, config.DFF, rng)
 	}
 
 	// Output projection: dModel -> outputLen.
-	m.projW = xavierMatrix(config.DModel, config.OutputLen)
+	m.projW = xavierMatrix(config.DModel, config.OutputLen, rng)
 	m.projB = make([]float64, config.OutputLen)
 
 	return m, nil
 }
 
 // xavierMatrix creates a [rows][cols] matrix with Xavier initialization.
-func xavierMatrix(rows, cols int) [][]float64 {
+func xavierMatrix(rows, cols int, rng *rand.Rand) [][]float64 {
 	scale := math.Sqrt(2.0 / float64(rows+cols))
+	norm := rand.NormFloat64
+	if rng != nil {
+		norm = rng.NormFloat64
+	}
 	m := make([][]float64, rows)
 	for i := range m {
 		m[i] = make([]float64, cols)
 		for j := range m[i] {
-			m[i][j] = rand.NormFloat64() * scale
+			m[i][j] = norm() * scale
 		}
 	}
 	return m
 }
 
-func newITransformerLayer(dModel, dFF int) iTransformerLayer {
+func newITransformerLayer(dModel, dFF int, rng *rand.Rand) iTransformerLayer {
 	l := iTransformerLayer{
-		qW: xavierMatrix(dModel, dModel),
-		kW: xavierMatrix(dModel, dModel),
-		vW: xavierMatrix(dModel, dModel),
-		oW: xavierMatrix(dModel, dModel),
+		qW: xavierMatrix(dModel, dModel, rng),
+		kW: xavierMatrix(dModel, dModel, rng),
+		vW: xavierMatrix(dModel, dModel, rng),
+		oW: xavierMatrix(dModel, dModel, rng),
 		qB: make([]float64, dModel),
 		kB: make([]float64, dModel),
 		vB: make([]float64, dModel),
@@ -149,9 +163,9 @@ func newITransformerLayer(dModel, dFF int) iTransformerLayer {
 		ln1Scale: make([]float64, dModel),
 		ln1Bias:  make([]float64, dModel),
 
-		fc1W: xavierMatrix(dModel, dFF),
+		fc1W: xavierMatrix(dModel, dFF, rng),
 		fc1B: make([]float64, dFF),
-		fc2W: xavierMatrix(dFF, dModel),
+		fc2W: xavierMatrix(dFF, dModel, rng),
 		fc2B: make([]float64, dModel),
 
 		ln2Scale: make([]float64, dModel),
