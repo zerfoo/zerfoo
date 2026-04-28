@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/inference"
-	"github.com/zerfoo/zerfoo/shutdown"
+	"github.com/zerfoo/zerfoo/serve/shutdown"
 )
 
 func TestServeCommand_Name(t *testing.T) {

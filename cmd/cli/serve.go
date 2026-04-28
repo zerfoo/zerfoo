@@ -14,7 +14,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/serve"
-	"github.com/zerfoo/zerfoo/shutdown"
+	"github.com/zerfoo/zerfoo/serve/shutdown"
 )
 
 // ServeCommand implements the "serve" CLI command for starting

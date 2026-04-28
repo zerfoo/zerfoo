@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/zerfoo/zerfoo/shutdown"
+	"github.com/zerfoo/zerfoo/serve/shutdown"
 )
 
 // SignalContext returns a context that is canceled when SIGINT or SIGTERM

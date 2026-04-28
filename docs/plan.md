@@ -3682,7 +3682,7 @@ left behind.
   3 files; pure HTTP liveness/readiness probes. `cmd/cli/serve.go` already
   imports it.
 
-- [ ] T124.3.2 Move `shutdown/` -> `serve/shutdown/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.3.2 Move `shutdown/` -> `serve/shutdown/`  Owner: TBD  Est: 1h  verifies: [infrastructure] DONE 2026-04-27
   3 files; graceful shutdown coordinator used only by `cmd/cli/`.
 
 - [x] T124.3.3 Move `support/` -> `serve/support/` (or rename to clarify SaaS scope)  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
@@ -3812,7 +3812,7 @@ sync.
 
 #### Wave E124-2: Bulk consolidation (10 agents)
 - [x] T124.3.1 health/ -> serve/health/  verifies: [infrastructure]  DONE 2026-04-27
-- [ ] T124.3.2 shutdown/ -> serve/shutdown/  verifies: [infrastructure]
+- [x] T124.3.2 shutdown/ -> serve/shutdown/  verifies: [infrastructure] DONE 2026-04-27
 - [x] T124.3.3 support/ -> serve/support/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.3.4 security/ -> serve/security/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.4.1 rl/ -> training/rl/  verifies: [infrastructure]  DONE 2026-04-27

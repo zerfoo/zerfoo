@@ -7,7 +7,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/cmd/cli"
 	"github.com/zerfoo/zerfoo/model"
-	"github.com/zerfoo/zerfoo/shutdown"
+	"github.com/zerfoo/zerfoo/serve/shutdown"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".

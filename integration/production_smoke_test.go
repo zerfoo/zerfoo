@@ -12,7 +12,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/config"
 	"github.com/zerfoo/zerfoo/serve/health"
-	"github.com/zerfoo/zerfoo/shutdown"
+	"github.com/zerfoo/zerfoo/serve/shutdown"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/log"
 	"github.com/zerfoo/ztensor/numeric"
