@@ -5,12 +5,12 @@ import (
 	"math"
 	"math/rand/v2"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/zerfoo/training/optimizer"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/zerfoo/layers/functional"
-	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // SACConfig holds hyperparameters for the SAC agent.
@@ -313,17 +313,17 @@ func softUpdateMLP(target, source *mlpNet, tau float64) {
 // SAC implements the Soft Actor-Critic algorithm with twin Q-networks
 // and automatic entropy temperature tuning.
 type SAC struct {
-	config SACConfig
-	engine compute.Engine[float64]
-	ops    numeric.Arithmetic[float64]
-	actor  *mlpNet
+	config                       SACConfig
+	engine                       compute.Engine[float64]
+	ops                          numeric.Arithmetic[float64]
+	actor                        *mlpNet
 	critic1, critic2             *mlpNet
 	targetCritic1, targetCritic2 *mlpNet
-	logAlpha float64
-	alpha    float64
-	actorOpt   *optimizer.SGD[float64]
-	critic1Opt *optimizer.SGD[float64]
-	critic2Opt *optimizer.SGD[float64]
+	logAlpha                     float64
+	alpha                        float64
+	actorOpt                     *optimizer.SGD[float64]
+	critic1Opt                   *optimizer.SGD[float64]
+	critic2Opt                   *optimizer.SGD[float64]
 }
 
 // NewSAC creates a new SAC agent with the given configuration.
@@ -381,7 +381,7 @@ func NewSAC(cfg SACConfig) *SAC {
 		actor: actor, critic1: critic1, critic2: critic2,
 		targetCritic1: targetCritic1, targetCritic2: targetCritic2,
 		logAlpha: math.Log(cfg.InitAlpha), alpha: cfg.InitAlpha,
-		actorOpt: optimizer.NewSGD[float64](engine, ops, lr),
+		actorOpt:   optimizer.NewSGD[float64](engine, ops, lr),
 		critic1Opt: optimizer.NewSGD[float64](engine, ops, lr),
 		critic2Opt: optimizer.NewSGD[float64](engine, ops, lr),
 	}

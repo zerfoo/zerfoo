@@ -3697,7 +3697,7 @@ left behind.
 
 #### E124.4: training/ consolidation (this sprint)
 
-- [ ] T124.4.1 Move `rl/` -> `training/rl/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.4.1 Move `rl/` -> `training/rl/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   8 files; RL is a training paradigm.
 
 - [ ] T124.4.2 Move `meta/` -> `training/meta/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
@@ -3815,7 +3815,7 @@ sync.
 - [ ] T124.3.2 shutdown/ -> serve/shutdown/  verifies: [infrastructure]
 - [ ] T124.3.3 support/ -> serve/support/  verifies: [infrastructure]
 - [ ] T124.3.4 security/ -> serve/security/  verifies: [infrastructure]
-- [ ] T124.4.1 rl/ -> training/rl/  verifies: [infrastructure]
+- [x] T124.4.1 rl/ -> training/rl/  verifies: [infrastructure]  DONE 2026-04-27
 - [ ] T124.4.2 meta/ -> training/meta/  verifies: [infrastructure]
 - [ ] T124.4.3 gp/ -> training/gp/  verifies: [infrastructure]
 - [ ] T124.4.4 monitor+recover -> training/mlops/  verifies: [infrastructure]

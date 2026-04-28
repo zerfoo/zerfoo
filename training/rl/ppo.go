@@ -6,12 +6,12 @@ import (
 	"math"
 	"math/rand/v2"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/zerfoo/training/optimizer"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/zerfoo/layers/functional"
-	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // PPOConfig holds hyperparameters for the PPO agent.
