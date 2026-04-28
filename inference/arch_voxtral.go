@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/zerfoo/layers/audio"
+	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
-	"github.com/zerfoo/zerfoo/layers/audio"
-	"github.com/zerfoo/zerfoo/model/gguf"
 )
 
 // VoxtralConfig holds Voxtral-specific model configuration.
@@ -32,13 +32,13 @@ type VoxtralConfig struct {
 
 // VoxtralConfigFromGGUF extracts Voxtral configuration from GGUF ModelConfig.
 func VoxtralConfigFromGGUF(cfg *gguf.ModelConfig) VoxtralConfig {
-	audioHidden := 1280  // Whisper-large-v3 default
-	audioLayers := 32    // Whisper-large-v3 default
-	audioHeads := 20     // Whisper-large-v3 default
-	audioMels := 128     // Voxtral uses 128 mel bins
-	audioInter := 5120   // Whisper-large-v3 default
-	stackFactor := 4     // Voxtral stacks 4 frames
-	kernelSize := 3      // Whisper default
+	audioHidden := 1280 // Whisper-large-v3 default
+	audioLayers := 32   // Whisper-large-v3 default
+	audioHeads := 20    // Whisper-large-v3 default
+	audioMels := 128    // Voxtral uses 128 mel bins
+	audioInter := 5120  // Whisper-large-v3 default
+	stackFactor := 4    // Voxtral stacks 4 frames
+	kernelSize := 3     // Whisper default
 
 	if cfg.AudioHiddenSize > 0 {
 		audioHidden = cfg.AudioHiddenSize
@@ -405,9 +405,9 @@ type voxtralAdapterNode[T tensor.Numeric] struct {
 	textHidden  int
 }
 
-func (a *voxtralAdapterNode[T]) OpType() string                  { return "VoxtralAdapter" }
-func (a *voxtralAdapterNode[T]) Attributes() map[string]any       { return nil }
-func (a *voxtralAdapterNode[T]) OutputShape() []int               { return nil }
+func (a *voxtralAdapterNode[T]) OpType() string                    { return "VoxtralAdapter" }
+func (a *voxtralAdapterNode[T]) Attributes() map[string]any        { return nil }
+func (a *voxtralAdapterNode[T]) OutputShape() []int                { return nil }
 func (a *voxtralAdapterNode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
 func (a *voxtralAdapterNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
@@ -467,6 +467,11 @@ func (a *voxtralAdapterNode[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	}
 
 	// GELU activation.
+	// TODO(T124.2.3): delegate to layers/activations.NewGelu once the
+	// adapter operates on engine-resident tensors. The current MLP path
+	// is a raw scalar Go loop on []T slices (no engine ops), so wrapping
+	// each row into a tensor for the canonical Node would change storage
+	// semantics; defer until the adapter itself is ported to engine ops.
 	half := a.ops.FromFloat64(0.5)
 	one := a.ops.One()
 	coeff := a.ops.FromFloat64(0.044715)

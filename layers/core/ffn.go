@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
-	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
@@ -334,6 +334,11 @@ func (f *FFN[T]) Parameters() []*graph.Parameter[T] {
 
 // geluForward applies GELU activation using engine primitives.
 // GELU(x) = 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+//
+// TODO(T124.2.3): delegate to layers/activations.NewGelu once the
+// canonical Gelu Node accepts tensor.Numeric (currently constrained to
+// tensor.Float). Loosening that constraint is a canonical-API change
+// outside this task's scope, so the inline body is preserved here.
 func geluForward[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T], x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	x2, err := engine.Mul(ctx, x, x)
 	if err != nil {

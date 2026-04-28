@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/zerfoo/layers/core"
+	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
-	"github.com/zerfoo/zerfoo/layers/core"
-	"github.com/zerfoo/zerfoo/layers/normalization"
 )
 
 // WhisperEncoderConfig holds configuration for a WhisperEncoder.
@@ -513,6 +513,13 @@ func addBiasInPlace[T tensor.Numeric](t *tensor.TensorNumeric[T], bias *tensor.T
 
 // applyGELU applies the GELU activation function in-place.
 // Uses the approximation: GELU(x) = x * 0.5 * (1 + tanh(sqrt(2/pi) * (x + 0.044715*x^3)))
+//
+// TODO(T124.2.3): replace with a call to layers/activations.NewGelu.
+// Blocked because (a) canonical Gelu requires tensor.Float while this
+// type is tensor.Numeric, and (b) callers depend on the in-place
+// SetData semantics, while the canonical Node returns a new tensor.
+// Switching requires both a constraint relaxation and a storage-
+// semantics audit at every call site.
 func applyGELU[T tensor.Numeric](t *tensor.TensorNumeric[T], ops numeric.Arithmetic[T]) {
 	data := t.Data()
 	half := ops.FromFloat64(0.5)

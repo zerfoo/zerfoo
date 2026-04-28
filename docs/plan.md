@@ -3662,7 +3662,7 @@ left behind.
   Acceptance: `layers/functional/activations.go` contains no arithmetic
   loops; all callers compile; parity tests pass.
 
-- [ ] T124.2.3 Replace inline activation copies  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] DONE 2026-04-28 T124.2.3 Replace inline activation copies — converted MoEGate sigmoid (layers/core/moe.go) and GRN sigmoid (layers/timeseries/vsn.go) to canonical activations.NewSigmoid; deferred GELU sites (ffn.go, variable_selection.go, whisper_encoder.go, arch_voxtral.go, arch_llava.go) with TODO(T124.2.3) comments due to tensor.Float vs tensor.Numeric constraint mismatch and raw-slice/in-place storage semantics. Owner: TBD  Est: 2h  verifies: [infrastructure]
   Deps: T124.2.2
   Replace inline GELU/SiLU computations in `layers/core/ffn.go`,
   `layers/vision/clip_encoder.go`, `layers/audio/whisper_encoder.go`, and

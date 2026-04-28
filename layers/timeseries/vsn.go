@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 
+	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -139,10 +140,9 @@ func (g *GRN[T]) Forward(ctx context.Context, x *tensor.TensorNumeric[T]) (*tens
 		return nil, fmt.Errorf("grn elu: %w", err)
 	}
 
-	// sigmoid(h2)
-	sigH2, err := g.engine.UnaryOp(ctx, h2, func(v T) T {
-		return T(1.0 / (1.0 + math.Exp(-float64(v))))
-	})
+	// sigmoid(h2) — delegate to canonical Sigmoid Node (T124.2.3) so the
+	// math is shared with layers/activations.
+	sigH2, err := activations.NewSigmoid(g.engine, g.ops).Forward(ctx, h2)
 	if err != nil {
 		return nil, fmt.Errorf("grn sigmoid: %w", err)
 	}
