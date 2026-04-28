@@ -3747,8 +3747,16 @@ left behind.
   Acceptance: `grep -rn "math.Erf\|math.Tanh.*0.044715" layers/ inference/
   tabular/` returns only `layers/activations/`.
 
-- [ ] T124.2.4 Tests + lint  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.2.4 Tests + lint  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-28
   Deps: T124.2.3
+  Verification: `go build ./...` clean, `go vet ./...` clean, tests green
+  across layers/activations, layers/core, layers/functional, layers/audio,
+  and inference/ subtree. One pre-existing flake (TestTSPulseClassify in
+  inference/timeseries, last touched in b34eef81 before E124) passes on
+  retry; tracked separately, not a regression from activation unification.
+  Five GELU sites still carry TODO(T124.2.3) deferrals pending a canonical
+  Gelu Node constraint change (tensor.Float -> tensor.Numeric), which is
+  outside E124 scope.
   Run full parity suite, race detector, golangci-lint.
   Acceptance: all green.
 
