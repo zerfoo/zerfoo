@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/zerfoo/zerfoo/distributed"
-	"github.com/zerfoo/zerfoo/shutdown"
+	"github.com/zerfoo/zerfoo/serve/shutdown"
 )
 
 // WorkerCommand implements the "worker" CLI command for starting a

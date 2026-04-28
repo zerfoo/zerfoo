@@ -15,7 +15,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/cmd/cli"
 	"github.com/zerfoo/zerfoo/model"
-	"github.com/zerfoo/zerfoo/shutdown"
+	"github.com/zerfoo/zerfoo/serve/shutdown"
 )
 
 // PredictConfig represents command-line configuration for prediction.

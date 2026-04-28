@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerfoo/zerfoo/shutdown"
+	"github.com/zerfoo/zerfoo/serve/shutdown"
 )
 
 func TestSignalContext_CancelOnSIGINT(t *testing.T) {
