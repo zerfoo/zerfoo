@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/zerfoo/zerfoo/tabular"
+	"github.com/zerfoo/zerfoo/timeseries"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/zerfoo/tabular"
-	"github.com/zerfoo/zerfoo/timeseries"
 )
 
 // ArchKind identifies an architecture in the tabular/time-series search space.
@@ -17,11 +17,11 @@ type ArchKind string
 
 const (
 	// Tabular architectures.
-	ArchMLP        ArchKind = "MLP"
+	ArchMLP           ArchKind = "MLP"
 	ArchFTTransformer ArchKind = "FTTransformer"
-	ArchTabNet     ArchKind = "TabNet"
-	ArchSAINT      ArchKind = "SAINT"
-	ArchTabResNet  ArchKind = "TabResNet"
+	ArchTabNet        ArchKind = "TabNet"
+	ArchSAINT         ArchKind = "SAINT"
+	ArchTabResNet     ArchKind = "TabResNet"
 
 	// Time-series architectures.
 	ArchTFT      ArchKind = "TFT"
@@ -69,10 +69,10 @@ type ArchResult struct {
 
 // SearchReport contains all evaluated trials and the best result.
 type SearchReport struct {
-	Trials      []ArchResult
-	BestArch    ArchKind
-	BestParams  map[string]float64
-	BestScore   float64
+	Trials     []ArchResult
+	BestArch   ArchKind
+	BestParams map[string]float64
+	BestScore  float64
 }
 
 // BestModel wraps the winning model with its configuration.
@@ -378,7 +378,7 @@ func evalFTTransformer(
 		NHeads:      nHeads,
 		NLayers:     nLayers,
 		DFFN:        dToken * 4,
-		DropoutRate:  dropout,
+		DropoutRate: dropout,
 	}
 
 	ft, err := tabular.NewFTTransformer(cfg, engine, ops)
@@ -654,7 +654,6 @@ func validateTabular(
 	return float64(correct) / float64(valSize), nil
 }
 
-
 // retrainBest creates the best architecture with the winning hyperparameters
 // and returns a BestModel. For architectures with training support (MLP),
 // the model is trained on all data. For others, the model is instantiated
@@ -743,7 +742,7 @@ func retrainBest(
 
 		rn, err := tabular.NewTabResNet(tabular.TabResNetConfig{
 			InputDim: inputDim, OutputDim: 3,
-			HiddenDims: makeHiddenDims(hiddenDim, numBlocks),
+			HiddenDims:  makeHiddenDims(hiddenDim, numBlocks),
 			DropoutRate: params["dropout"], Activation: tabular.ActivationReLU,
 			Norm: tabular.NormLayer,
 		}, engine, ops)
@@ -936,4 +935,3 @@ func argmax(probs []float32) (tabular.Direction, float64) {
 	}
 	return tabular.Direction(best), float64(probs[best])
 }
-

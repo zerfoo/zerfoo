@@ -74,8 +74,8 @@ func newNamedStubLinear[T tensor.Numeric](name string, engine compute.Engine[T],
 	}, nil
 }
 
-func (n *namedStubLinear[T]) Name() string    { return n.layerName }
-func (n *namedStubLinear[T]) OpType() string   { return "Linear" }
+func (n *namedStubLinear[T]) Name() string   { return n.layerName }
+func (n *namedStubLinear[T]) OpType() string { return "Linear" }
 func (n *namedStubLinear[T]) SetName(name string) {
 	n.layerName = name
 	n.weights.Name = name + "_weights"

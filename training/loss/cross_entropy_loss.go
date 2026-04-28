@@ -141,7 +141,6 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	return result, nil
 }
 
-
 // Backward computes the gradients for CrossEntropyLoss.
 func (cel *CrossEntropyLoss[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	// The gradient of Cross-Entropy Loss with respect to logits (predictions)

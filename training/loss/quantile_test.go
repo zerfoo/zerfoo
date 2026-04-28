@@ -22,7 +22,7 @@ func TestQuantileLoss(t *testing.T) {
 	}{
 		{
 			name:      "median q=0.5 symmetric",
-			preds:     []float32{1.0, 2.0},       // 2 samples, 1 quantile each
+			preds:     []float32{1.0, 2.0}, // 2 samples, 1 quantile each
 			predShape: []int{2, 1},
 			targets:   []float32{2.0, 1.0},
 			targShape: []int{2},
@@ -61,7 +61,7 @@ func TestQuantileLoss(t *testing.T) {
 		},
 		{
 			name:      "multiple quantiles",
-			preds:     []float32{2.0, 2.0, 2.0},  // 1 sample, 3 quantiles
+			preds:     []float32{2.0, 2.0, 2.0}, // 1 sample, 3 quantiles
 			predShape: []int{1, 3},
 			targets:   []float32{3.0},
 			targShape: []int{1},

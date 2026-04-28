@@ -26,8 +26,8 @@ type LoraLinear[T tensor.Numeric] struct {
 	engine compute.Engine[T]
 
 	// cached for backward
-	lastInput  *tensor.TensorNumeric[T]
-	lastAx     *tensor.TensorNumeric[T]
+	lastInput   *tensor.TensorNumeric[T]
+	lastAx      *tensor.TensorNumeric[T]
 	lastBaseOut *tensor.TensorNumeric[T]
 }
 

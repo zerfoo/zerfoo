@@ -19,14 +19,14 @@ type DiscretizedArch struct {
 func DefaultOpParams() map[OpType]int64 {
 	channels := int64(64)
 	return map[OpType]int64{
-		OpConv3x3:    9 * channels * channels,          // K^2 * C_in * C_out
-		OpConv5x5:    25 * channels * channels,         // K^2 * C_in * C_out
-		OpSepConv3x3: 9*channels + channels*channels,   // depthwise + pointwise
-		OpSepConv5x5: 25*channels + channels*channels,  // depthwise + pointwise
-		OpAvgPool3x3: 0,
-		OpMaxPool3x3: 0,
+		OpConv3x3:     9 * channels * channels,         // K^2 * C_in * C_out
+		OpConv5x5:     25 * channels * channels,        // K^2 * C_in * C_out
+		OpSepConv3x3:  9*channels + channels*channels,  // depthwise + pointwise
+		OpSepConv5x5:  25*channels + channels*channels, // depthwise + pointwise
+		OpAvgPool3x3:  0,
+		OpMaxPool3x3:  0,
 		OpSkipConnect: 0,
-		OpZero:       0,
+		OpZero:        0,
 	}
 }
 

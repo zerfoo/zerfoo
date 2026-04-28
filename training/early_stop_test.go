@@ -114,10 +114,10 @@ func TestSmoothedEarlyStopping_MinDelta(t *testing.T) {
 		metric float64
 		want   bool
 	}{
-		{1.0, false},   // init: best=1.0
-		{0.95, false},  // delta=0.05 < 0.1 → no improve (count=1)
-		{0.92, false},  // delta=0.08 < 0.1 → no improve (count=2)
-		{0.905, true},  // delta=0.095 < 0.1 → no improve (count=3 >= patience)
+		{1.0, false},  // init: best=1.0
+		{0.95, false}, // delta=0.05 < 0.1 → no improve (count=1)
+		{0.92, false}, // delta=0.08 < 0.1 → no improve (count=2)
+		{0.905, true}, // delta=0.095 < 0.1 → no improve (count=3 >= patience)
 	}
 
 	for i, s := range steps {

@@ -6,12 +6,12 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/training"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/testing/testutils"
-	"github.com/zerfoo/zerfoo/training"
 	"github.com/zerfoo/ztensor/types"
 )
 

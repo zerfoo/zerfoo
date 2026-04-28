@@ -4,9 +4,9 @@ package training
 import (
 	"context"
 
+	opt "github.com/zerfoo/zerfoo/training/optimizer"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
-	opt "github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // DefaultTrainer encapsulates stable training components and delegates
