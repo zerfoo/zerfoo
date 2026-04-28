@@ -3720,7 +3720,7 @@ left behind.
 
 #### E124.5: layers/ + inference/ consolidation (this sprint)
 
-- [ ] T124.5.1 Move `gnn/` -> `layers/gnn/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.5.1 Move `gnn/` -> `layers/gnn/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   4 files; literal GNN layers.
 
 - [ ] T124.5.2 Move `synth/` -> `layers/generative/synth/` (or experimental/)  Owner: TBD  Est: 1h  verifies: [infrastructure]

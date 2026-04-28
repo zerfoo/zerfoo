@@ -10,16 +10,16 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/gnn"
-	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/audio"
+	"github.com/zerfoo/zerfoo/layers/components"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/layers/functional"
-	"github.com/zerfoo/zerfoo/layers/hrm"
 	"github.com/zerfoo/zerfoo/layers/gather"
+	"github.com/zerfoo/zerfoo/layers/gnn"
+	"github.com/zerfoo/zerfoo/layers/hrm"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/layers/recurrent"
 	"github.com/zerfoo/zerfoo/layers/reducesum"
@@ -851,9 +851,9 @@ func TestParity_FFN(t *testing.T) {
 	w1Shape := getInts(g, "w1_shape")
 	w2Shape := getInts(g, "w2_shape")
 
-	inputDim := inputShape[1]  // 4
-	hiddenDim := w1Shape[1]    // 32
-	outputDim := w2Shape[1]    // 4
+	inputDim := inputShape[1] // 4
+	hiddenDim := w1Shape[1]   // 32
+	outputDim := w2Shape[1]   // 4
 
 	// Create FFN with no bias (golden file has no bias data)
 	ffn, err := core.NewFFN[float32]("test_ffn", engine, ops, inputDim, hiddenDim, outputDim, core.WithFFNNoBias[float32]())
@@ -1077,7 +1077,7 @@ func TestParity_SWA(t *testing.T) {
 	param := makeParam(t, "test_param", param0Data, shape)
 
 	inner := optimizer.NewSGD[float32](engine, ops, 0) // lr=0 so Step is a no-op
-	swa := optimizer.NewSWA[float32](inner, engine, 0)  // startEpoch=0
+	swa := optimizer.NewSWA[float32](inner, engine, 0) // startEpoch=0
 
 	ctx := context.Background()
 	params := []*graph.Parameter[float32]{param}
@@ -2388,7 +2388,7 @@ func TestParity_GQA_Structural(t *testing.T) {
 func TestParity_MIMOMambaBlock_Structural(t *testing.T) {
 	engine, ops := setup()
 	dModel := 8
-	dInner := 8  // must be divisible by numHeads
+	dInner := 8 // must be divisible by numHeads
 	dState := 4
 	dtRank := 2
 	convKer := 3
@@ -3149,8 +3149,8 @@ func TestParity_CoverageReport(t *testing.T) {
 
 	// Run each test silently and record pass/fail.
 	type result struct {
-		category, layer          string
-		fwd, bwd, gpuCol         string
+		category, layer  string
+		fwd, bwd, gpuCol string
 	}
 	results := make([]result, 0, len(layers))
 	fwdPass, fwdTotal, bwdPass, bwdTotal := 0, 0, 0, 0
