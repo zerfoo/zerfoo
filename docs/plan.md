@@ -3654,7 +3654,7 @@ left behind.
   inline copies].
   Acceptance: audit table written to `docs/audits/T124.2.1-activations.md`.
 
-- [ ] T124.2.2 Make `layers/functional/activations.go` thin wrappers  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] DONE 2026-04-28 T124.2.2 Make `layers/functional/activations.go` thin wrappers  Owner: TBD  Est: 3h  verifies: [infrastructure]
   Deps: T124.2.1
   Convert each function in `layers/functional/activations.go` to construct
   the corresponding Node from `layers/activations/registry.go` and
