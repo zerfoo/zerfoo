@@ -1,4 +1,4 @@
-package modeldsl
+package dsl
 
 // OptimizePass is a named graph transformation.
 type OptimizePass func(g *ModelGraph) *ModelGraph

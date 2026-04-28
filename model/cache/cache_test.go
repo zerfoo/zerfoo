@@ -1,4 +1,4 @@
-package modelcache
+package cache
 
 import (
 	"os"
@@ -73,13 +73,13 @@ func TestCache_Eviction(t *testing.T) {
 	c := NewCache(cacheDir, 150)
 
 	tests := []struct {
-		name       string
-		putRef     string
-		putSize    int
-		touchRef   string        // ref to Get (touch) before the new Put
+		name        string
+		putRef      string
+		putSize     int
+		touchRef    string        // ref to Get (touch) before the new Put
 		sleepBefore time.Duration // ensure time ordering
-		evictedRef string        // ref expected to be evicted after Put
-		survivorRef string       // ref expected to remain
+		evictedRef  string        // ref expected to be evicted after Put
+		survivorRef string        // ref expected to remain
 	}{
 		{
 			name:    "add first model",
@@ -100,7 +100,7 @@ func TestCache_Eviction(t *testing.T) {
 			putSize:     100,
 			touchRef:    "model-b",
 			sleepBefore: 10 * time.Millisecond,
-			evictedRef:  "",         // model-b was touched so it survives; but total exceeds so oldest goes
+			evictedRef:  "", // model-b was touched so it survives; but total exceeds so oldest goes
 			survivorRef: "model-c",
 		},
 	}
@@ -141,10 +141,10 @@ func TestCache_Prefetch(t *testing.T) {
 	c := NewCache(cacheDir, 10000)
 
 	tests := []struct {
-		name      string
-		refs      []string
-		pullErr   bool
-		wantErr   bool
+		name       string
+		refs       []string
+		pullErr    bool
+		wantErr    bool
 		wantCached []string
 	}{
 		{

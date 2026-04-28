@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/zerfoo/model/registry"
 )
 
 func TestListCommand_Name(t *testing.T) {

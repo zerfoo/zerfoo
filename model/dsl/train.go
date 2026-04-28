@@ -1,5 +1,5 @@
 // Package modeldsl provides training support for DSL-defined models.
-package modeldsl
+package dsl
 
 import (
 	"errors"
@@ -32,10 +32,10 @@ type TrainConfig struct {
 
 // TrainResult holds the outcome of training.
 type TrainResult struct {
-	FinalLoss  float64
-	BestLoss   float64
-	BestEpoch  int
-	EpochLoss  []float64
+	FinalLoss float64
+	BestLoss  float64
+	BestEpoch int
+	EpochLoss []float64
 }
 
 // Sample is a single training example.
@@ -195,11 +195,11 @@ func (m *Model) Parameters() []*Param {
 
 // linearLayerT wraps linearLayer with training support.
 type linearLayerT struct {
-	weights    *Param
-	bias       *Param
-	inDim      int
-	outDim     int
-	lastInput  []float64 // cached for backward
+	weights   *Param
+	bias      *Param
+	inDim     int
+	outDim    int
+	lastInput []float64 // cached for backward
 }
 
 func newTrainableLinearLayer(inDim, outDim int) *linearLayerT {
@@ -426,14 +426,14 @@ func buildTrainableLayer(def LayerDef, inDim, outDim int) (trainableLayer, error
 // For single-token attention, the output is wo(v) since softmax of a single
 // score is 1.0, so we treat it as a linear transform for backward.
 type attentionLayerT struct {
-	numHeads  int
-	headDim   int
-	dim       int
-	wq        *linearLayerT
-	wk        *linearLayerT
-	wv        *linearLayerT
-	wo        *linearLayerT
-	lastV     []float64
+	numHeads int
+	headDim  int
+	dim      int
+	wq       *linearLayerT
+	wk       *linearLayerT
+	wv       *linearLayerT
+	wo       *linearLayerT
+	lastV    []float64
 }
 
 func newTrainableAttentionLayer(dim, numHeads int) *attentionLayerT {

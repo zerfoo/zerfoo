@@ -13,7 +13,7 @@ import (
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/inference/lora"
-	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/zerfoo/model/registry"
 	"github.com/zerfoo/zerfoo/serve/security"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"

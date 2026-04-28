@@ -10,7 +10,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/internal/cuda"
-	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/zerfoo/model/registry"
 
 	"github.com/zerfoo/zerfoo/tests/parity/testutil"
 )

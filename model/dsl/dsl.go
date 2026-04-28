@@ -1,7 +1,7 @@
 // Package modeldsl provides a declarative DSL for defining custom model
 // architectures using Go structs. Model definitions are validated and compiled
 // into runnable graphs that support forward inference.
-package modeldsl
+package dsl
 
 import (
 	"errors"

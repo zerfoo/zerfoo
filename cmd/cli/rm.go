@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/zerfoo/model/registry"
 )
 
 // RmCommand implements the "rm" CLI command for removing cached models.

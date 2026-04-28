@@ -3733,7 +3733,7 @@ left behind.
 - [x] T124.5.4 DONE 2026-04-27 Move `causal/`, `features/`, `regime/` -> `inference/timeseries/{causal,features,regime}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
   All three are TS-domain experimental packages (13 files total).
 
-- [ ] T124.5.5 Move `modelcache/`, `modeldsl/`, `registry/` -> `model/{cache,dsl,registry}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+- [x] T124.5.5 Move `modelcache/`, `modeldsl/`, `registry/` -> `model/{cache,dsl,registry}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]  DONE 2026-04-27
   Tightly coupled to model loading/serving.
 
 - [x] T124.5.6 DONE 2026-04-27 Move `autoopt/` -> `internal/autoopt/` (or upstream to ztensor/internal/codegen/)  Owner: TBD  Est: 1h  verifies: [infrastructure]
@@ -3831,7 +3831,7 @@ these fail in worktree isolation, drop to 4 per wave.)
 - [x] T124.5.2 synth/ -> layers/generative/synth/  verifies: [infrastructure] DONE 2026-04-27
 - [x] T124.5.3 shared/ -> layers/shared_latent/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.5.4 DONE 2026-04-27 causal+features+regime -> inference/timeseries/  verifies: [infrastructure]
-- [ ] T124.5.5 modelcache+modeldsl+registry -> model/  verifies: [infrastructure]
+- [x] T124.5.5 modelcache+modeldsl+registry -> model/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.5.6 DONE 2026-04-27 autoopt/ -> internal/autoopt/  verifies: [infrastructure]
 - [x] T124.6.1 mobile/ -> tests/mobile/  verifies: [infrastructure]  DONE 2026-04-27
 

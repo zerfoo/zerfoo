@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
-	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/inference"
+	"github.com/zerfoo/zerfoo/model/registry"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	tokenizer "github.com/zerfoo/ztoken"
-	"github.com/zerfoo/zerfoo/registry"
 )
 
 func TestDetectToolCall(t *testing.T) {

@@ -1,6 +1,6 @@
 // Package modelcache provides an LRU model file cache for pre-caching GGUF
 // models on Kubernetes nodes via a DaemonSet.
-package modelcache
+package cache
 
 import (
 	"fmt"

@@ -361,7 +361,7 @@ var mathImportAllowlist = map[string]bool{
 	"zerfoo/":       true,
 	"marketplace/":  true,
 	"cloud/":        true,
-	"modeldsl/":     true,
+	"model/dsl/":    true,
 	"meta/":         true,
 	"features/":     true,
 	"modelcache/":   true,
@@ -478,9 +478,9 @@ var privateLayerAllowlist = map[string]bool{
 	"tabular/ensemble.go":       true,
 	"tabular/resnet.go":         true,
 	"tabular/save.go":           true,
-	// modeldsl/ — model definition DSL
-	"modeldsl/model.go": true,
-	"modeldsl/train.go": true,
+	// model/dsl/ — model definition DSL
+	"model/dsl/model.go": true,
+	"model/dsl/train.go": true,
 	// rl/ — PPO actor/critic layers
 	"rl/ppo.go": true,
 	// gnn/ — graph neural network layers
