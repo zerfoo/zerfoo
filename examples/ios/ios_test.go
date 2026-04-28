@@ -20,7 +20,7 @@ func TestIOSDemo_Build(t *testing.T) {
 	cmd := exec.Command(gomobilePath, "bind",
 		"-target", "ios",
 		"-o", t.TempDir()+"/Mobile.xcframework",
-		"github.com/zerfoo/zerfoo/mobile/",
+		"github.com/zerfoo/zerfoo/tests/mobile/",
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

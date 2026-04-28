@@ -3744,7 +3744,7 @@ left behind.
 
 #### E124.6: tests/ + parity helpers
 
-- [ ] T124.6.1 Move `mobile/` -> `tests/mobile/`  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T124.6.1 Move `mobile/` -> `tests/mobile/`  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-27
   Single test file; not a framework package.
 
 - [ ] T124.6.2 Extract parity helpers to `tests/parity/testutil/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
@@ -3833,7 +3833,7 @@ these fail in worktree isolation, drop to 4 per wave.)
 - [ ] T124.5.4 causal+features+regime -> inference/timeseries/  verifies: [infrastructure]
 - [ ] T124.5.5 modelcache+modeldsl+registry -> model/  verifies: [infrastructure]
 - [ ] T124.5.6 autoopt/ -> internal/autoopt/  verifies: [infrastructure]
-- [ ] T124.6.1 mobile/ -> tests/mobile/  verifies: [infrastructure]
+- [x] T124.6.1 mobile/ -> tests/mobile/  verifies: [infrastructure]  DONE 2026-04-27
 
 #### Wave E124-4: Activation unification (1 agent, sequential)
 - [ ] T124.2.2 -> T124.2.3 -> T124.2.4
