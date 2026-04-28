@@ -7,11 +7,11 @@ import (
 func TestDriftDetector_DetectsShift(t *testing.T) {
 	t.Run("PageHinkley", func(t *testing.T) {
 		tests := []struct {
-			name       string
-			config     PageHinkleyConfig
-			stable     []float64
-			shifted    []float64
-			wantDrift  bool
+			name      string
+			config    PageHinkleyConfig
+			stable    []float64
+			shifted   []float64
+			wantDrift bool
 		}{
 			{
 				name:   "detects upward mean shift",
@@ -86,11 +86,11 @@ func TestDriftDetector_DetectsShift(t *testing.T) {
 
 	t.Run("ADWIN", func(t *testing.T) {
 		tests := []struct {
-			name       string
-			config     ADWINConfig
-			stable     []float64
-			shifted    []float64
-			wantDrift  bool
+			name      string
+			config    ADWINConfig
+			stable    []float64
+			shifted   []float64
+			wantDrift bool
 		}{
 			{
 				name:   "detects distributional shift",

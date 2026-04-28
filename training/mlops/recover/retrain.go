@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/zerfoo/zerfoo/monitor"
+	"github.com/zerfoo/zerfoo/training/mlops/monitor"
 )
 
 // Phase represents a stage in the auto-retrain pipeline.

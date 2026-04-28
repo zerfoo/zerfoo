@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/monitor"
+	"github.com/zerfoo/zerfoo/training/mlops/monitor"
 )
 
 // mockDetector returns true after a set number of observations.

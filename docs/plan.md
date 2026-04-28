@@ -3706,7 +3706,7 @@ left behind.
 - [x] T124.4.3 Move `gp/` -> `training/gp/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   3 files; tree-based genetic programming.
 
-- [ ] T124.4.4 Move `monitor/` + `recover/` -> `training/mlops/{monitor,recover}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+- [x] T124.4.4 Move `monitor/` + `recover/` -> `training/mlops/{monitor,recover}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]  DONE 2026-04-27
   6 files total. `recover/retrain.go` already imports `monitor`.
 
 - [x] T124.4.5 Move `provenance/` -> `training/provenance/`  Owner: TBD  Est: 1h  verifies: [infrastructure] DONE 2026-04-27
@@ -3818,7 +3818,7 @@ sync.
 - [x] T124.4.1 rl/ -> training/rl/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.4.2 meta/ -> training/meta/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.4.3 gp/ -> training/gp/  verifies: [infrastructure]  DONE 2026-04-27
-- [ ] T124.4.4 monitor+recover -> training/mlops/  verifies: [infrastructure]
+- [x] T124.4.4 monitor+recover -> training/mlops/  verifies: [infrastructure]  DONE 2026-04-27
 - [ ] T124.5.1 gnn/ -> layers/gnn/  verifies: [infrastructure]
 - [x] DONE 2026-04-27 T124.6.2 Parity helpers to tests/parity/testutil/  verifies: [infrastructure]
 
