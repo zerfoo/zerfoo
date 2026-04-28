@@ -3775,7 +3775,7 @@ left behind.
 
 #### E124.8: Refresh design.md
 
-- [ ] T124.8.1 Refresh `docs/design.md` to mandate the post-cleanup layout  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T124.8.1 Refresh `docs/design.md` to mandate the post-cleanup layout  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-27
   Deps: E124.1-E124.7 substantially complete
   Update the "Modular Package Structure" section to reflect the
   consolidated layout: original 8 (with ztensor extraction noted), plus
