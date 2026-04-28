@@ -3703,7 +3703,7 @@ left behind.
 - [x] T124.4.2 Move `meta/` -> `training/meta/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   3 files; MAML meta-learning.
 
-- [ ] T124.4.3 Move `gp/` -> `training/gp/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.4.3 Move `gp/` -> `training/gp/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   3 files; tree-based genetic programming.
 
 - [ ] T124.4.4 Move `monitor/` + `recover/` -> `training/mlops/{monitor,recover}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
@@ -3817,7 +3817,7 @@ sync.
 - [ ] T124.3.4 security/ -> serve/security/  verifies: [infrastructure]
 - [x] T124.4.1 rl/ -> training/rl/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.4.2 meta/ -> training/meta/  verifies: [infrastructure]  DONE 2026-04-27
-- [ ] T124.4.3 gp/ -> training/gp/  verifies: [infrastructure]
+- [x] T124.4.3 gp/ -> training/gp/  verifies: [infrastructure]  DONE 2026-04-27
 - [ ] T124.4.4 monitor+recover -> training/mlops/  verifies: [infrastructure]
 - [ ] T124.5.1 gnn/ -> layers/gnn/  verifies: [infrastructure]
 - [ ] T124.6.2 Parity helpers to tests/parity/testutil/  verifies: [infrastructure]
