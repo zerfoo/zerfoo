@@ -3640,9 +3640,10 @@ left behind.
   Decision rationale: deep-review-001 identifies this as the highest-ROI
   guardrail to prevent the next 48-hour wave from undoing cleanup.
 
-- [ ] T124.1.4 Run linters + go vet after E124.1  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T124.1.4 Run linters + go vet after E124.1  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-28
   Deps: T124.1.1, T124.1.2, T124.1.3
   Acceptance: `golangci-lint run`, `go vet ./...`, `go build ./...` clean.
+  Verification clean: build + vet pass repo-wide; architecture/allowlist tests green after gitignoring local graphify-out output.
 
 #### E124.2: Activation API unification (this sprint)
 
@@ -3692,8 +3693,9 @@ left behind.
 - [x] T124.3.4 Move `security/` -> `serve/security/`  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-27
   SOC 2 access control, API keys, rate limit. All HTTP-server-side.
 
-- [ ] T124.3.5 Tests + lint after serve/ consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T124.3.5 Tests + lint after serve/ consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-28
   Deps: T124.3.1, T124.3.2, T124.3.3, T124.3.4
+  Verification clean: `go build/vet/test ./serve/...` all pass; zero stale imports for renamed packages.
 
 #### E124.4: training/ consolidation (this sprint)
 
@@ -3739,8 +3741,9 @@ left behind.
 - [x] T124.5.6 DONE 2026-04-27 Move `autoopt/` -> `internal/autoopt/` (or upstream to ztensor/internal/codegen/)  Owner: TBD  Est: 1h  verifies: [infrastructure]
   15 files; kernel/codegen concern, not a top-level ML package.
 
-- [ ] T124.5.7 Tests + lint after layers/inference/model consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T124.5.7 Tests + lint after layers/inference/model consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-28
   Deps: T124.5.1 .. T124.5.6
+  Verification clean: `go build/vet/test` across ./layers/... ./inference/... ./model/... all green.
 
 #### E124.6: tests/ + parity helpers
 
@@ -3756,8 +3759,9 @@ left behind.
   Acceptance: `tests/parity/testutil/` exists with these helpers; all
   parity tests still pass.
 
-- [ ] T124.6.3 Tests + lint  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T124.6.3 Tests + lint  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-28
   Deps: T124.6.1, T124.6.2
+  Verification clean: `go test ./tests/...` all green post testutil extraction (PR #824) and testing->tests/testutil rename (PR #828).
 
 #### E124.7: Open-core split decision (this quarter)
 
