@@ -167,10 +167,10 @@ func TestCrashGenerator_ConfigDefaults(t *testing.T) {
 	vae := trainedVAE(t)
 
 	tests := []struct {
-		name             string
-		severity         float64
-		duration         int
-		wantSeverityCap  float64
+		name              string
+		severity          float64
+		duration          int
+		wantSeverityCap   float64
 		wantDurationFloor int
 	}{
 		{name: "below min severity", severity: 0.0, duration: 5, wantSeverityCap: 1.0, wantDurationFloor: 5},

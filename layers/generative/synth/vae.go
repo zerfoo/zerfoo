@@ -48,13 +48,13 @@ type MarketVAE struct {
 	ops    numeric.Arithmetic[float64]
 
 	// Encoder parameters: input -> hidden layers.
-	encParams []*graph.Parameter[float64] // weights
+	encParams  []*graph.Parameter[float64] // weights
 	encBParams []*graph.Parameter[float64] // biases
 
 	// Separate output heads for mean and log-variance.
-	muParam     *graph.Parameter[float64]
-	muBParam    *graph.Parameter[float64]
-	logvarParam *graph.Parameter[float64]
+	muParam      *graph.Parameter[float64]
+	muBParam     *graph.Parameter[float64]
+	logvarParam  *graph.Parameter[float64]
 	logvarBParam *graph.Parameter[float64]
 
 	// Decoder parameters: latent -> hidden layers (reversed) -> output.
