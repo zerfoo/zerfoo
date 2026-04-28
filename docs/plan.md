@@ -3689,7 +3689,7 @@ left behind.
   8 files; customer-support webhook handlers (multi-tenant SaaS feature).
   Note: this is a candidate for the open-core split (T124.6.1).
 
-- [ ] T124.3.4 Move `security/` -> `serve/security/`  Owner: TBD  Est: 2h  verifies: [infrastructure]
+- [x] T124.3.4 Move `security/` -> `serve/security/`  Owner: TBD  Est: 2h  verifies: [infrastructure]  DONE 2026-04-27
   SOC 2 access control, API keys, rate limit. All HTTP-server-side.
 
 - [ ] T124.3.5 Tests + lint after serve/ consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
@@ -3814,7 +3814,7 @@ sync.
 - [x] T124.3.1 health/ -> serve/health/  verifies: [infrastructure]  DONE 2026-04-27
 - [ ] T124.3.2 shutdown/ -> serve/shutdown/  verifies: [infrastructure]
 - [x] T124.3.3 support/ -> serve/support/  verifies: [infrastructure]  DONE 2026-04-27
-- [ ] T124.3.4 security/ -> serve/security/  verifies: [infrastructure]
+- [x] T124.3.4 security/ -> serve/security/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.4.1 rl/ -> training/rl/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.4.2 meta/ -> training/meta/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.4.3 gp/ -> training/gp/  verifies: [infrastructure]  DONE 2026-04-27

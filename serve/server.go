@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/zerfoo/zerfoo/inference"
-	"github.com/zerfoo/zerfoo/security"
+	"github.com/zerfoo/zerfoo/serve/security"
 	"github.com/zerfoo/ztensor/log"
 	"github.com/zerfoo/ztensor/metrics/runtime"
 )
@@ -26,26 +26,26 @@ var openapiSpec []byte
 
 // Server wraps a loaded model and serves OpenAI-compatible HTTP endpoints.
 type Server struct {
-	model      *inference.Model
-	draftModel *inference.Model // optional; enables speculative decoding
-	mux        *http.ServeMux
-	batch      *BatchScheduler // optional; nil means direct calls
-	unloaded    atomic.Bool     // true after DELETE /v1/models/:id
-	inflight    sync.WaitGroup  // tracks in-flight inference requests
-	transcriber      Transcriber          // optional; enables /v1/audio/transcriptions
-	classifier       Classifier           // optional; enables /v1/classify
-	guardEvaluator   GuardEvaluator       // optional; enables /v1/guard endpoints
-	logger           log.Logger
-	metrics          *ServerMetrics
-	classifyMetrics  *ClassifyMetrics
-	guardMetrics     *GuardMetrics
-	collector        runtime.Collector
-	gpus        []int           // GPU IDs to distribute model across
-	apiKey      string          // optional; enables Bearer token auth
-	keyStore    *security.KeyStore   // optional; enables scope-based authorization
-	rateLimiter *security.RateLimiter // optional; enables per-IP rate limiting
-	maxTokens    int                  // server-side upper bound for max_tokens (default 8192)
-	adapterCache *AdapterCacheHandle // optional; enables per-request LoRA adapter selection
+	model           *inference.Model
+	draftModel      *inference.Model // optional; enables speculative decoding
+	mux             *http.ServeMux
+	batch           *BatchScheduler // optional; nil means direct calls
+	unloaded        atomic.Bool     // true after DELETE /v1/models/:id
+	inflight        sync.WaitGroup  // tracks in-flight inference requests
+	transcriber     Transcriber     // optional; enables /v1/audio/transcriptions
+	classifier      Classifier      // optional; enables /v1/classify
+	guardEvaluator  GuardEvaluator  // optional; enables /v1/guard endpoints
+	logger          log.Logger
+	metrics         *ServerMetrics
+	classifyMetrics *ClassifyMetrics
+	guardMetrics    *GuardMetrics
+	collector       runtime.Collector
+	gpus            []int                 // GPU IDs to distribute model across
+	apiKey          string                // optional; enables Bearer token auth
+	keyStore        *security.KeyStore    // optional; enables scope-based authorization
+	rateLimiter     *security.RateLimiter // optional; enables per-IP rate limiting
+	maxTokens       int                   // server-side upper bound for max_tokens (default 8192)
+	adapterCache    *AdapterCacheHandle   // optional; enables per-request LoRA adapter selection
 }
 
 // ServerOption configures the server.
