@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/config"
-	"github.com/zerfoo/zerfoo/health"
+	"github.com/zerfoo/zerfoo/serve/health"
+	"github.com/zerfoo/zerfoo/shutdown"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/log"
 	"github.com/zerfoo/ztensor/numeric"
-	"github.com/zerfoo/zerfoo/shutdown"
 	"github.com/zerfoo/ztensor/tensor"
 )
 

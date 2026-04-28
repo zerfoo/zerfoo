@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/zerfoo/zerfoo/health"
+	"github.com/zerfoo/zerfoo/serve/health"
 	"github.com/zerfoo/ztensor/log"
 	metrics "github.com/zerfoo/ztensor/metrics/runtime"
 	"github.com/zerfoo/ztensor/tensor"

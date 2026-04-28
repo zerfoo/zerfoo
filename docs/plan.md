@@ -3678,7 +3678,7 @@ left behind.
 
 #### E124.3: serve/ consolidation (this sprint)
 
-- [ ] T124.3.1 Move `health/` -> `serve/health/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.3.1 Move `health/` -> `serve/health/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   3 files; pure HTTP liveness/readiness probes. `cmd/cli/serve.go` already
   imports it.
 
@@ -3811,7 +3811,7 @@ sync.
 - [x] T124.2.1 Activation parallel-paths audit  verifies: [infrastructure]  DONE 2026-04-27 (docs/audits/T124.2.1-activations.md)
 
 #### Wave E124-2: Bulk consolidation (10 agents)
-- [ ] T124.3.1 health/ -> serve/health/  verifies: [infrastructure]
+- [x] T124.3.1 health/ -> serve/health/  verifies: [infrastructure]  DONE 2026-04-27
 - [ ] T124.3.2 shutdown/ -> serve/shutdown/  verifies: [infrastructure]
 - [ ] T124.3.3 support/ -> serve/support/  verifies: [infrastructure]
 - [ ] T124.3.4 security/ -> serve/security/  verifies: [infrastructure]
