@@ -3712,7 +3712,7 @@ left behind.
 - [ ] T124.4.5 Move `provenance/` -> `training/provenance/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
   Hash-chain model lifecycle audit.
 
-- [ ] T124.4.6 Move `federated/` -> `training/federated/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.4.6 Move `federated/` -> `training/federated/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   FedAvg coordinator.
 
 - [ ] T124.4.7 Tests + lint after training/ consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
@@ -3827,7 +3827,7 @@ these fail in worktree isolation, drop to 4 per wave.)
 
 #### Wave E124-3: Tail consolidation + activation unification (8 agents)
 - [ ] T124.4.5 provenance/ -> training/provenance/  verifies: [infrastructure]
-- [ ] T124.4.6 federated/ -> training/federated/  verifies: [infrastructure]
+- [x] T124.4.6 federated/ -> training/federated/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.5.2 synth/ -> layers/generative/synth/  verifies: [infrastructure] DONE 2026-04-27
 - [ ] T124.5.3 shared/ -> layers/shared_latent/  verifies: [infrastructure]
 - [ ] T124.5.4 causal+features+regime -> inference/timeseries/  verifies: [infrastructure]
