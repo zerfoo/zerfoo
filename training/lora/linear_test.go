@@ -26,10 +26,10 @@ func newStubLinear[T tensor.Numeric](engine compute.Engine[T], w *tensor.TensorN
 	return &stubLinear[T]{weights: param, engine: engine}, nil
 }
 
-func (s *stubLinear[T]) OpType() string                      { return "StubLinear" }
-func (s *stubLinear[T]) Attributes() map[string]interface{}  { return nil }
-func (s *stubLinear[T]) OutputShape() []int                  { return []int{-1, s.weights.Value.Shape()[1]} }
-func (s *stubLinear[T]) Parameters() []*graph.Parameter[T]   { return []*graph.Parameter[T]{s.weights} }
+func (s *stubLinear[T]) OpType() string                     { return "StubLinear" }
+func (s *stubLinear[T]) Attributes() map[string]interface{} { return nil }
+func (s *stubLinear[T]) OutputShape() []int                 { return []int{-1, s.weights.Value.Shape()[1]} }
+func (s *stubLinear[T]) Parameters() []*graph.Parameter[T]  { return []*graph.Parameter[T]{s.weights} }
 
 func (s *stubLinear[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return s.engine.MatMul(ctx, inputs[0], s.weights.Value)

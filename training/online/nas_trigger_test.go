@@ -33,12 +33,12 @@ func (s *syntheticDataProvider) ValBatch() (input, target []float32, shape []int
 
 func TestAutoNASTrigger(t *testing.T) {
 	tests := []struct {
-		name             string
-		currentSharpe    float64
+		name              string
+		currentSharpe     float64
 		improvementThresh float64
-		validators       []Validator
-		wantAccepted     bool
-		wantHasProposal  bool
+		validators        []Validator
+		wantAccepted      bool
+		wantHasProposal   bool
 	}{
 		{
 			name:              "drift triggers NAS and discovers improvement",

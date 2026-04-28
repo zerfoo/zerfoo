@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/zerfoo/zerfoo/training/optimizer"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
-	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // QLoRATrainer wraps a model whose base Linear weights are NF4-quantized.

@@ -33,10 +33,10 @@ func newLinearOp[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithme
 	return &linearOp[T]{engine: engine, ops: ops, weight: wParam, shape: shape}, nil
 }
 
-func (op *linearOp[T]) OpType() string                      { return "linear" }
-func (op *linearOp[T]) Attributes() map[string]interface{}  { return nil }
-func (op *linearOp[T]) Parameters() []*graph.Parameter[T]   { return []*graph.Parameter[T]{op.weight} }
-func (op *linearOp[T]) OutputShape() []int                  { return op.shape }
+func (op *linearOp[T]) OpType() string                     { return "linear" }
+func (op *linearOp[T]) Attributes() map[string]interface{} { return nil }
+func (op *linearOp[T]) Parameters() []*graph.Parameter[T]  { return []*graph.Parameter[T]{op.weight} }
+func (op *linearOp[T]) OutputShape() []int                 { return op.shape }
 
 func (op *linearOp[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	w := op.weight.Value.Data()[0]

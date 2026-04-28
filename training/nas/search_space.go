@@ -12,14 +12,14 @@ import "math/rand/v2"
 type OpType string
 
 const (
-	OpConv3x3    OpType = "conv_3x3"
-	OpConv5x5    OpType = "conv_5x5"
-	OpSepConv3x3 OpType = "sep_conv_3x3"
-	OpSepConv5x5 OpType = "sep_conv_5x5"
-	OpAvgPool3x3 OpType = "avg_pool_3x3"
-	OpMaxPool3x3 OpType = "max_pool_3x3"
+	OpConv3x3     OpType = "conv_3x3"
+	OpConv5x5     OpType = "conv_5x5"
+	OpSepConv3x3  OpType = "sep_conv_3x3"
+	OpSepConv5x5  OpType = "sep_conv_5x5"
+	OpAvgPool3x3  OpType = "avg_pool_3x3"
+	OpMaxPool3x3  OpType = "max_pool_3x3"
 	OpSkipConnect OpType = "skip_connect"
-	OpZero       OpType = "zero"
+	OpZero        OpType = "zero"
 )
 
 // AllOps returns the default set of all 8 operation types.

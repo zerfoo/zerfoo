@@ -22,9 +22,9 @@ type DARTSLayer[T tensor.Numeric] struct {
 	alpha      *graph.Parameter[T]
 
 	// Cached forward pass state for backward.
-	weights    []T // softmax(alpha)
-	lastInput  *tensor.TensorNumeric[T]
-	opOutputs  []*tensor.TensorNumeric[T]
+	weights   []T // softmax(alpha)
+	lastInput *tensor.TensorNumeric[T]
+	opOutputs []*tensor.TensorNumeric[T]
 }
 
 // NewDARTSLayer creates a new DARTS mixed-operation layer with the given candidate

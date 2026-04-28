@@ -3715,7 +3715,7 @@ left behind.
 - [x] T124.4.6 Move `federated/` -> `training/federated/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
   FedAvg coordinator.
 
-- [ ] T124.4.7 Tests + lint after training/ consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+- [x] T124.4.7 Tests + lint after training/ consolidation  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-28 verification clean across training/ subtree
   Deps: T124.4.1, T124.4.2, T124.4.3, T124.4.4, T124.4.5, T124.4.6
 
 #### E124.5: layers/ + inference/ consolidation (this sprint)

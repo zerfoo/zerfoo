@@ -330,10 +330,10 @@ type signalCandidate struct {
 	engine compute.Engine[float32]
 }
 
-func (c *signalCandidate) OpType() string                      { return string(c.opType) }
-func (c *signalCandidate) Attributes() map[string]interface{}  { return nil }
+func (c *signalCandidate) OpType() string                          { return string(c.opType) }
+func (c *signalCandidate) Attributes() map[string]interface{}      { return nil }
 func (c *signalCandidate) Parameters() []*graph.Parameter[float32] { return nil }
-func (c *signalCandidate) OutputShape() []int                  { return nil }
+func (c *signalCandidate) OutputShape() []int                      { return nil }
 
 func (c *signalCandidate) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[float32]) (*tensor.TensorNumeric[float32], error) {
 	return c.engine.MulScalar(ctx, inputs[0], c.scale)

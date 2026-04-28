@@ -19,10 +19,10 @@ type identityOp[T tensor.Numeric] struct {
 	shape  []int
 }
 
-func (op *identityOp[T]) OpType() string                      { return "identity" }
-func (op *identityOp[T]) Attributes() map[string]interface{}  { return nil }
-func (op *identityOp[T]) Parameters() []*graph.Parameter[T]   { return nil }
-func (op *identityOp[T]) OutputShape() []int                  { return op.shape }
+func (op *identityOp[T]) OpType() string                     { return "identity" }
+func (op *identityOp[T]) Attributes() map[string]interface{} { return nil }
+func (op *identityOp[T]) Parameters() []*graph.Parameter[T]  { return nil }
+func (op *identityOp[T]) OutputShape() []int                 { return op.shape }
 
 func (op *identityOp[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	return op.engine.MulScalar(ctx, inputs[0], op.scale)

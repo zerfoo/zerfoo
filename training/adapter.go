@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/zerfoo/zerfoo/training/optimizer"
 	ztensorgguf "github.com/zerfoo/ztensor/gguf"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // TrainerWorkflowAdapter adapts the existing Trainer interface to the new TrainingWorkflow interface.

@@ -24,8 +24,8 @@ func DGXSpark() HWProfile {
 // OpCost defines the per-instance cost of an operation type in terms of
 // compute (FLOPs) and memory transfers (bytes read + written).
 type OpCost struct {
-	FLOPs     float64 // floating-point operations per instance
-	MemBytes  float64 // bytes of memory traffic per instance
+	FLOPs    float64 // floating-point operations per instance
+	MemBytes float64 // bytes of memory traffic per instance
 }
 
 // DefaultOpCosts returns cost estimates for each operation type. The values
@@ -36,7 +36,7 @@ func DefaultOpCosts() map[OpType]OpCost {
 
 	return map[OpType]OpCost{
 		OpConv3x3: {
-			FLOPs:    2 * 9 * channels * channels * spatial,  // 2*K^2*C_in*C_out*H*W
+			FLOPs:    2 * 9 * channels * channels * spatial, // 2*K^2*C_in*C_out*H*W
 			MemBytes: 4 * (channels*spatial + 9*channels*channels + channels*spatial),
 		},
 		OpConv5x5: {
@@ -74,8 +74,8 @@ func DefaultOpCosts() map[OpType]OpCost {
 // LatencyEstimator predicts inference latency for cell architectures using a
 // linear cost model calibrated against measured hardware benchmarks.
 type LatencyEstimator struct {
-	hw       HWProfile
-	opCosts  map[OpType]OpCost
+	hw      HWProfile
+	opCosts map[OpType]OpCost
 	// Fitted coefficients: latency = alpha * compute_time + beta * mem_time + bias
 	alpha float64
 	beta  float64

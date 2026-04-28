@@ -5,12 +5,12 @@ import (
 	"math"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/training/optimizer"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
-	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // nf4StubLinear is a float32-specific Linear layer whose weight tensor uses
@@ -48,11 +48,13 @@ func newNF4StubLinear(name string, engine compute.Engine[float32], dIn, dOut int
 	}, nil
 }
 
-func (n *nf4StubLinear) OpType() string                              { return "Linear" }
-func (n *nf4StubLinear) Attributes() map[string]interface{}          { return nil }
-func (n *nf4StubLinear) OutputShape() []int                          { return []int{-1, n.dOut} }
-func (n *nf4StubLinear) Parameters() []*graph.Parameter[float32]     { return []*graph.Parameter[float32]{n.weights} }
-func (n *nf4StubLinear) Name() string                                { return n.layerName }
+func (n *nf4StubLinear) OpType() string                     { return "Linear" }
+func (n *nf4StubLinear) Attributes() map[string]interface{} { return nil }
+func (n *nf4StubLinear) OutputShape() []int                 { return []int{-1, n.dOut} }
+func (n *nf4StubLinear) Parameters() []*graph.Parameter[float32] {
+	return []*graph.Parameter[float32]{n.weights}
+}
+func (n *nf4StubLinear) Name() string { return n.layerName }
 func (n *nf4StubLinear) SetName(name string) {
 	n.layerName = name
 	n.weights.Name = name + "_weights"

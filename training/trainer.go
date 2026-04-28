@@ -4,9 +4,9 @@ package training
 import (
 	"context"
 
+	"github.com/zerfoo/zerfoo/training/optimizer"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/zerfoo/training/optimizer"
 )
 
 // Trainer is an interface for model-specific training orchestration.

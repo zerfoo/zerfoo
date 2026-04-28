@@ -61,11 +61,11 @@ func TestNumCells(t *testing.T) {
 		numOps   int
 		want     int64
 	}{
-		{"2 nodes, 8 ops", 2, 8, 8},       // 1 edge, 8^1
-		{"3 nodes, 8 ops", 3, 8, 512},     // 3 edges, 8^3
-		{"4 nodes, 8 ops", 4, 8, 262144},  // 6 edges, 8^6
-		{"3 nodes, 2 ops", 3, 2, 8},       // 3 edges, 2^3
-		{"2 nodes, 2 ops", 2, 2, 2},       // 1 edge, 2^1
+		{"2 nodes, 8 ops", 2, 8, 8},      // 1 edge, 8^1
+		{"3 nodes, 8 ops", 3, 8, 512},    // 3 edges, 8^3
+		{"4 nodes, 8 ops", 4, 8, 262144}, // 6 edges, 8^6
+		{"3 nodes, 2 ops", 3, 2, 8},      // 3 edges, 2^3
+		{"2 nodes, 2 ops", 2, 2, 2},      // 1 edge, 2^1
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
