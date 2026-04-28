@@ -3610,7 +3610,7 @@ left behind.
 
 #### E124.1: Quick wins (this week)
 
-- [ ] T124.1.1 Rename `testing/` to `tests/testutil/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.1.1 Rename `testing/` to `tests/testutil/`  DONE 2026-04-27  verifies: [infrastructure]
   Move all Go files under `testing/{benchmark,compare,...}` to
   `tests/testutil/...`. Update all imports. Run `go test ./...` and
   `go vet ./...`. The directory name `testing/` shadows the stdlib package
@@ -3805,7 +3805,7 @@ sync.
 ### E124 Waves
 
 #### Wave E124-1: Quick wins + activation audit (4 agents)
-- [ ] T124.1.1 Rename testing/  verifies: [infrastructure]
+- [x] T124.1.1 Rename testing/  DONE 2026-04-27  verifies: [infrastructure]
 - [ ] T124.1.2 Resolve integration/ vs integrations/  verifies: [infrastructure]
 - [ ] T124.1.3 CI layout lint  verifies: [infrastructure]
 - [x] T124.2.1 Activation parallel-paths audit  verifies: [infrastructure]  DONE 2026-04-27 (docs/audits/T124.2.1-activations.md)
