@@ -17,6 +17,9 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 - E89: Timeseries Engine[T] compliance -- eliminate raw slice math (27/27 COMPLETE -- all 6 models migrated)
 - E87: Fix backward pass bugs found by PyTorch parity (8/8 COMPLETE -- all 4 bugs fixed, 92/92 parity tests pass)
 - E90: CrossAsset GPU training acceleration (12/14 -- E90.1-E90.3 done PR #389; T90.4.1 done; T90.4.2 blocked by purego cross-compile; T90.4.3 done (issues already closed))
+- E91: Extract crossasset/ from zerfoo to feza-ai/wolf (14/14 COMPLETE -- v3.0.0 cut 2026-04-13, ADR-084)
+- E125: mmap-based GGUF loading (Waves 1-2 + 4a/4b DONE; Wave 3 GPU integration + 4c/d MiniMax-M2 stress test PENDING)
+- E126: PJRT multi-accelerator backend (E60-E62, E64 DONE 2026-04-02; E63.2 hardware validation -- CUDA/Trainium PENDING)
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
@@ -197,6 +200,10 @@ cleanup, link verification, Lighthouse audit, mobile/search QA all complete.
 | E16 Performance 500+ tok/s (T16.1, T16.2) | Complete |
 | E26 ZerfooConf (T26.1) | Complete |
 | E32 Architecture Expansion (T32.1) | Complete |
+| E91 Extract crossasset to feza-ai/wolf (14/14) | Complete 2026-04-13 (v3.0.0, ADR-084) |
+| Voxtral Transcribe 2 speech-to-text (15/15) | Complete 2026-03-28 (encoder-projector-decoder, mmproj GGUF, /v1/audio/transcriptions, `zerfoo transcribe`) |
+| Spark Bench Runner deployment | Complete 2026-04-08 (Spark v1.6.0+ on DGX, `scripts/bench-spark.sh`, `docs/bench/manifests/patchtst-train.yaml`, ADR-083) |
+| GPU Training Convergence Regression (v1 superseded; v2 closeout) | Complete 2026-04-09 (PRs #361/#365/#369/#371 -- gradTs staleness fix, storage-identity sentinel, scratch-tensor accumulator removed) |
 
 ---
 
@@ -2649,6 +2656,26 @@ Task details removed during /tidy --apply. See git history for full lists.
 
 ## Progress Log
 
+### 2026-04-27: Standalone plan files folded into plan.md
+
+- **Change summary.** Folded 7 standalone plan files into plan.md as the
+  canonical source of truth. Originals archived to `docs/archive/plans/`.
+- **New epics added (pending work carried forward):** E125 (mmap-based GGUF
+  loading remaining work -- GPU integration + MiniMax-M2 stress test) and
+  E126 (PJRT multi-accelerator backend hardware validation -- CPU parity,
+  CUDA on Spark, Trainium PoC).
+- **Completion summaries added** under "Other Completed Epics" for: E91
+  (crossasset extraction to wolf, v3.0.0, ADR-084), Voxtral Transcribe 2
+  (15/15 tasks 2026-03-28), Spark Bench Runner (deployed 2026-04-08,
+  ADR-083), and GPU Training Convergence Regression v1+v2 (closed out
+  2026-04-09, PRs #361/#365/#369/#371).
+- **Files archived** (now under `docs/archive/plans/`): `plan-e91.md`,
+  `plan-mmap.md`, `plan-pjrt.md`, `plan-voxtral.md`,
+  `gpu-training-convergence-regression.md` (v1, superseded),
+  `gpu-training-convergence-regression-v2.md` (v2 closeout),
+  `spark-bench-runner.md`.
+- **Status summary updated** with E91/E125/E126 lines.
+
 ### 2026-04-27: E124 added -- Architectural layout cleanup from deep-review-001
 
 - **Change summary.** Added E124 (Architectural Layout Cleanup) covering the
@@ -3834,3 +3861,120 @@ these fail in worktree isolation, drop to 4 per wave.)
 | ID | Milestone | Exit Criteria | Target |
 |----|-----------|---------------|--------|
 | M-LAYOUT-1 | Architectural layout aligned with design | E124.1-E124.6 complete; root-level Go dirs <=20; CI layout lint passes; activation API unified; design.md refreshed (T124.8.1) | 2026-Q3 |
+
+---
+
+## E125: mmap-Based GGUF Loading (remaining work)
+
+### Context
+
+mmap loading is the default path since v1.36.0 (MM-T4b). Waves 1-2 and the
+default-flip + split-GGUF support shipped (MM-T1..MM-T7, MM-T4b, MM-T4c).
+Remaining work covers GPU integration for fast DMA, layer-prefetch double-
+buffering, unified-memory fallback for >RAM models, and the MiniMax-M2 138 GB
+stress validation. Original plan archived at
+`docs/archive/plans/plan-mmap.md`. Will produce ADR-068.
+
+### Work Breakdown
+
+- [ ] T125.1.1 cudaHostRegister for mmap'd pages  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  repo: ztensor. When the GPU engine detects MmapStorage, call
+  `cudaHostRegister` on the mmap'd region to enable fast DMA without bounce
+  buffers. Acceptance: GPU upload of mmap'd tensors >= 90% speed of
+  heap-allocated upload.
+
+- [ ] T125.1.2 Layer-at-a-time GPU transfer with prefetch  Owner: TBD  Est: 4h  verifies: [UC-MMAP-72B]
+  Deps: T125.1.1
+  repo: zerfoo. While layer N runs on GPU, async-copy layer N+1's weights.
+  Double-buffer with two CUDA streams. Acceptance: Qwen 72B runs inference
+  on DGX Spark with < 8GB VRAM usage.
+
+- [ ] T125.1.3 Unified memory fallback for large models  Owner: TBD  Est: 3h  verifies: [UC-MMAP-405B]
+  Deps: T125.1.2
+  repo: ztensor. On GB10 unified memory, use `cudaMallocManaged` so the GPU
+  accesses mmap'd pages directly. Skip explicit transfers. Acceptance:
+  Qwen 72B inference with zero explicit GPU memcpy calls.
+
+- [ ] T125.2.1 Download MiniMax-M2 Q4_K_M to DGX  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  3 shards, 138 GB. Acceptance: All shards present, hf_download.log contains
+  DOWNLOAD_COMPLETE.
+
+- [ ] T125.2.2 End-to-end mmap inference test (138 GB on 128 GB)  Owner: TBD  Est: 2h  verifies: [UC-MMAP-405B]
+  Deps: T125.1.3, T125.2.1
+  Run bench_tps via Spark. Model exceeds physical RAM -- proves over-RAM
+  inference via NVMe paging. Acceptance: Coherent output. Load time < 30s.
+  Document tok/s and RSS in devlog.
+
+- [ ] T125.2.3 Ollama head-to-head: MiniMax-M2 Q4_K_M  Owner: TBD  Est: 1h  verifies: [UC-MMAP-405B]
+  Deps: T125.2.2
+  Same prompt, same token count. Acceptance: Both produce coherent output;
+  record relative tok/s in README.
+
+### E125 Waves
+
+#### Wave E125-1: GPU integration (3 agents)
+- [ ] T125.1.1 cudaHostRegister
+- [ ] T125.1.2 Layer prefetch (depends on T125.1.1)
+- [ ] T125.1.3 Unified memory fallback (depends on T125.1.2)
+
+#### Wave E125-2: Stress validation (2 agents serialized on Spark)
+- [ ] T125.2.1 Download MiniMax-M2
+- [ ] T125.2.2 End-to-end mmap inference (depends on T125.2.1)
+- [ ] T125.2.3 Ollama head-to-head (depends on T125.2.2)
+
+---
+
+## E126: PJRT Multi-Accelerator Backend (hardware validation remaining)
+
+### Context
+
+Foundation work shipped 2026-04-02 (E60-E62, E64 complete; ADRs 079/080/081):
+purego PJRT bindings, StableHLO MLIR text emitter, CompilePJRT method,
+PJRTPlan execution wrapper with KV cache donation, executable cache. The
+`--pjrt` CLI flag is wired (T63.1.3). Remaining work is hardware-gated:
+end-to-end parity tests requiring a PJRT CPU plugin .so, CUDA validation on
+DGX Spark, and the strategic Trainium PoC on trn1.2xlarge that supports the
+Annapurna Labs partnership pitch. Original plan archived at
+`docs/archive/plans/plan-pjrt.md`.
+
+### Work Breakdown
+
+- [ ] T126.1.1 PJRT CPU parity tests  Owner: TBD  Est: 2h  verifies: [UC-PJRT-001]
+  File: tests/parity/pjrt_parity_test.go (//go:build pjrt_test).
+  Acquire/build PJRT CPU plugin .so. Load Gemma3-1B with WithPJRT(CPU
+  plugin) and compare first-token logits to Engine CPU within 1e-4.
+  Acceptance: logits match within tolerance.
+
+- [ ] T126.1.2 PJRT CUDA plugin integration test  Owner: TBD  Est: 2h  verifies: [UC-PJRT-001]
+  Deps: T126.1.1
+  On DGX Spark via Spark manifest: load a small model with WithPJRT(cuda
+  plugin), generate 16 tokens, verify coherent output and no CUDA errors.
+  Acceptance: Generates coherent text via PJRT CUDA path.
+
+- [ ] T126.1.3 PJRT Neuron/Trainium integration test  Owner: TBD  Est: 4h  verifies: [UC-PJRT-003]
+  Deps: T126.1.1
+  On trn1.2xlarge: install Neuron SDK, locate libneuronpjrt.so. Load a
+  small model with WithPJRT(neuronpjrt.so), generate 16 tokens. Document
+  tok/s in devlog. Acceptance: Coherent text on Trainium; tok/s recorded.
+
+- [ ] T126.1.4 Benchmark PJRT vs native CUDA backend  Owner: TBD  Est: 2h  verifies: [UC-PJRT-001]
+  Deps: T126.1.2
+  On DGX Spark: compare tok/s for Gemma3-1B with native CUDA kernels vs
+  PJRT CUDA plugin. Establishes the cost of the abstraction on NVIDIA.
+  Acceptance: comparison table in devlog.
+
+- [ ] T126.1.5 Run go vet for E63 wiring once tests pass  Owner: TBD  Est: 0.5h  verifies: [infrastructure]
+  Deps: T126.1.1, T126.1.2
+
+### E126 Waves
+
+#### Wave E126-1: CPU plugin parity (1 agent)
+- [ ] T126.1.1 PJRT CPU parity (acquire plugin first)
+
+#### Wave E126-2: Hardware validation (2 agents)
+- [ ] T126.1.2 CUDA via Spark (depends on T126.1.1)
+- [ ] T126.1.3 Trainium on trn1 (depends on T126.1.1)
+
+#### Wave E126-3: Benchmark + lint (1 agent)
+- [ ] T126.1.4 PJRT vs native CUDA bench (depends on T126.1.2)
+- [ ] T126.1.5 go vet sweep
