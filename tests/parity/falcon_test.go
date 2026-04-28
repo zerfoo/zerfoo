@@ -3,10 +3,12 @@ package parity_test
 import (
 	"testing"
 
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
+
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 )
 
-var falconConfig = modelParityConfig{
+var falconConfig = testutil.ModelParityConfig{
 	Name:           "Falcon",
 	ZMFEnvVar:      "FALCON_ZMF_PATH",
 	ModelDirEnvVar: "FALCON_MODEL_DIR",
@@ -16,15 +18,15 @@ var falconConfig = modelParityConfig{
 
 func TestFalconForwardPass(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelForwardPass(t, falconConfig)
+	testutil.RunModelForwardPass(t, falconConfig)
 }
 
 func TestFalconGreedyDecode(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGreedyDecode(t, falconConfig)
+	testutil.RunModelGreedyDecode(t, falconConfig)
 }
 
 func TestFalconGeneration(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGeneration(t, falconConfig)
+	testutil.RunModelGeneration(t, falconConfig)
 }

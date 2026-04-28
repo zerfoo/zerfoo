@@ -3,10 +3,12 @@ package parity_test
 import (
 	"testing"
 
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
+
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 )
 
-var llama4Config = modelParityConfig{
+var llama4Config = testutil.ModelParityConfig{
 	Name:           "Llama 4",
 	ZMFEnvVar:      "LLAMA4_ZMF_PATH",
 	ModelDirEnvVar: "LLAMA4_MODEL_DIR",
@@ -16,15 +18,15 @@ var llama4Config = modelParityConfig{
 
 func TestLlama4ForwardPass(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelForwardPass(t, llama4Config)
+	testutil.RunModelForwardPass(t, llama4Config)
 }
 
 func TestLlama4GreedyDecode(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGreedyDecode(t, llama4Config)
+	testutil.RunModelGreedyDecode(t, llama4Config)
 }
 
 func TestLlama4Generation(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGeneration(t, llama4Config)
+	testutil.RunModelGeneration(t, llama4Config)
 }

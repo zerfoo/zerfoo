@@ -3,10 +3,12 @@ package parity_test
 import (
 	"testing"
 
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
+
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 )
 
-var commandRConfig = modelParityConfig{
+var commandRConfig = testutil.ModelParityConfig{
 	Name:           "Command R",
 	ZMFEnvVar:      "COMMANDR_ZMF_PATH",
 	ModelDirEnvVar: "COMMANDR_MODEL_DIR",
@@ -16,15 +18,15 @@ var commandRConfig = modelParityConfig{
 
 func TestCommandRForwardPass(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelForwardPass(t, commandRConfig)
+	testutil.RunModelForwardPass(t, commandRConfig)
 }
 
 func TestCommandRGreedyDecode(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGreedyDecode(t, commandRConfig)
+	testutil.RunModelGreedyDecode(t, commandRConfig)
 }
 
 func TestCommandRGeneration(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGeneration(t, commandRConfig)
+	testutil.RunModelGeneration(t, commandRConfig)
 }

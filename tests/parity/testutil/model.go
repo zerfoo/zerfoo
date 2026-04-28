@@ -1,4 +1,4 @@
-package parity_test
+package testutil
 
 import (
 	"context"
@@ -9,46 +9,51 @@ import (
 	"testing"
 
 	"github.com/zerfoo/zerfoo/generate"
-	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
-// dirRegistry is a mock ModelRegistry that maps model IDs to local directories.
-type dirRegistry struct {
-	models map[string]*registry.ModelInfo
+// DirRegistry is a mock ModelRegistry that maps model IDs to local directories.
+type DirRegistry struct {
+	Models map[string]*registry.ModelInfo
 }
 
-func (r *dirRegistry) Get(modelID string) (*registry.ModelInfo, bool) {
-	info, ok := r.models[modelID]
+// Get returns the model info for the given ID, if any.
+func (r *DirRegistry) Get(modelID string) (*registry.ModelInfo, bool) {
+	info, ok := r.Models[modelID]
 	return info, ok
 }
 
-func (r *dirRegistry) Pull(_ context.Context, _ string) (*registry.ModelInfo, error) {
+// Pull is a no-op for the directory-backed test registry.
+func (r *DirRegistry) Pull(_ context.Context, _ string) (*registry.ModelInfo, error) {
 	return nil, nil
 }
 
-func (r *dirRegistry) List() []registry.ModelInfo { return nil }
-func (r *dirRegistry) Delete(_ string) error      { return nil }
+// List returns nil; tests don't enumerate the registry.
+func (r *DirRegistry) List() []registry.ModelInfo { return nil }
 
-// loadZMFGraph loads a ZMF model and returns the computation graph.
+// Delete is a no-op for the directory-backed test registry.
+func (r *DirRegistry) Delete(_ string) error { return nil }
+
+// LoadZMFGraph loads a ZMF model and returns the computation graph.
 // ZMF loading was removed; this always skips the test.
-func loadZMFGraph(t *testing.T, _ string) *graph.Graph[float32] {
+func LoadZMFGraph(t *testing.T, _ string) *graph.Graph[float32] {
 	t.Helper()
 	t.Skip("ZMF loading is no longer supported")
 	return nil
 }
 
-// forwardPassConfig holds parameters for a forward pass test.
-type forwardPassConfig struct {
+// ForwardPassConfig holds parameters for a forward pass test.
+type ForwardPassConfig struct {
 	Name         string
 	SeqLen       int
 	MinVocabSize int
 }
 
-// runForwardPassTest runs a single forward pass and validates the output.
-func runForwardPassTest(t *testing.T, g *graph.Graph[float32], cfg forwardPassConfig) {
+// RunForwardPassTest runs a single forward pass and validates the output.
+func RunForwardPassTest(t *testing.T, g *graph.Graph[float32], cfg ForwardPassConfig) {
 	t.Helper()
 
 	inputData := make([]float32, cfg.SeqLen)
@@ -100,8 +105,8 @@ func runForwardPassTest(t *testing.T, g *graph.Graph[float32], cfg forwardPassCo
 	}
 }
 
-// runGreedyDecodeTest runs N greedy decode steps from an initial token sequence.
-func runGreedyDecodeTest(t *testing.T, g *graph.Graph[float32], initTokens []float32, steps int) {
+// RunGreedyDecodeTest runs N greedy decode steps from an initial token sequence.
+func RunGreedyDecodeTest(t *testing.T, g *graph.Graph[float32], initTokens []float32, steps int) {
 	t.Helper()
 
 	tokens := append([]float32{}, initTokens...)
@@ -163,8 +168,8 @@ func runGreedyDecodeTest(t *testing.T, g *graph.Graph[float32], initTokens []flo
 	}
 }
 
-// modelParityConfig describes a complete parity test suite for a model family.
-type modelParityConfig struct {
+// ModelParityConfig describes a complete parity test suite for a model family.
+type ModelParityConfig struct {
 	// Name is a human-readable label (e.g. "Llama 3").
 	Name string
 	// ZMFEnvVar is the environment variable for the .zmf file path.
@@ -177,38 +182,38 @@ type modelParityConfig struct {
 	MinVocabSize int
 }
 
-// runModelForwardPass runs the forward pass test for a model family.
-func runModelForwardPass(t *testing.T, cfg modelParityConfig) {
+// RunModelForwardPass runs the forward pass test for a model family.
+func RunModelForwardPass(t *testing.T, cfg ModelParityConfig) {
 	t.Helper()
-	zmfPath := envOrSkip(t, cfg.ZMFEnvVar)
-	g := loadZMFGraph(t, zmfPath)
-	runForwardPassTest(t, g, forwardPassConfig{
+	zmfPath := EnvOrSkip(t, cfg.ZMFEnvVar)
+	g := LoadZMFGraph(t, zmfPath)
+	RunForwardPassTest(t, g, ForwardPassConfig{
 		Name:         cfg.Name,
 		SeqLen:       8,
 		MinVocabSize: cfg.MinVocabSize,
 	})
 }
 
-// runModelGreedyDecode runs the greedy decode test for a model family.
-func runModelGreedyDecode(t *testing.T, cfg modelParityConfig) {
+// RunModelGreedyDecode runs the greedy decode test for a model family.
+func RunModelGreedyDecode(t *testing.T, cfg ModelParityConfig) {
 	t.Helper()
-	zmfPath := envOrSkip(t, cfg.ZMFEnvVar)
-	g := loadZMFGraph(t, zmfPath)
-	runGreedyDecodeTest(t, g, []float32{1, 2, 3}, 5)
+	zmfPath := EnvOrSkip(t, cfg.ZMFEnvVar)
+	g := LoadZMFGraph(t, zmfPath)
+	RunGreedyDecodeTest(t, g, []float32{1, 2, 3}, 5)
 }
 
-// runModelGeneration runs the generation test suite for a model family.
-func runModelGeneration(t *testing.T, cfg modelParityConfig) {
+// RunModelGeneration runs the generation test suite for a model family.
+func RunModelGeneration(t *testing.T, cfg ModelParityConfig) {
 	t.Helper()
-	modelDir := modelDirOrSkip(t, cfg.ModelDirEnvVar, cfg.ZMFEnvVar)
-	runGenerationTests(t, generationTestConfig{
+	modelDir := ModelDirOrSkip(t, cfg.ModelDirEnvVar, cfg.ZMFEnvVar)
+	RunGenerationTests(t, GenerationTestConfig{
 		ModelID:  cfg.ModelID,
 		ModelDir: modelDir,
 	})
 }
 
-// envOrSkip returns the value of the named env var, or skips the test.
-func envOrSkip(t *testing.T, key string) string {
+// EnvOrSkip returns the value of the named env var, or skips the test.
+func EnvOrSkip(t *testing.T, key string) string {
 	t.Helper()
 	v := os.Getenv(key)
 	if v == "" {
@@ -217,8 +222,8 @@ func envOrSkip(t *testing.T, key string) string {
 	return v
 }
 
-// modelDirOrSkip resolves a model directory from env vars, or skips the test.
-func modelDirOrSkip(t *testing.T, dirEnvVar, zmfEnvVar string) string {
+// ModelDirOrSkip resolves a model directory from env vars, or skips the test.
+func ModelDirOrSkip(t *testing.T, dirEnvVar, zmfEnvVar string) string {
 	t.Helper()
 	if d := os.Getenv(dirEnvVar); d != "" {
 		return d
@@ -230,18 +235,18 @@ func modelDirOrSkip(t *testing.T, dirEnvVar, zmfEnvVar string) string {
 	return filepath.Dir(zmfPath)
 }
 
-// generationTestConfig holds parameters for generation tests via inference API.
-type generationTestConfig struct {
+// GenerationTestConfig holds parameters for generation tests via inference API.
+type GenerationTestConfig struct {
 	ModelID  string
 	ModelDir string
 }
 
-// runGenerationTests runs greedy, stream, and chat tests on an inference.Model.
-func runGenerationTests(t *testing.T, cfg generationTestConfig) {
+// RunGenerationTests runs greedy, stream, and chat tests on an inference.Model.
+func RunGenerationTests(t *testing.T, cfg GenerationTestConfig) {
 	t.Helper()
 
-	reg := &dirRegistry{
-		models: map[string]*registry.ModelInfo{
+	reg := &DirRegistry{
+		Models: map[string]*registry.ModelInfo{
 			cfg.ModelID: {ID: cfg.ModelID, Path: cfg.ModelDir},
 		},
 	}

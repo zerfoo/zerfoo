@@ -3,10 +3,12 @@ package parity_test
 import (
 	"testing"
 
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
+
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 )
 
-var qwenConfig = modelParityConfig{
+var qwenConfig = testutil.ModelParityConfig{
 	Name:           "Qwen 2.5",
 	ZMFEnvVar:      "QWEN25_ZMF_PATH",
 	ModelDirEnvVar: "QWEN25_MODEL_DIR",
@@ -16,15 +18,15 @@ var qwenConfig = modelParityConfig{
 
 func TestQwen25ForwardPass(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelForwardPass(t, qwenConfig)
+	testutil.RunModelForwardPass(t, qwenConfig)
 }
 
 func TestQwen25GreedyDecode(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGreedyDecode(t, qwenConfig)
+	testutil.RunModelGreedyDecode(t, qwenConfig)
 }
 
 func TestQwen25Generation(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGeneration(t, qwenConfig)
+	testutil.RunModelGeneration(t, qwenConfig)
 }

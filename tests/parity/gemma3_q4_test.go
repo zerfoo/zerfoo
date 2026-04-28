@@ -9,13 +9,15 @@ import (
 	"github.com/zerfoo/zerfoo/inference"
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 	"github.com/zerfoo/zerfoo/registry"
+
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
 )
 
 // Q4 model tests use separate env vars:
 //   GEMMA3_Q4_ZMF_PATH  = path to Q4 quantized model.zmf
 //   GEMMA3_Q4_MODEL_DIR = directory containing config.json, tokenizer.json, model.zmf (Q4)
 
-var gemma3Q4Config = modelParityConfig{
+var gemma3Q4Config = testutil.ModelParityConfig{
 	Name:           "Gemma 3 Q4",
 	ZMFEnvVar:      "GEMMA3_Q4_ZMF_PATH",
 	ModelDirEnvVar: "GEMMA3_Q4_MODEL_DIR",
@@ -25,17 +27,17 @@ var gemma3Q4Config = modelParityConfig{
 
 func TestGemma3Q4ForwardPass(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelForwardPass(t, gemma3Q4Config)
+	testutil.RunModelForwardPass(t, gemma3Q4Config)
 }
 
 func TestGemma3Q4GreedyDecode(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGreedyDecode(t, gemma3Q4Config)
+	testutil.RunModelGreedyDecode(t, gemma3Q4Config)
 }
 
 func TestGemma3Q4Generation(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGeneration(t, gemma3Q4Config)
+	testutil.RunModelGeneration(t, gemma3Q4Config)
 }
 
 func BenchmarkGemma3Q4TokPerSec(b *testing.B) {
@@ -46,8 +48,8 @@ func BenchmarkGemma3Q4TokPerSec(b *testing.B) {
 		b.Skip("GEMMA3_Q4_MODEL_DIR not set; skipping")
 	}
 
-	reg := &dirRegistry{
-		models: map[string]*registry.ModelInfo{
+	reg := &testutil.DirRegistry{
+		Models: map[string]*registry.ModelInfo{
 			gemma3Q4Config.ModelID: {ID: gemma3Q4Config.ModelID, Path: modelDir},
 		},
 	}
@@ -87,8 +89,8 @@ func BenchmarkSpeculativeVsBaseline(b *testing.B) {
 		b.Skip("GEMMA3_Q4_MODEL_DIR not set; skipping")
 	}
 
-	reg := &dirRegistry{
-		models: map[string]*registry.ModelInfo{
+	reg := &testutil.DirRegistry{
+		Models: map[string]*registry.ModelInfo{
 			gemma3Q4Config.ModelID: {ID: gemma3Q4Config.ModelID, Path: modelDir},
 		},
 	}

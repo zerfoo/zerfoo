@@ -3,10 +3,12 @@ package parity_test
 import (
 	"testing"
 
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
+
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 )
 
-var mixtralConfig = modelParityConfig{
+var mixtralConfig = testutil.ModelParityConfig{
 	Name:           "Mixtral",
 	ZMFEnvVar:      "MIXTRAL_ZMF_PATH",
 	ModelDirEnvVar: "MIXTRAL_MODEL_DIR",
@@ -16,15 +18,15 @@ var mixtralConfig = modelParityConfig{
 
 func TestMixtralForwardPass(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelForwardPass(t, mixtralConfig)
+	testutil.RunModelForwardPass(t, mixtralConfig)
 }
 
 func TestMixtralGreedyDecode(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGreedyDecode(t, mixtralConfig)
+	testutil.RunModelGreedyDecode(t, mixtralConfig)
 }
 
 func TestMixtralGeneration(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGeneration(t, mixtralConfig)
+	testutil.RunModelGeneration(t, mixtralConfig)
 }

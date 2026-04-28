@@ -11,6 +11,8 @@ import (
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/registry"
+
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
 )
 
 // TestMultiGPU_DualDeviceInference loads the same model on two GPUs and verifies
@@ -24,8 +26,8 @@ func TestMultiGPU_DualDeviceInference(t *testing.T) {
 	modelID := "gemma-3-1b-it"
 	modelPath := findModelDir(t, modelID)
 
-	reg := &dirRegistry{
-		models: map[string]*registry.ModelInfo{
+	reg := &testutil.DirRegistry{
+		Models: map[string]*registry.ModelInfo{
 			modelID: {ID: modelID, Path: modelPath},
 		},
 	}

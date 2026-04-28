@@ -3747,7 +3747,7 @@ left behind.
 - [x] T124.6.1 Move `mobile/` -> `tests/mobile/`  Owner: TBD  Est: 0.5h  verifies: [infrastructure]  DONE 2026-04-27
   Single test file; not a framework package.
 
-- [ ] T124.6.2 Extract parity helpers to `tests/parity/testutil/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
+- [x] DONE 2026-04-27 T124.6.2 Extract parity helpers to `tests/parity/testutil/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
   Move `makeTensor`, `setup`, `loadGolden`, `getFloat32s`, `getInts`,
   `getFloat`, `assertClose` from `tests/parity/layer_parity_test.go` into
   a non-`_test.go` `testutil` subpackage so all parity-style suites can
@@ -3820,7 +3820,7 @@ sync.
 - [x] T124.4.3 gp/ -> training/gp/  verifies: [infrastructure]  DONE 2026-04-27
 - [ ] T124.4.4 monitor+recover -> training/mlops/  verifies: [infrastructure]
 - [ ] T124.5.1 gnn/ -> layers/gnn/  verifies: [infrastructure]
-- [ ] T124.6.2 Parity helpers to tests/parity/testutil/  verifies: [infrastructure]
+- [x] DONE 2026-04-27 T124.6.2 Parity helpers to tests/parity/testutil/  verifies: [infrastructure]
 
 (Note: 10-agent cap from MEMORY-recorded pre-flight wisdom -- if any of
 these fail in worktree isolation, drop to 4 per wave.)

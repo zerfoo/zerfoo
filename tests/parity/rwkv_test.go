@@ -3,10 +3,12 @@ package parity_test
 import (
 	"testing"
 
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
+
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 )
 
-var rwkvConfig = modelParityConfig{
+var rwkvConfig = testutil.ModelParityConfig{
 	Name:           "RWKV",
 	ZMFEnvVar:      "RWKV_ZMF_PATH",
 	ModelDirEnvVar: "RWKV_MODEL_DIR",
@@ -16,15 +18,15 @@ var rwkvConfig = modelParityConfig{
 
 func TestRWKVForwardPass(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelForwardPass(t, rwkvConfig)
+	testutil.RunModelForwardPass(t, rwkvConfig)
 }
 
 func TestRWKVGreedyDecode(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGreedyDecode(t, rwkvConfig)
+	testutil.RunModelGreedyDecode(t, rwkvConfig)
 }
 
 func TestRWKVGeneration(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGeneration(t, rwkvConfig)
+	testutil.RunModelGeneration(t, rwkvConfig)
 }
