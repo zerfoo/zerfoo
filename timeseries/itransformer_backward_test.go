@@ -26,6 +26,7 @@ func TestITransformer_BackwardBatchEngine_ParityWithCPU(t *testing.T) {
 		DFF:       8,
 		NHeads:    2,
 		NLayers:   1,
+		Seed:      1,
 	}
 
 	m, err := NewITransformer(config, engine, ops)
@@ -137,6 +138,7 @@ func TestITransformer_BackwardBatchEngine_LossReduction(t *testing.T) {
 		DFF:       8,
 		NHeads:    2,
 		NLayers:   1,
+		Seed:      1,
 	}
 
 	m, err := NewITransformer(config, engine, ops)
@@ -222,6 +224,7 @@ func TestITransformer_BackwardBatchEngine_InputValidation(t *testing.T) {
 		DFF:       8,
 		NHeads:    2,
 		NLayers:   1,
+		Seed:      1,
 	}
 
 	m, err := NewITransformer(config, engine, ops)
