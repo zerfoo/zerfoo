@@ -10,17 +10,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
-	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/inference/lora"
-	"github.com/zerfoo/ztensor/numeric"
-	"github.com/zerfoo/zerfoo/security"
-	tokenizer "github.com/zerfoo/ztoken"
 	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/zerfoo/serve/security"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
+	tokenizer "github.com/zerfoo/ztoken"
 )
 
 // fixedLogitsNode always returns logits where a specific token has the highest value.
@@ -1813,8 +1813,8 @@ func TestSecurityHeaders(t *testing.T) {
 
 	expected := map[string]string{
 		"X-Content-Type-Options": "nosniff",
-		"X-Frame-Options":       "DENY",
-		"Cache-Control":         "no-store",
+		"X-Frame-Options":        "DENY",
+		"Cache-Control":          "no-store",
 	}
 	for header, want := range expected {
 		got := rec.Header().Get(header)
@@ -2040,7 +2040,7 @@ func newNoFlushResponseRecorder() *noFlushResponseRecorder {
 	return &noFlushResponseRecorder{header: http.Header{}}
 }
 
-func (r *noFlushResponseRecorder) Header() http.Header        { return r.header }
+func (r *noFlushResponseRecorder) Header() http.Header         { return r.header }
 func (r *noFlushResponseRecorder) Write(b []byte) (int, error) { return r.body.Write(b) }
 func (r *noFlushResponseRecorder) WriteHeader(code int)        { r.code = code }
 
@@ -2295,4 +2295,3 @@ func TestCompletions_WithAdapter(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, respBody)
 	}
 }
-

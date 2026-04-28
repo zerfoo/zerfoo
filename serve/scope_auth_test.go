@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerfoo/zerfoo/security"
+	"github.com/zerfoo/zerfoo/serve/security"
 )
 
 func TestScopeAuthorization(t *testing.T) {
