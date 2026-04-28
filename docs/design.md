@@ -183,6 +183,11 @@ Each sub-package carries a stability label: **stable**, **beta**, or **alpha**.
 
 ### 2.1 Package Layout
 
+This is the post-E124 target layout. Migration in progress; see
+docs/plan.md E124 for status. New top-level Go packages require an ADR
+slug referenced in the package's `doc.go` (enforced by the layout lint
+in T124.1.3). Anything not listed here is unsanctioned.
+
 ```
 # Provided by github.com/zerfoo/ztensor:
 # tensor/             TensorNumeric[T], Storage[T], type constraints (Numeric, Float, Addable)
@@ -195,11 +200,15 @@ Each sub-package carries a stability label: **stable**, **beta**, or **alpha**.
 # pkg/tokenizer/      BPE tokenizer loading from tokenizer.json
 
 model/                Model[T], GGUF loader, global layer registry, plugin registry
-layers/               Neural network layers organized by family (18 sub-packages)
+  model/cache/          Model cache (relocated from top-level modelcache/, T124.5.5)
+  model/dsl/            Model DSL (relocated from top-level modeldsl/, T124.5.5)
+  model/registry/       Model registry: Pull/Get/List/Delete (relocated from top-level registry/, T124.5.5)
+layers/               Neural network layers organized by family
   layers/core/          Add, Sub, Mul, MatMul, MatMulNBits, Cast, Concat, Constant, Conv2d, Dense,
                         FFN, FiLM, GlobalAvgPool, Linear, LMHead, MoE, Pad, Polynomial, Reshape,
                         Resize, RotaryEmbedding, Shape, Slice, SpectralFingerprint, TopK, Unsqueeze, Bias
   layers/activations/   ReLU, LeakyReLU, Sigmoid, Tanh, Gelu, FastGelu, Erf, Softmax, SwiGLU
+                        (canonical Node registry; layers/functional/ delegates here per T124.2.2)
   layers/attention/     AttentionHead, GlobalAttention, GroupQueryAttention, LocalAttention, QKNorm, SDPA
   layers/normalization/ BatchNorm, LayerNorm, RMSNorm, SimplifiedLayerNorm, SkipSimplifiedLayerNorm
   layers/embeddings/    TokenEmbedding, RotaryPositionalEmbedding
@@ -212,19 +221,27 @@ layers/               Neural network layers organized by family (18 sub-packages
   layers/recurrent/     RNN
   layers/ssm/           Mamba, RWKV, S4 (state space models)
   layers/hrm/           HModule, LModule (hierarchical recurrent model)
+  layers/gnn/           Graph neural network layers (relocated from top-level gnn/, T124.5.1)
+  layers/generative/synth/ VAE-based synthetic data generation (relocated from top-level synth/, T124.5.2)
+  layers/shared_latent/ Cross-model latent space (relocated from top-level shared/, T124.5.3)
   layers/registry/      RegisterAll() -- central wiring of all layers into the model registry
 training/             Trainer[T], DefaultTrainer, GradientStrategy, workflow interfaces
   training/optimizer/   Optimizer[T] interface, AdamW[T], SGD[T]
   training/loss/        Loss[T] interface, MSE[T], CrossEntropyLoss[T]
+  training/rl/          Reinforcement learning (relocated from top-level rl/, T124.4.1)
+  training/meta/        MAML meta-learning (relocated from top-level meta/, T124.4.2)
+  training/gp/          Tree-based genetic programming (relocated from top-level gp/, T124.4.3)
+  training/mlops/monitor/  Model monitoring (relocated from top-level monitor/, T124.4.4)
+  training/mlops/recover/  Retraining recovery (relocated from top-level recover/, T124.4.4)
+  training/provenance/  Hash-chain model lifecycle audit (relocated from top-level provenance/, T124.4.5)
+  training/federated/   FedAvg coordinator (relocated from top-level federated/, T124.4.6)
 distributed/          gRPC-based distributed training: AllReduce, Barrier, Broadcast, TLS
   distributed/coordinator/ Coordinator gRPC server with worker registry and checkpoint tracking
   distributed/pb/       Generated protobuf/gRPC bindings
 config/               Generic JSON config loader with env var overrides and validation
-health/               HTTP health server (/healthz, /readyz, /debug/pprof/)
 metrics/              ML evaluation metrics (Pearson, Spearman, MSE, RMSE, MAE)
   metrics/runtime/      Operational instrumentation (Counter, Gauge, Histogram, InMemoryCollector)
 log/                  Structured leveled logging (Debug/Info/Warn/Error, text/JSON)
-shutdown/             Ordered shutdown coordinator with reverse-order Closer execution
 cmd/                  CLI binaries and framework
   cmd/zerfoo/           Main binary (predict, tokenize, worker, pull, run, serve subcommands)
   cmd/cli/              Command interface, CommandRegistry, CLI runner, pull/run/serve commands
@@ -233,18 +250,37 @@ cmd/                  CLI binaries and framework
   cmd/bench-compare/    Benchmark comparison tool
   cmd/coverage-gate/    CI coverage enforcement tool
 inference/            High-level inference API: Load, Generate, GenerateStream, Chat, Embed
+  inference/timeseries/causal/   Causal time-series (relocated from top-level causal/, T124.5.4)
+  inference/timeseries/features/ TS feature transformers (relocated from top-level features/, T124.5.4)
+  inference/timeseries/regime/   Regime detection (relocated from top-level regime/, T124.5.4)
 generate/             Autoregressive generation loop, sampling (temp, topK, topP, repetition), streaming
-registry/             Model registry with local cache, Pull/Get/List/Delete interface
 serve/                OpenAI-compatible HTTP server (chat completions, completions, models, SSE streaming)
+  serve/health/         HTTP liveness/readiness probes (relocated from top-level health/, T124.3.1)
+  serve/shutdown/       Ordered shutdown coordinator (relocated from top-level shutdown/, T124.3.2)
+  serve/support/        Customer-support webhook handlers (relocated from top-level support/, T124.3.3)
+  serve/security/       Access control, API keys, rate limit (relocated from top-level security/, T124.3.4)
 data/                 Dataset container (Sample, Batch, normalization)
-features/             Time-series feature transformers (Lag, Rolling, FFT)
 internal/xblas/       CPU BLAS wrappers (gonum GEMM for float32/64; upcast for float16/float8)
 internal/cuda/        CUDA runtime purego bindings (dlopen libcudart.so)
 internal/cublas/      cuBLAS purego bindings (dlopen libcublas.so)
 internal/cuda/kernels/ CUDA kernel source (.cu) and Go wrappers
-testing/testutils/    Test assertion helpers, MockEngine, custom mocks
-tests/                Parity tests (env-var gated model forward pass tests)
+internal/autoopt/     Kernel autotuning + codegen (relocated from top-level autoopt/, T124.5.6)
+tests/                Test suites and shared test infrastructure
+  tests/testutil/       Test assertion helpers, MockEngine, custom mocks (renamed from top-level testing/, T124.1.1)
+  tests/integration/    Production smoke tests (relocated from top-level integration/, T124.1.2)
+  tests/mobile/         Mobile target tests (relocated from top-level mobile/, T124.6.1)
+  tests/parity/         Parity tests (env-var gated model forward pass tests)
+  tests/parity/testutil/ Shared parity helpers: makeTensor, setup, loadGolden, assertClose (T124.6.2)
+  tests/architecture/   Layout lint and composition tests (T124.1.3)
+sdk/                  External adapters
+  sdk/integrations/     LangChain + Weaviate adapters (relocated from top-level integrations/, T124.1.2)
 ```
+
+The pre-E124 root contained ~47 top-level Go directories. The target
+above keeps the count under 20 (excluding `cmd/`, `docs/`, `examples/`,
+`scripts/`, `benchmarks/`, `bin/`, `deploy/`, `infra/`). Open-core
+placement of `cloud/`, `marketplace/`, and `compliance/` is deferred to
+the ADR produced by T124.7.1.
 
 ### 2.2 Dependency Graph
 
