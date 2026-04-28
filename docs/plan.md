@@ -3761,12 +3761,13 @@ left behind.
 
 #### E124.7: Open-core split decision (this quarter)
 
-- [ ] T124.7.1 Write ADR: scope of `cloud/`, `marketplace/`, `compliance/` in zerfoo OSS  Owner: TBD  Est: 3h  verifies: [infrastructure]
+- [x] T124.7.1 Write ADR: scope of `cloud/`, `marketplace/`, `compliance/` in zerfoo OSS  Owner: TBD  Est: 3h  verifies: [infrastructure]  DONE 2026-04-27
   Decide whether SaaS-billing/marketplace/compliance code belongs in this
   Apache-2.0 repo or in a sibling `zerfoo-enterprise/` repo per
   ADR-057's open-core direction. ADR-084 is the precedent (crossasset/
-  -> wolf). Output: docs/adr/NNN-zerfoo-oss-scope.md.
+  -> wolf). Output: docs/adr/090-zerfoo-oss-scope-cloud-marketplace-compliance.md.
   Acceptance: ADR Accepted; clear placement decision with rationale.
+  Verdict: extract all three packages to `feza-ai/zerfoo-enterprise`.
 
 - [ ] T124.7.2 Execute the placement decision (move or keep + document)  Owner: TBD  Est: 4h  verifies: [infrastructure]
   Deps: T124.7.1
