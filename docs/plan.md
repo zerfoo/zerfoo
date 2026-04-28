@@ -3618,7 +3618,7 @@ left behind.
   Acceptance: `find . -maxdepth 1 -name testing -type d` returns empty;
   `go build ./...` and `go test ./...` pass.
 
-- [ ] T124.1.2 Resolve `integration/` vs `integrations/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.1.2 Resolve `integration/` vs `integrations/`  DONE 2026-04-28  verifies: [infrastructure]
   `integration/` (2 files: production smoke tests) -> `tests/integration/`.
   `integrations/` (4 files: LangChain + Weaviate adapters) -> `sdk/integrations/`.
   Update imports and any CI workflow refs.
@@ -3806,7 +3806,7 @@ sync.
 
 #### Wave E124-1: Quick wins + activation audit (4 agents)
 - [x] T124.1.1 Rename testing/  DONE 2026-04-27  verifies: [infrastructure]
-- [ ] T124.1.2 Resolve integration/ vs integrations/  verifies: [infrastructure]
+- [x] T124.1.2 Resolve integration/ vs integrations/  DONE 2026-04-28  verifies: [infrastructure]
 - [x] T124.1.3 CI layout lint  DONE 2026-04-28  verifies: [infrastructure]
 - [x] T124.2.1 Activation parallel-paths audit  verifies: [infrastructure]  DONE 2026-04-27 (docs/audits/T124.2.1-activations.md)
 

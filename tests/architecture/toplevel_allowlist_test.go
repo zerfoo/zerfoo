@@ -63,8 +63,6 @@ func TestTopLevelAllowlist(t *testing.T) {
 		"compliance",
 		"marketplace",
 		// PENDING migrations (E124) -- remove once each task lands
-		"integration",  // PENDING T124.1.2 -- merge with sdk/integrations or move to tests/integration
-		"integrations", // PENDING T124.1.2 -- relocated under sdk/integrations per design.md
 		"results",      // PENDING -- benchmark output, candidate for benchmarks/results
 		"tabular",      // PENDING -- candidate for layers/tabular per E62 work
 		"timeseries",   // PENDING E76 -- candidate for inference/timeseries or layers/timeseries

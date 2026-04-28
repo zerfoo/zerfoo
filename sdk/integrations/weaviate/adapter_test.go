@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/integrations/weaviate"
+	"github.com/zerfoo/zerfoo/sdk/integrations/weaviate"
 )
 
 // fakeEmbedServer returns a test HTTP server that echoes back fake embedding

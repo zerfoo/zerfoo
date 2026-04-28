@@ -18,7 +18,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/zerfoo/zerfoo/integrations/langchain"
+	"github.com/zerfoo/zerfoo/sdk/integrations/langchain"
 )
 
 func main() {

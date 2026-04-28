@@ -19,7 +19,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/zerfoo/zerfoo/integrations/weaviate"
+	"github.com/zerfoo/zerfoo/sdk/integrations/weaviate"
 )
 
 // corpus is a small set of documents to embed and search.

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/integrations/langchain"
+	"github.com/zerfoo/zerfoo/sdk/integrations/langchain"
 )
 
 // fakeChatServer returns a test HTTP server that responds with a fixed
