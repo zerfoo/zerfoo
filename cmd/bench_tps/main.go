@@ -18,7 +18,7 @@ import (
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/gpuapi"
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
-	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/zerfoo/model/registry"
 )
 
 // dirRegistry is a minimal ModelRegistry that returns a fixed directory.

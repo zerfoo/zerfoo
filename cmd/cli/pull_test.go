@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/zerfoo/model/registry"
 )
 
 // mockPullRegistry is a test double for registry.ModelRegistry.

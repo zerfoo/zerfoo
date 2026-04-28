@@ -8,7 +8,7 @@ import (
 
 	"github.com/zerfoo/zerfoo/inference"
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
-	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/zerfoo/model/registry"
 
 	"github.com/zerfoo/zerfoo/tests/parity/testutil"
 )

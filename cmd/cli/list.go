@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/zerfoo/zerfoo/registry"
+	"github.com/zerfoo/zerfoo/model/registry"
 )
 
 // ListCommand implements the "list" CLI command for showing cached models.

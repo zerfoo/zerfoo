@@ -1,4 +1,4 @@
-package modeldsl
+package dsl
 
 import (
 	"context"

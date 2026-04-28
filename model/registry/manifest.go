@@ -19,9 +19,9 @@ type Descriptor struct {
 
 // Manifest represents an OCI image manifest for a GGUF model.
 type Manifest struct {
-	SchemaVersion int        `json:"schemaVersion"`
-	MediaType     string     `json:"mediaType"`
-	Config        Descriptor `json:"config"`
+	SchemaVersion int          `json:"schemaVersion"`
+	MediaType     string       `json:"mediaType"`
+	Config        Descriptor   `json:"config"`
 	Layers        []Descriptor `json:"layers"`
 }
 

@@ -12,12 +12,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/generate/grammar"
+	"github.com/zerfoo/zerfoo/model/registry"
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	tokenizer "github.com/zerfoo/ztoken"
-	"github.com/zerfoo/zerfoo/registry"
 )
 
 // defaultMaxBatchConcurrency is the default limit on simultaneous goroutines
@@ -62,16 +62,16 @@ type ModelMetadata struct {
 	ChatTemplate          string `json:"chat_template"`
 
 	// Extended fields for multi-architecture support.
-	IntermediateSize  int                `json:"intermediate_size"`
-	NumQueryHeads     int                `json:"num_attention_heads"`
-	NumKeyValueHeads  int                `json:"num_key_value_heads"`
-	RopeTheta         float64            `json:"rope_theta"`
-	RopeScaling       *RopeScalingConfig `json:"rope_scaling,omitempty"`
-	TieWordEmbeddings  bool               `json:"tie_word_embeddings"`
-	SlidingWindow      int                `json:"sliding_window"`
-	AttentionBias      bool               `json:"attention_bias"`
-	PartialRotaryFactor float64           `json:"partial_rotary_factor"`
-	LayerNormEps        float64           `json:"layer_norm_eps,omitempty"`
+	IntermediateSize    int                `json:"intermediate_size"`
+	NumQueryHeads       int                `json:"num_attention_heads"`
+	NumKeyValueHeads    int                `json:"num_key_value_heads"`
+	RopeTheta           float64            `json:"rope_theta"`
+	RopeScaling         *RopeScalingConfig `json:"rope_scaling,omitempty"`
+	TieWordEmbeddings   bool               `json:"tie_word_embeddings"`
+	SlidingWindow       int                `json:"sliding_window"`
+	AttentionBias       bool               `json:"attention_bias"`
+	PartialRotaryFactor float64            `json:"partial_rotary_factor"`
+	LayerNormEps        float64            `json:"layer_norm_eps,omitempty"`
 
 	// Granite-specific fields.
 	EmbeddingMultiplier float64 `json:"embedding_multiplier,omitempty"`
@@ -82,12 +82,12 @@ type ModelMetadata struct {
 	AudioNumMels int `json:"audio_num_mels,omitempty"` // Number of mel bins; 0 means use architecture default
 
 	// DeepSeek MLA and MoE fields.
-	KVLoRADim        int `json:"kv_lora_rank"`
-	QLoRADim         int `json:"q_lora_rank"`
-	QKRopeHeadDim    int `json:"qk_rope_head_dim"`
-	NumExperts       int `json:"num_experts"`
+	KVLoRADim          int `json:"kv_lora_rank"`
+	QLoRADim           int `json:"q_lora_rank"`
+	QKRopeHeadDim      int `json:"qk_rope_head_dim"`
+	NumExperts         int `json:"num_experts"`
 	NumExpertsPerToken int `json:"num_experts_per_tok"`
-	NumSharedExperts int `json:"n_shared_experts"`
+	NumSharedExperts   int `json:"n_shared_experts"`
 }
 
 // modelAliases maps short model names to HuggingFace repo IDs.
