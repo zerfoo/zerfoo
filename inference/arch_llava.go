@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zerfoo/ztensor/compute"
-	"github.com/zerfoo/ztensor/graph"
-	"github.com/zerfoo/ztensor/numeric"
-	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/ztensor/types"
 	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/layers/vision"
 	"github.com/zerfoo/zerfoo/model/gguf"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
 )
 
 func init() {
@@ -413,9 +413,9 @@ type mmProjectorNode[T tensor.Numeric] struct {
 	textHidden int
 }
 
-func (p *mmProjectorNode[T]) OpType() string                  { return "MMProjector" }
-func (p *mmProjectorNode[T]) Attributes() map[string]any       { return nil }
-func (p *mmProjectorNode[T]) OutputShape() []int               { return nil }
+func (p *mmProjectorNode[T]) OpType() string                    { return "MMProjector" }
+func (p *mmProjectorNode[T]) Attributes() map[string]any        { return nil }
+func (p *mmProjectorNode[T]) OutputShape() []int                { return nil }
 func (p *mmProjectorNode[T]) Parameters() []*graph.Parameter[T] { return nil }
 
 func (p *mmProjectorNode[T]) EmbeddedFrozen() []*tensor.TensorNumeric[T] {
@@ -460,6 +460,10 @@ func (p *mmProjectorNode[T]) Forward(ctx context.Context, inputs ...*tensor.Tens
 	}
 
 	// Apply GELU activation.
+	// TODO(T124.2.3): delegate to layers/activations.NewGelu once the
+	// projector operates on engine-resident tensors. Same situation as
+	// arch_voxtral: this is a raw scalar Go loop on []T, not an engine
+	// op chain; switching requires the projector to be ported first.
 	half := p.ops.FromFloat64(0.5)
 	one := p.ops.One()
 	coeff := p.ops.FromFloat64(0.044715)

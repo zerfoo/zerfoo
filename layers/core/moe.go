@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/zerfoo/zerfoo/layers/activations"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
@@ -43,12 +44,12 @@ func WithRoutingBias[T tensor.Numeric](bias *tensor.TensorNumeric[T]) MoEGateOpt
 //
 // Returns a [seqLen, topK] tensor of normalized expert weights.
 type MoEGate[T tensor.Numeric] struct {
-	engine         compute.Engine[T]
-	ops            numeric.Arithmetic[T]
-	topK           int
-	sigmoidGating  bool
-	routingBias    *tensor.TensorNumeric[T]
-	outputShape    []int
+	engine        compute.Engine[T]
+	ops           numeric.Arithmetic[T]
+	topK          int
+	sigmoidGating bool
+	routingBias   *tensor.TensorNumeric[T]
+	outputShape   []int
 
 	// Cached forward state for backward pass.
 	cachedHiddenStates *tensor.TensorNumeric[T]
@@ -93,18 +94,11 @@ func (g *MoEGate[T]) route(
 
 	var probs *tensor.TensorNumeric[T]
 	if g.sigmoidGating {
-		// Element-wise sigmoid: sigmoid(x) = exp(x) / (1 + exp(x))
-		expX, serr := g.engine.Exp(ctx, logits)
-		if serr != nil {
-			return nil, nil, fmt.Errorf("MoEGate: sigmoid exp: %w", serr)
-		}
-		onePlusExpX, serr := g.engine.AddScalar(ctx, expX, g.ops.One())
-		if serr != nil {
-			return nil, nil, fmt.Errorf("MoEGate: sigmoid add: %w", serr)
-		}
-		probs, err = g.engine.Div(ctx, expX, onePlusExpX)
+		// Delegate to the canonical Sigmoid Node (T124.2.3) so the math
+		// has a single source of truth shared with layers/activations.
+		probs, err = activations.NewSigmoid(g.engine, g.ops).Forward(ctx, logits)
 		if err != nil {
-			return nil, nil, fmt.Errorf("MoEGate: sigmoid div: %w", err)
+			return nil, nil, fmt.Errorf("MoEGate: sigmoid: %w", err)
 		}
 	} else {
 		probs, err = g.engine.Softmax(ctx, logits, 1)
@@ -378,7 +372,7 @@ type MixtureOfExperts[T tensor.Numeric] struct {
 	cachedIndices      [][]int
 	cachedWeights      [][]T
 	cachedExpertOuts   map[int]*tensor.TensorNumeric[T] // expert index -> batched output
-	cachedAssignments  map[int][]expertAssignment[T]     // expert index -> token assignments
+	cachedAssignments  map[int][]expertAssignment[T]    // expert index -> token assignments
 }
 
 // NewMixtureOfExperts creates a MixtureOfExperts layer.

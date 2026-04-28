@@ -343,6 +343,11 @@ func (v *VariableSelection[T]) Parameters() []*graph.Parameter[T] {
 
 // geluEngine applies the GELU tanh approximation using engine tensor ops.
 // This mirrors functional.GELU but accepts tensor.Numeric constraint.
+//
+// TODO(T124.2.3): delegate to layers/activations.NewGelu once the
+// canonical Gelu Node accepts tensor.Numeric (currently tensor.Float).
+// Loosening that constraint is a canonical-API change outside this
+// task's scope.
 func geluEngine[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T],
 	x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	x2, err := engine.Mul(ctx, x, x)
