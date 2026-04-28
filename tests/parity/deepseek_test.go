@@ -3,10 +3,12 @@ package parity_test
 import (
 	"testing"
 
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
+
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 )
 
-var deepseekV3Config = modelParityConfig{
+var deepseekV3Config = testutil.ModelParityConfig{
 	Name:           "DeepSeek-V3",
 	ZMFEnvVar:      "DEEPSEEK_ZMF_PATH",
 	ModelDirEnvVar: "DEEPSEEK_MODEL_DIR",
@@ -16,15 +18,15 @@ var deepseekV3Config = modelParityConfig{
 
 func TestDeepSeekV3ForwardPass(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelForwardPass(t, deepseekV3Config)
+	testutil.RunModelForwardPass(t, deepseekV3Config)
 }
 
 func TestDeepSeekV3GreedyDecode(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGreedyDecode(t, deepseekV3Config)
+	testutil.RunModelGreedyDecode(t, deepseekV3Config)
 }
 
 func TestDeepSeekV3Generation(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGeneration(t, deepseekV3Config)
+	testutil.RunModelGeneration(t, deepseekV3Config)
 }

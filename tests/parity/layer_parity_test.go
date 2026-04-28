@@ -2,12 +2,8 @@ package parity_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/layers/activations"
@@ -35,250 +31,129 @@ import (
 	"github.com/zerfoo/zerfoo/training/loss"
 	"github.com/zerfoo/zerfoo/training/optimizer"
 	"github.com/zerfoo/zerfoo/training/rl"
-	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
+
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
 )
-
-// goldenDir returns the path to tests/golden/layers/.
-func goldenDir() string {
-	_, f, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(f), "..", "golden", "layers")
-}
-
-// loadGolden loads a golden JSON file and returns the raw map.
-func loadGolden(t *testing.T, name string) map[string]interface{} {
-	t.Helper()
-	path := filepath.Join(goldenDir(), name+".json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("load golden %s: %v", name, err)
-	}
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
-		t.Fatalf("parse golden %s: %v", name, err)
-	}
-	return m
-}
-
-// getFloat32s extracts a float32 slice from a JSON array.
-func getFloat32s(m map[string]interface{}, key string) []float32 {
-	arr, ok := m[key].([]interface{})
-	if !ok {
-		return nil
-	}
-	out := make([]float32, len(arr))
-	for i, v := range arr {
-		out[i] = float32(v.(float64))
-	}
-	return out
-}
-
-// getInts extracts an int slice from a JSON array.
-func getInts(m map[string]interface{}, key string) []int {
-	arr, ok := m[key].([]interface{})
-	if !ok {
-		return nil
-	}
-	out := make([]int, len(arr))
-	for i, v := range arr {
-		out[i] = int(v.(float64))
-	}
-	return out
-}
-
-// getFloat extracts a float64 from a JSON value.
-func getFloat(m map[string]interface{}, key string) float64 {
-	return m[key].(float64)
-}
-
-// makeTensor creates a tensor from golden data.
-func makeTensor(t *testing.T, data []float32, shape []int) *tensor.TensorNumeric[float32] {
-	t.Helper()
-	tn, err := tensor.New[float32](shape, data)
-	if err != nil {
-		t.Fatalf("create tensor shape=%v: %v", shape, err)
-	}
-	return tn
-}
-
-// makeParam creates a graph.Parameter from golden data.
-func makeParam(t *testing.T, name string, data []float32, shape []int) *graph.Parameter[float32] {
-	t.Helper()
-	tn := makeTensor(t, data, shape)
-	p, err := graph.NewParameter[float32](name, tn, tensor.New[float32])
-	if err != nil {
-		t.Fatalf("create param %s: %v", name, err)
-	}
-	return p
-}
-
-// compareSlices compares two float32 slices with tolerance.
-// Returns the number of mismatches and the max absolute difference.
-func compareSlices(got, want []float32, tol float64) (mismatches int, maxDiff float64) {
-	if len(got) != len(want) {
-		return len(got) + len(want), math.Inf(1)
-	}
-	for i := range got {
-		diff := math.Abs(float64(got[i] - want[i]))
-		if diff > maxDiff {
-			maxDiff = diff
-		}
-		if diff > tol {
-			mismatches++
-		}
-	}
-	return
-}
-
-// assertClose compares output data against expected with tolerance.
-func assertClose(t *testing.T, label string, got, want []float32, tol float64) {
-	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("%s: length mismatch: got %d, want %d", label, len(got), len(want))
-	}
-	mismatches, maxDiff := compareSlices(got, want, tol)
-	if mismatches > 0 {
-		// Show first few mismatches
-		shown := 0
-		for i := range got {
-			diff := math.Abs(float64(got[i] - want[i]))
-			if diff > tol {
-				t.Errorf("%s[%d]: got %g, want %g (diff=%g)", label, i, got[i], want[i], diff)
-				shown++
-				if shown >= 5 {
-					break
-				}
-			}
-		}
-		t.Errorf("%s: %d/%d values exceed tolerance %g (maxDiff=%g)", label, mismatches, len(got), tol, maxDiff)
-	}
-}
-
-// setup creates engine and ops for all tests.
-func setup() (compute.Engine[float32], *numeric.Float32Ops) {
-	ops := &numeric.Float32Ops{}
-	engine := compute.NewCPUEngine[float32](ops)
-	return engine, ops
-}
 
 // ---------------------------------------------------------------------------
 // Activation tests
 // ---------------------------------------------------------------------------
 
 func TestParity_ReLU(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_relu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_relu")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	relu := activations.NewReLU(engine, ops)
 	output, err := relu.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "relu_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "relu_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_GELU(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_gelu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_gelu")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	gelu := activations.NewGelu(engine, ops)
 	output, err := gelu.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "gelu_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "gelu_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Sigmoid(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_sigmoid")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_sigmoid")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	sigmoid := activations.NewSigmoid(engine, ops)
 	output, err := sigmoid.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "sigmoid_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "sigmoid_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Tanh(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_tanh")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_tanh")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	tanh := activations.NewTanh(engine, ops)
 	output, err := tanh.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "tanh_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "tanh_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Softmax(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "activation_softmax")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_softmax")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	sm := activations.NewSoftmax[float32](engine, -1)
 	output, err := sm.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "softmax_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "softmax_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_LeakyReLU(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_leaky_relu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_leaky_relu")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	alpha := getFloat(g, "alpha")
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	alpha := testutil.GetFloat(g, "alpha")
 	lrelu := activations.NewLeakyReLU(engine, ops, activations.WithAlpha[float32](alpha))
 	output, err := lrelu.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "leaky_relu_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "leaky_relu_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_SwiGLU(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_swiglu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_swiglu")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	swiglu := activations.NewSwiGLU[float32](engine, ops)
 	output, err := swiglu.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "swiglu_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "swiglu_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Erf(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_erf")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_erf")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	erf := activations.NewErf(engine, ops)
 	output, err := erf.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "erf_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "erf_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -286,113 +161,113 @@ func TestParity_Erf(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_Functional_ReLU(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_relu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_relu")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	output, err := functional.ReLU(context.Background(), engine, ops, input)
 	if err != nil {
 		t.Fatalf("functional.ReLU: %v", err)
 	}
-	assertClose(t, "functional_relu", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "functional_relu", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Functional_GELU(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_gelu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_gelu")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	output, err := functional.GELU(context.Background(), engine, ops, input)
 	if err != nil {
 		t.Fatalf("functional.GELU: %v", err)
 	}
-	assertClose(t, "functional_gelu", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "functional_gelu", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Functional_Sigmoid(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_sigmoid")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_sigmoid")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	output, err := functional.Sigmoid(context.Background(), engine, ops, input)
 	if err != nil {
 		t.Fatalf("functional.Sigmoid: %v", err)
 	}
-	assertClose(t, "functional_sigmoid", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "functional_sigmoid", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Functional_SiLU(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_silu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_silu")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	output, err := functional.SiLU(context.Background(), engine, ops, input)
 	if err != nil {
 		t.Fatalf("functional.SiLU: %v", err)
 	}
-	assertClose(t, "functional_silu", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "functional_silu", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Functional_Softmax(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "activation_softmax")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_softmax")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	output, err := functional.Softmax(context.Background(), engine, input, -1)
 	if err != nil {
 		t.Fatalf("functional.Softmax: %v", err)
 	}
-	assertClose(t, "functional_softmax", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "functional_softmax", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Functional_LayerNorm(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "norm_layer_norm")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "norm_layer_norm")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	gamma := makeTensor(t, getFloat32s(g, "gamma"), getInts(g, "gamma_shape"))
-	beta := makeTensor(t, getFloat32s(g, "beta"), getInts(g, "beta_shape"))
-	eps := float32(getFloat(g, "epsilon"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	gamma := testutil.MakeTensor(t, testutil.GetFloat32s(g, "gamma"), testutil.GetInts(g, "gamma_shape"))
+	beta := testutil.MakeTensor(t, testutil.GetFloat32s(g, "beta"), testutil.GetInts(g, "beta_shape"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
 
 	output, err := functional.LayerNorm(context.Background(), engine, input, gamma, beta, eps)
 	if err != nil {
 		t.Fatalf("functional.LayerNorm: %v", err)
 	}
-	assertClose(t, "functional_layernorm", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "functional_layernorm", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Functional_RMSNorm(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "norm_rms_norm")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "norm_rms_norm")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	gain := makeTensor(t, getFloat32s(g, "gain"), getInts(g, "gain_shape"))
-	eps := float32(getFloat(g, "epsilon"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	gain := testutil.MakeTensor(t, testutil.GetFloat32s(g, "gain"), testutil.GetInts(g, "gain_shape"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
 
 	output, err := functional.RMSNorm(context.Background(), engine, input, gain, eps)
 	if err != nil {
 		t.Fatalf("functional.RMSNorm: %v", err)
 	}
-	assertClose(t, "functional_rmsnorm", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "functional_rmsnorm", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Functional_Linear(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "core_dense")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_dense")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	// functional.Linear expects weight as [out_features, in_features] (PyTorch convention)
 	// and does x @ W^T + bias. Golden file has weight as [in, out], so we transpose.
-	wShape := getInts(g, "weight_shape")
-	wData := getFloat32s(g, "weight")
+	wShape := testutil.GetInts(g, "weight_shape")
+	wData := testutil.GetFloat32s(g, "weight")
 	inF, outF := wShape[0], wShape[1]
 	// Transpose [in, out] -> [out, in]
 	wT := make([]float32, len(wData))
@@ -401,14 +276,14 @@ func TestParity_Functional_Linear(t *testing.T) {
 			wT[j*inF+i] = wData[i*outF+j]
 		}
 	}
-	weight := makeTensor(t, wT, []int{outF, inF})
-	bias := makeTensor(t, getFloat32s(g, "bias"), getInts(g, "bias_shape"))
+	weight := testutil.MakeTensor(t, wT, []int{outF, inF})
+	bias := testutil.MakeTensor(t, testutil.GetFloat32s(g, "bias"), testutil.GetInts(g, "bias_shape"))
 
 	output, err := functional.Linear(context.Background(), engine, input, weight, bias)
 	if err != nil {
 		t.Fatalf("functional.Linear: %v", err)
 	}
-	assertClose(t, "functional_linear", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "functional_linear", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -416,17 +291,17 @@ func TestParity_Functional_Linear(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_LayerNorm(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "norm_layer_norm")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "norm_layer_norm")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	gamma := makeTensor(t, getFloat32s(g, "gamma"), getInts(g, "gamma_shape"))
-	beta := makeTensor(t, getFloat32s(g, "beta"), getInts(g, "beta_shape"))
-	eps := float32(getFloat(g, "epsilon"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	gamma := testutil.MakeTensor(t, testutil.GetFloat32s(g, "gamma"), testutil.GetInts(g, "gamma_shape"))
+	beta := testutil.MakeTensor(t, testutil.GetFloat32s(g, "beta"), testutil.GetInts(g, "beta_shape"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
 
-	gammaParam := makeParam(t, "gamma", getFloat32s(g, "gamma"), getInts(g, "gamma_shape"))
-	betaParam := makeParam(t, "beta", getFloat32s(g, "beta"), getInts(g, "beta_shape"))
+	gammaParam := testutil.MakeParam(t, "gamma", testutil.GetFloat32s(g, "gamma"), testutil.GetInts(g, "gamma_shape"))
+	betaParam := testutil.MakeParam(t, "beta", testutil.GetFloat32s(g, "beta"), testutil.GetInts(g, "beta_shape"))
 
 	_ = gamma
 	_ = beta
@@ -436,18 +311,18 @@ func TestParity_LayerNorm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "layer_norm_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "layer_norm_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_RMSNorm(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "norm_rms_norm")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "norm_rms_norm")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	eps := float32(getFloat(g, "epsilon"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
 
-	gainParam := makeParam(t, "gain", getFloat32s(g, "gain"), getInts(g, "gain_shape"))
+	gainParam := testutil.MakeParam(t, "gain", testutil.GetFloat32s(g, "gain"), testutil.GetInts(g, "gain_shape"))
 
 	rms, err := normalization.NewRMSNormFromParam(engine, ops, eps, gainParam)
 	if err != nil {
@@ -457,7 +332,7 @@ func TestParity_RMSNorm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "rms_norm_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "rms_norm_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -465,48 +340,48 @@ func TestParity_RMSNorm(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_Linear(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "core_linear")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_linear")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	weightParam := makeParam(t, "weight", getFloat32s(g, "weight"), getInts(g, "weight_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	weightParam := testutil.MakeParam(t, "weight", testutil.GetFloat32s(g, "weight"), testutil.GetInts(g, "weight_shape"))
 
 	linear := core.NewLinearFromParam(engine, weightParam)
 	output, err := linear.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "linear_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "linear_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_MatMul(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "core_matmul")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_matmul")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	a := makeTensor(t, getFloat32s(g, "input_a"), getInts(g, "input_a_shape"))
-	b := makeTensor(t, getFloat32s(g, "input_b"), getInts(g, "input_b_shape"))
+	a := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_a"), testutil.GetInts(g, "input_a_shape"))
+	b := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_b"), testutil.GetInts(g, "input_b_shape"))
 
 	mm := core.NewMatMul[float32](engine)
 	output, err := mm.Forward(context.Background(), a, b)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "matmul_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "matmul_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Conv1D(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "core_conv1d")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_conv1d")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	inCh := int(getFloat(g, "in_channels"))
-	outCh := int(getFloat(g, "out_channels"))
-	kernel := int(getFloat(g, "kernel_size"))
-	stride := int(getFloat(g, "stride"))
-	padding := int(getFloat(g, "padding"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	inCh := int(testutil.GetFloat(g, "in_channels"))
+	outCh := int(testutil.GetFloat(g, "out_channels"))
+	kernel := int(testutil.GetFloat(g, "kernel_size"))
+	stride := int(testutil.GetFloat(g, "stride"))
+	padding := int(testutil.GetFloat(g, "padding"))
 
 	conv, err := core.NewConv1D[float32]("test_conv1d", engine, ops, inCh, outCh, kernel,
 		core.Conv1DStride(stride), core.Conv1DPadding(padding))
@@ -516,8 +391,8 @@ func TestParity_Conv1D(t *testing.T) {
 
 	// Set weights from golden data
 	params := conv.Parameters()
-	weightData := getFloat32s(g, "weight")
-	biasData := getFloat32s(g, "bias")
+	weightData := testutil.GetFloat32s(g, "weight")
+	biasData := testutil.GetFloat32s(g, "bias")
 
 	// The Conv1D weight shape from PyTorch is [out_ch, in_ch, kernel],
 	// need to check if Zerfoo expects the same layout
@@ -534,7 +409,7 @@ func TestParity_Conv1D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "conv1d_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "conv1d_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -542,57 +417,57 @@ func TestParity_Conv1D(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_SDPA_Causal(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "attention_sdpa_causal")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "attention_sdpa_causal")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	q := makeTensor(t, getFloat32s(g, "query"), getInts(g, "query_shape"))
-	k := makeTensor(t, getFloat32s(g, "key"), getInts(g, "key_shape"))
-	v := makeTensor(t, getFloat32s(g, "value"), getInts(g, "value_shape"))
+	q := testutil.MakeTensor(t, testutil.GetFloat32s(g, "query"), testutil.GetInts(g, "query_shape"))
+	k := testutil.MakeTensor(t, testutil.GetFloat32s(g, "key"), testutil.GetInts(g, "key_shape"))
+	v := testutil.MakeTensor(t, testutil.GetFloat32s(g, "value"), testutil.GetInts(g, "value_shape"))
 
-	headDim := getInts(g, "query_shape")[2]
+	headDim := testutil.GetInts(g, "query_shape")[2]
 	sdpa := attention.NewScaledDotProductAttention[float32](engine, headDim)
 	sdpa.SetCausal(true)
 	output, err := sdpa.Forward(context.Background(), q, k, v, nil)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "sdpa_causal_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "sdpa_causal_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_SDPA_Bidirectional(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "attention_sdpa_bidirectional")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "attention_sdpa_bidirectional")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	q := makeTensor(t, getFloat32s(g, "query"), getInts(g, "query_shape"))
-	k := makeTensor(t, getFloat32s(g, "key"), getInts(g, "key_shape"))
-	v := makeTensor(t, getFloat32s(g, "value"), getInts(g, "value_shape"))
+	q := testutil.MakeTensor(t, testutil.GetFloat32s(g, "query"), testutil.GetInts(g, "query_shape"))
+	k := testutil.MakeTensor(t, testutil.GetFloat32s(g, "key"), testutil.GetInts(g, "key_shape"))
+	v := testutil.MakeTensor(t, testutil.GetFloat32s(g, "value"), testutil.GetInts(g, "value_shape"))
 
-	headDim := getInts(g, "query_shape")[2]
+	headDim := testutil.GetInts(g, "query_shape")[2]
 	sdpa := attention.NewBidirectionalSDPA[float32](engine, headDim)
 	output, err := sdpa.Forward(context.Background(), q, k, v, nil)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "sdpa_bidirectional_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "sdpa_bidirectional_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_MultiHeadAttention(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "attention_multi_head")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "attention_multi_head")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	q := makeTensor(t, getFloat32s(g, "query"), getInts(g, "query_shape"))
-	k := makeTensor(t, getFloat32s(g, "key"), getInts(g, "key_shape"))
-	v := makeTensor(t, getFloat32s(g, "value"), getInts(g, "value_shape"))
-	nHeads := int(getFloat(g, "n_heads"))
+	q := testutil.MakeTensor(t, testutil.GetFloat32s(g, "query"), testutil.GetInts(g, "query_shape"))
+	k := testutil.MakeTensor(t, testutil.GetFloat32s(g, "key"), testutil.GetInts(g, "key_shape"))
+	v := testutil.MakeTensor(t, testutil.GetFloat32s(g, "value"), testutil.GetInts(g, "value_shape"))
+	nHeads := int(testutil.GetFloat(g, "n_heads"))
 
 	output, err := functional.MultiHeadAttention(context.Background(), engine, q, k, v, nHeads)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "mha_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "mha_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -600,13 +475,13 @@ func TestParity_MultiHeadAttention(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_TokenEmbedding(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "embedding_token")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "embedding_token")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	tableData := getFloat32s(g, "table")
-	tableShape := getInts(g, "table_shape")
-	tableParam := makeParam(t, "embedding_table", tableData, tableShape)
+	tableData := testutil.GetFloat32s(g, "table")
+	tableShape := testutil.GetInts(g, "table_shape")
+	tableParam := testutil.MakeParam(t, "embedding_table", tableData, tableShape)
 
 	emb, err := embeddings.NewTokenEmbeddingFromParam(engine, tableParam)
 	if err != nil {
@@ -619,25 +494,25 @@ func TestParity_TokenEmbedding(t *testing.T) {
 	for i, v := range idxRaw {
 		idxData[i] = float32(v.(float64))
 	}
-	idxTensor := makeTensor(t, idxData, []int{len(idxData)})
+	idxTensor := testutil.MakeTensor(t, idxData, []int{len(idxData)})
 
 	output, err := emb.Forward(context.Background(), idxTensor)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "token_embedding_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "token_embedding_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_RotaryEmbedding(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "embedding_rotary")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "embedding_rotary")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	inputShape := getInts(g, "input_shape")
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	inputShape := testutil.GetInts(g, "input_shape")
 	headDim := inputShape[2]
 	seqLen := inputShape[1]
-	base := getFloat(g, "base")
+	base := testutil.GetFloat(g, "base")
 
 	rope, err := embeddings.NewRotaryPositionalEmbedding[float32](
 		context.Background(), engine, headDim, seqLen,
@@ -651,7 +526,7 @@ func TestParity_RotaryEmbedding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "rotary_embedding_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "rotary_embedding_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -659,12 +534,12 @@ func TestParity_RotaryEmbedding(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_MSELoss(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "loss_mse")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "loss_mse")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	pred := makeTensor(t, getFloat32s(g, "predictions"), getInts(g, "predictions_shape"))
-	target := makeTensor(t, getFloat32s(g, "targets"), getInts(g, "targets_shape"))
+	pred := testutil.MakeTensor(t, testutil.GetFloat32s(g, "predictions"), testutil.GetInts(g, "predictions_shape"))
+	target := testutil.MakeTensor(t, testutil.GetFloat32s(g, "targets"), testutil.GetInts(g, "targets_shape"))
 
 	mse := loss.NewMSE(engine, ops)
 	output, err := mse.Forward(context.Background(), pred, target)
@@ -672,7 +547,7 @@ func TestParity_MSELoss(t *testing.T) {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	expectedLoss := float32(getFloat(g, "expected_loss"))
+	expectedLoss := float32(testutil.GetFloat(g, "expected_loss"))
 	gotLoss := output.Data()[0]
 	diff := math.Abs(float64(gotLoss - expectedLoss))
 	if diff > tol {
@@ -681,12 +556,12 @@ func TestParity_MSELoss(t *testing.T) {
 }
 
 func TestParity_BCELoss(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "loss_bce")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "loss_bce")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	pred := makeTensor(t, getFloat32s(g, "predictions"), getInts(g, "predictions_shape"))
-	target := makeTensor(t, getFloat32s(g, "targets"), getInts(g, "targets_shape"))
+	pred := testutil.MakeTensor(t, testutil.GetFloat32s(g, "predictions"), testutil.GetInts(g, "predictions_shape"))
+	target := testutil.MakeTensor(t, testutil.GetFloat32s(g, "targets"), testutil.GetInts(g, "targets_shape"))
 
 	bce := loss.NewBCELoss(engine, ops)
 	output, err := bce.Forward(context.Background(), pred, target)
@@ -694,7 +569,7 @@ func TestParity_BCELoss(t *testing.T) {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	expectedLoss := float32(getFloat(g, "expected_loss"))
+	expectedLoss := float32(testutil.GetFloat(g, "expected_loss"))
 	gotLoss := output.Data()[0]
 	diff := math.Abs(float64(gotLoss - expectedLoss))
 	if diff > tol {
@@ -703,11 +578,11 @@ func TestParity_BCELoss(t *testing.T) {
 }
 
 func TestParity_CrossEntropyLoss(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "loss_cross_entropy")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "loss_cross_entropy")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	logits := makeTensor(t, getFloat32s(g, "logits"), getInts(g, "logits_shape"))
+	logits := testutil.MakeTensor(t, testutil.GetFloat32s(g, "logits"), testutil.GetInts(g, "logits_shape"))
 
 	// Create target tensor (class indices as float32)
 	targetsRaw := g["targets"].([]interface{})
@@ -715,7 +590,7 @@ func TestParity_CrossEntropyLoss(t *testing.T) {
 	for i, v := range targetsRaw {
 		targetData[i] = float32(v.(float64))
 	}
-	targets := makeTensor(t, targetData, []int{len(targetData)})
+	targets := testutil.MakeTensor(t, targetData, []int{len(targetData)})
 
 	cel := loss.NewCrossEntropyLoss[float32](engine)
 	output, err := cel.Forward(context.Background(), logits, targets)
@@ -723,7 +598,7 @@ func TestParity_CrossEntropyLoss(t *testing.T) {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	expectedLoss := float32(getFloat(g, "expected_loss"))
+	expectedLoss := float32(testutil.GetFloat(g, "expected_loss"))
 	gotLoss := output.Data()[0]
 	diff := math.Abs(float64(gotLoss - expectedLoss))
 	if diff > tol {
@@ -736,43 +611,43 @@ func TestParity_CrossEntropyLoss(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_ReduceSum(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_reduce_sum")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_reduce_sum")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	axes := getInts(g, "axes")
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	axes := testutil.GetInts(g, "axes")
 
 	rs := reducesum.New[float32](engine, axes, true)
 	output, err := rs.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "reduce_sum_keepdims", output.Data(), getFloat32s(g, "expected_output_keepdims"), tol)
+	testutil.AssertClose(t, "reduce_sum_keepdims", output.Data(), testutil.GetFloat32s(g, "expected_output_keepdims"), tol)
 }
 
 func TestParity_Transpose(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_transpose")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_transpose")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	axes := getInts(g, "axes")
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	axes := testutil.GetInts(g, "axes")
 
 	tr := ltranspose.New[float32](engine, axes)
 	output, err := tr.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "transpose_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "transpose_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Gather(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_gather")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_gather")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	table := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	table := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 
 	// Indices as int tensor
 	idxRaw := g["indices"].([]interface{})
@@ -792,13 +667,13 @@ func TestParity_Gather(t *testing.T) {
 	for i, v := range idxData {
 		idxFloat[i] = float32(v)
 	}
-	idxFloatTensor := makeTensor(t, idxFloat, []int{len(idxFloat)})
+	idxFloatTensor := testutil.MakeTensor(t, idxFloat, []int{len(idxFloat)})
 
 	output, err := ga.Forward(context.Background(), idxFloatTensor)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "gather_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "gather_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -806,23 +681,23 @@ func TestParity_Gather(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_Conv2D(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "core_conv2d")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_conv2d")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	weight := makeTensor(t, getFloat32s(g, "weight"), getInts(g, "weight_shape"))
-	bias := makeTensor(t, getFloat32s(g, "bias"), getInts(g, "bias_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	weight := testutil.MakeTensor(t, testutil.GetFloat32s(g, "weight"), testutil.GetInts(g, "weight_shape"))
+	bias := testutil.MakeTensor(t, testutil.GetFloat32s(g, "bias"), testutil.GetInts(g, "bias_shape"))
 
-	strides := getInts(g, "stride")
-	pads := getInts(g, "padding")
+	strides := testutil.GetInts(g, "stride")
+	pads := testutil.GetInts(g, "padding")
 
 	conv := core.NewConv2d[float32](engine, ops, strides, pads, []int{1, 1}, 1)
 	output, err := conv.Forward(context.Background(), input, weight, bias)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "conv2d_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "conv2d_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -841,15 +716,15 @@ func transposeWeight2D(data []float32, rows, cols int) []float32 {
 }
 
 func TestParity_FFN(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "core_ffn")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_ffn")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 
-	inputShape := getInts(g, "input_shape")
-	w1Shape := getInts(g, "w1_shape")
-	w2Shape := getInts(g, "w2_shape")
+	inputShape := testutil.GetInts(g, "input_shape")
+	w1Shape := testutil.GetInts(g, "w1_shape")
+	w2Shape := testutil.GetInts(g, "w2_shape")
 
 	inputDim := inputShape[1] // 4
 	hiddenDim := w1Shape[1]   // 32
@@ -865,9 +740,9 @@ func TestParity_FFN(t *testing.T) {
 	// FFN has w1, w2, w3 Dense layers. Each Dense has a Linear with weights [in, out].
 	// Golden data has weights in [in, out] format (matching Zerfoo's layout).
 	params := ffn.Parameters()
-	w1Data := getFloat32s(g, "w1")
-	w2Data := getFloat32s(g, "w2")
-	w3Data := getFloat32s(g, "w3")
+	w1Data := testutil.GetFloat32s(g, "w1")
+	w2Data := testutil.GetFloat32s(g, "w2")
+	w3Data := testutil.GetFloat32s(g, "w3")
 
 	for _, p := range params {
 		pdata := p.Value.Data()
@@ -897,7 +772,7 @@ func TestParity_FFN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "ffn_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "ffn_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -905,24 +780,24 @@ func TestParity_FFN(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_BatchNorm(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "norm_batch_norm")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "norm_batch_norm")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	scale := makeTensor(t, getFloat32s(g, "scale"), getInts(g, "scale_shape"))
-	bias := makeTensor(t, getFloat32s(g, "bias"), getInts(g, "bias_shape"))
-	runningMean := makeTensor(t, getFloat32s(g, "running_mean"), getInts(g, "scale_shape"))
-	runningVar := makeTensor(t, getFloat32s(g, "running_var"), getInts(g, "scale_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	scale := testutil.MakeTensor(t, testutil.GetFloat32s(g, "scale"), testutil.GetInts(g, "scale_shape"))
+	bias := testutil.MakeTensor(t, testutil.GetFloat32s(g, "bias"), testutil.GetInts(g, "bias_shape"))
+	runningMean := testutil.MakeTensor(t, testutil.GetFloat32s(g, "running_mean"), testutil.GetInts(g, "scale_shape"))
+	runningVar := testutil.MakeTensor(t, testutil.GetFloat32s(g, "running_var"), testutil.GetInts(g, "scale_shape"))
 
-	eps := float32(getFloat(g, "epsilon"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
 	bn := normalization.NewBatchNormalization[float32](engine, ops, eps)
 
 	output, err := bn.Forward(context.Background(), input, scale, bias, runningMean, runningVar)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "batch_norm_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "batch_norm_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -930,12 +805,12 @@ func TestParity_BatchNorm(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_Dropout(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "op_dropout")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_dropout")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	rate := float32(getFloat(g, "rate"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	rate := float32(testutil.GetFloat(g, "rate"))
 
 	dropout := regularization.NewDropout[float32](engine, ops, rate)
 	// Eval mode (default): output should be identical to input
@@ -943,7 +818,7 @@ func TestParity_Dropout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "dropout_eval", output.Data(), getFloat32s(g, "expected_output_eval"), tol)
+	testutil.AssertClose(t, "dropout_eval", output.Data(), testutil.GetFloat32s(g, "expected_output_eval"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -951,18 +826,18 @@ func TestParity_Dropout(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_AdamW(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "optimizer_adamw")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "optimizer_adamw")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	lr := float32(getFloat(g, "lr"))
-	beta1 := float32(getFloat(g, "beta1"))
-	beta2 := float32(getFloat(g, "beta2"))
-	eps := float32(getFloat(g, "epsilon"))
-	wd := float32(getFloat(g, "weight_decay"))
+	lr := float32(testutil.GetFloat(g, "lr"))
+	beta1 := float32(testutil.GetFloat(g, "beta1"))
+	beta2 := float32(testutil.GetFloat(g, "beta2"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
+	wd := float32(testutil.GetFloat(g, "weight_decay"))
 
-	param := makeParam(t, "test_param", getFloat32s(g, "param_before"), getInts(g, "param_shape"))
-	gradTensor := makeTensor(t, getFloat32s(g, "grad"), getInts(g, "param_shape"))
+	param := testutil.MakeParam(t, "test_param", testutil.GetFloat32s(g, "param_before"), testutil.GetInts(g, "param_shape"))
+	gradTensor := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad"), testutil.GetInts(g, "param_shape"))
 	param.Gradient = gradTensor
 
 	adamw := optimizer.NewAdamW[float32](engine, lr, beta1, beta2, eps, wd)
@@ -970,7 +845,7 @@ func TestParity_AdamW(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
-	assertClose(t, "adamw_step", param.Value.Data(), getFloat32s(g, "expected_param_after"), tol)
+	testutil.AssertClose(t, "adamw_step", param.Value.Data(), testutil.GetFloat32s(g, "expected_param_after"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -978,14 +853,14 @@ func TestParity_AdamW(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_SGD(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "optimizer_sgd")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "optimizer_sgd")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	lr := float32(getFloat(g, "lr"))
+	lr := float32(testutil.GetFloat(g, "lr"))
 
-	param := makeParam(t, "test_param", getFloat32s(g, "param_before"), getInts(g, "param_shape"))
-	gradTensor := makeTensor(t, getFloat32s(g, "grad"), getInts(g, "param_shape"))
+	param := testutil.MakeParam(t, "test_param", testutil.GetFloat32s(g, "param_before"), testutil.GetInts(g, "param_shape"))
+	gradTensor := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad"), testutil.GetInts(g, "param_shape"))
 	param.Gradient = gradTensor
 
 	sgd := optimizer.NewSGD[float32](engine, ops, lr)
@@ -993,7 +868,7 @@ func TestParity_SGD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
-	assertClose(t, "sgd_step", param.Value.Data(), getFloat32s(g, "expected_param_after"), tol)
+	testutil.AssertClose(t, "sgd_step", param.Value.Data(), testutil.GetFloat32s(g, "expected_param_after"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,18 +876,18 @@ func TestParity_SGD(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_EMA(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "optimizer_ema")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "optimizer_ema")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	decay := float32(getFloat(g, "decay"))
-	lr := float32(getFloat(g, "lr"))
-	shape := getInts(g, "param_shape")
+	decay := float32(testutil.GetFloat(g, "decay"))
+	lr := float32(testutil.GetFloat(g, "lr"))
+	shape := testutil.GetInts(g, "param_shape")
 
 	// Build param with param_before data and set gradient so inner SGD step
 	// produces param_after_inner = param_before - lr*grad.
-	param := makeParam(t, "test_param", getFloat32s(g, "param_before"), shape)
-	gradTensor := makeTensor(t, getFloat32s(g, "grad"), shape)
+	param := testutil.MakeParam(t, "test_param", testutil.GetFloat32s(g, "param_before"), shape)
+	gradTensor := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad"), shape)
 	param.Gradient = gradTensor
 
 	// Use SGD as inner optimizer (simple: param -= lr * grad).
@@ -1045,19 +920,19 @@ func TestParity_EMA(t *testing.T) {
 	// We compute expected = decay * param_before + (1-decay) * param_after_inner
 	// and compare against the golden expected_shadow_after.
 
-	paramBefore := getFloat32s(g, "param_before")
-	paramAfterInner := getFloat32s(g, "param_after_inner")
-	expectedShadow := getFloat32s(g, "expected_shadow_after")
+	paramBefore := testutil.GetFloat32s(g, "param_before")
+	paramAfterInner := testutil.GetFloat32s(g, "param_after_inner")
+	expectedShadow := testutil.GetFloat32s(g, "expected_shadow_after")
 
 	// Verify golden data is self-consistent: expected = decay * before + (1-decay) * after_inner
 	computed := make([]float32, len(paramBefore))
 	for i := range computed {
 		computed[i] = decay*paramBefore[i] + (1-decay)*paramAfterInner[i]
 	}
-	assertClose(t, "ema_golden_consistency", computed, expectedShadow, tol)
+	testutil.AssertClose(t, "ema_golden_consistency", computed, expectedShadow, tol)
 
 	// Verify the actual param after SGD step matches param_after_inner
-	assertClose(t, "ema_inner_step", param.Value.Data(), paramAfterInner, tol)
+	testutil.AssertClose(t, "ema_inner_step", param.Value.Data(), paramAfterInner, tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1065,16 +940,16 @@ func TestParity_EMA(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_SWA(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "optimizer_swa")
-	tol := getFloat(g, "tolerance")
-	shape := getInts(g, "param_shape")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "optimizer_swa")
+	tol := testutil.GetFloat(g, "tolerance")
+	shape := testutil.GetInts(g, "param_shape")
 
-	param0Data := getFloat32s(g, "param0")
-	param1Data := getFloat32s(g, "param1")
+	param0Data := testutil.GetFloat32s(g, "param0")
+	param1Data := testutil.GetFloat32s(g, "param1")
 
 	// Create parameter with first epoch values
-	param := makeParam(t, "test_param", param0Data, shape)
+	param := testutil.MakeParam(t, "test_param", param0Data, shape)
 
 	inner := optimizer.NewSGD[float32](engine, ops, 0) // lr=0 so Step is a no-op
 	swa := optimizer.NewSWA[float32](inner, engine, 0) // startEpoch=0
@@ -1100,7 +975,7 @@ func TestParity_SWA(t *testing.T) {
 		t.Fatalf("SwapWeights: %v", err)
 	}
 
-	assertClose(t, "swa_avg", param.Value.Data(), getFloat32s(g, "expected_avg_after"), tol)
+	testutil.AssertClose(t, "swa_avg", param.Value.Data(), testutil.GetFloat32s(g, "expected_avg_after"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1190,15 +1065,15 @@ func TestParity_HeInitializer(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_SimpleRNN(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "recurrent_simple_rnn")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "recurrent_simple_rnn")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	inputDim := int(getFloat(g, "input_dim"))
-	hiddenDim := int(getFloat(g, "hidden_dim"))
+	inputDim := int(testutil.GetFloat(g, "input_dim"))
+	hiddenDim := int(testutil.GetFloat(g, "hidden_dim"))
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	inputShape := getInts(g, "input_shape")
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	inputShape := testutil.GetInts(g, "input_shape")
 	batchSize := inputShape[0]
 	seqLen := inputShape[1]
 
@@ -1213,19 +1088,19 @@ func TestParity_SimpleRNN(t *testing.T) {
 	params := rnn.Parameters()
 	// inputWeights: Linear with weights [inputDim, hiddenDim]
 	// PyTorch weight_ih: [hiddenDim, inputDim] -> transpose
-	wihShape := getInts(g, "weight_ih_shape")
-	wihData := transposeWeight2D(getFloat32s(g, "weight_ih"), wihShape[0], wihShape[1])
+	wihShape := testutil.GetInts(g, "weight_ih_shape")
+	wihData := transposeWeight2D(testutil.GetFloat32s(g, "weight_ih"), wihShape[0], wihShape[1])
 	copy(params[0].Value.Data(), wihData)
 
 	// hiddenWeights: Linear with weights [hiddenDim, hiddenDim]
 	// PyTorch weight_hh: [hiddenDim, hiddenDim] -> transpose (symmetric dims but data differs)
-	whhShape := getInts(g, "weight_hh_shape")
-	whhData := transposeWeight2D(getFloat32s(g, "weight_hh"), whhShape[0], whhShape[1])
+	whhShape := testutil.GetInts(g, "weight_hh_shape")
+	whhData := transposeWeight2D(testutil.GetFloat32s(g, "weight_hh"), whhShape[0], whhShape[1])
 	copy(params[1].Value.Data(), whhData)
 
 	// Bias: Zerfoo has a single bias, PyTorch has bias_ih + bias_hh
-	biasIH := getFloat32s(g, "bias_ih")
-	biasHH := getFloat32s(g, "bias_hh")
+	biasIH := testutil.GetFloat32s(g, "bias_ih")
+	biasHH := testutil.GetFloat32s(g, "bias_hh")
 	combinedBias := make([]float32, len(biasIH))
 	for i := range combinedBias {
 		combinedBias[i] = biasIH[i] + biasHH[i]
@@ -1241,7 +1116,7 @@ func TestParity_SimpleRNN(t *testing.T) {
 		for b := 0; b < batchSize; b++ {
 			copy(stepData[b*inputDim:(b+1)*inputDim], inData[b*seqLen*inputDim+step*inputDim:b*seqLen*inputDim+step*inputDim+inputDim])
 		}
-		stepInput := makeTensor(t, stepData, []int{batchSize, inputDim})
+		stepInput := testutil.MakeTensor(t, stepData, []int{batchSize, inputDim})
 		stepOutput, err := rnn.Forward(context.Background(), stepInput)
 		if err != nil {
 			t.Fatalf("Forward step %d: %v", step, err)
@@ -1251,7 +1126,7 @@ func TestParity_SimpleRNN(t *testing.T) {
 
 	// Reshape outputs to [batch, seq, hidden] for comparison
 	// outputs is currently [seq * batch * hidden], need to rearrange to [batch * seq * hidden]
-	expected := getFloat32s(g, "expected_output")
+	expected := testutil.GetFloat32s(g, "expected_output")
 	reordered := make([]float32, len(outputs))
 	for b := 0; b < batchSize; b++ {
 		for s := 0; s < seqLen; s++ {
@@ -1260,7 +1135,7 @@ func TestParity_SimpleRNN(t *testing.T) {
 			}
 		}
 	}
-	assertClose(t, "simple_rnn_output", reordered, expected, tol)
+	testutil.AssertClose(t, "simple_rnn_output", reordered, expected, tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1268,13 +1143,13 @@ func TestParity_SimpleRNN(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_S4(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "ssm_s4")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "ssm_s4")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	inputDim := int(getFloat(g, "input_dim"))
-	stateDim := int(getFloat(g, "state_dim"))
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	inputDim := int(testutil.GetFloat(g, "input_dim"))
+	stateDim := int(testutil.GetFloat(g, "state_dim"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 
 	s4, err := ssm.NewS4[float32]("test_s4", engine, ops, inputDim, stateDim)
 	if err != nil {
@@ -1284,16 +1159,16 @@ func TestParity_S4(t *testing.T) {
 	// Set parameters from golden data
 	params := s4.Parameters()
 	// Parameters order: aLog, b, c, d
-	copy(params[0].Value.Data(), getFloat32s(g, "a_log"))
-	copy(params[1].Value.Data(), getFloat32s(g, "b"))
-	copy(params[2].Value.Data(), getFloat32s(g, "c"))
-	copy(params[3].Value.Data(), getFloat32s(g, "d"))
+	copy(params[0].Value.Data(), testutil.GetFloat32s(g, "a_log"))
+	copy(params[1].Value.Data(), testutil.GetFloat32s(g, "b"))
+	copy(params[2].Value.Data(), testutil.GetFloat32s(g, "c"))
+	copy(params[3].Value.Data(), testutil.GetFloat32s(g, "d"))
 
 	output, err := s4.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "s4_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "s4_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1301,17 +1176,17 @@ func TestParity_S4(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_MambaBlock(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "ssm_mamba")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "ssm_mamba")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	inputDim := int(getFloat(g, "input_dim"))
-	hiddenDim := int(getFloat(g, "hidden_dim"))
-	stateSize := int(getFloat(g, "state_size"))
-	convKernel := int(getFloat(g, "conv_kernel"))
+	inputDim := int(testutil.GetFloat(g, "input_dim"))
+	hiddenDim := int(testutil.GetFloat(g, "hidden_dim"))
+	stateSize := int(testutil.GetFloat(g, "state_size"))
+	convKernel := int(testutil.GetFloat(g, "conv_kernel"))
 	dtRank := 1 // golden file uses rank-1 dt projection
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 
 	block, err := ssm.NewMambaBlock[float32](
 		"test_mamba", engine, ops,
@@ -1335,10 +1210,10 @@ func TestParity_MambaBlock(t *testing.T) {
 		t.Fatalf("expected 8 params, got %d", len(params))
 	}
 
-	copy(params[0].Value.Data(), getFloat32s(g, "w_in"))
-	copy(params[1].Value.Data(), getFloat32s(g, "conv_weight"))
-	copy(params[2].Value.Data(), getFloat32s(g, "conv_bias"))
-	copy(params[3].Value.Data(), getFloat32s(g, "w_dt"))
+	copy(params[0].Value.Data(), testutil.GetFloat32s(g, "w_in"))
+	copy(params[1].Value.Data(), testutil.GetFloat32s(g, "conv_weight"))
+	copy(params[2].Value.Data(), testutil.GetFloat32s(g, "conv_bias"))
+	copy(params[3].Value.Data(), testutil.GetFloat32s(g, "w_dt"))
 
 	// dtProj: set to all-ones to replicate PyTorch's broadcasting behavior
 	// (golden file uses rank-1 dt without a separate dt->dInner projection)
@@ -1347,7 +1222,7 @@ func TestParity_MambaBlock(t *testing.T) {
 		dtProjData[i] = 1.0
 	}
 
-	copy(params[5].Value.Data(), getFloat32s(g, "A_log"))
+	copy(params[5].Value.Data(), testutil.GetFloat32s(g, "A_log"))
 
 	// D: set to zeros (golden file doesn't use skip connection)
 	dData := params[6].Value.Data()
@@ -1355,13 +1230,13 @@ func TestParity_MambaBlock(t *testing.T) {
 		dData[i] = 0.0
 	}
 
-	copy(params[7].Value.Data(), getFloat32s(g, "w_out"))
+	copy(params[7].Value.Data(), testutil.GetFloat32s(g, "w_out"))
 
 	output, err := block.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "mamba_block_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "mamba_block_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1378,17 +1253,17 @@ func TestParity_TransformerBlock(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_FastGelu(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "activation_fast_gelu")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_fast_gelu")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	fg := activations.NewFastGelu[float32](engine)
 	output, err := fg.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "fast_gelu_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "fast_gelu_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1396,13 +1271,13 @@ func TestParity_FastGelu(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_SimplifiedLayerNorm(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "norm_simplified_layer_norm")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "norm_simplified_layer_norm")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	gain := makeTensor(t, getFloat32s(g, "gain"), getInts(g, "gain_shape"))
-	eps := float32(getFloat(g, "epsilon"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	gain := testutil.MakeTensor(t, testutil.GetFloat32s(g, "gain"), testutil.GetInts(g, "gain_shape"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
 
 	sln, err := normalization.NewSimplifiedLayerNormalization[float32](engine, ops, gain, eps)
 	if err != nil {
@@ -1412,7 +1287,7 @@ func TestParity_SimplifiedLayerNorm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "simplified_layer_norm_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "simplified_layer_norm_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1420,13 +1295,13 @@ func TestParity_SimplifiedLayerNorm(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_SkipSimplifiedLayerNorm(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "norm_skip_simplified_layer_norm")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "norm_skip_simplified_layer_norm")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	gain := makeTensor(t, getFloat32s(g, "gain"), getInts(g, "gain_shape"))
-	eps := float32(getFloat(g, "epsilon"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	gain := testutil.MakeTensor(t, testutil.GetFloat32s(g, "gain"), testutil.GetInts(g, "gain_shape"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
 
 	ssln, err := normalization.NewSkipSimplifiedLayerNormalization[float32](engine, ops, gain, eps)
 	if err != nil {
@@ -1436,7 +1311,7 @@ func TestParity_SkipSimplifiedLayerNorm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "skip_simplified_layer_norm_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "skip_simplified_layer_norm_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1444,13 +1319,13 @@ func TestParity_SkipSimplifiedLayerNorm(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_LMHead(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "core_lm_head")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_lm_head")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	hiddenDim := int(getFloat(g, "hidden_dim"))
-	vocabSize := int(getFloat(g, "vocab_size"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	hiddenDim := int(testutil.GetFloat(g, "hidden_dim"))
+	vocabSize := int(testutil.GetFloat(g, "vocab_size"))
 
 	lmHead, err := core.NewLMHead[float32](engine, ops, hiddenDim, vocabSize)
 	if err != nil {
@@ -1462,13 +1337,13 @@ func TestParity_LMHead(t *testing.T) {
 	if len(params) < 1 {
 		t.Fatalf("expected at least 1 parameter, got %d", len(params))
 	}
-	copy(params[0].Value.Data(), getFloat32s(g, "weight"))
+	copy(params[0].Value.Data(), testutil.GetFloat32s(g, "weight"))
 
 	output, err := lmHead.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "lm_head_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "lm_head_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1476,13 +1351,13 @@ func TestParity_LMHead(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_PatchEmbed(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "timeseries_patch_embed")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "timeseries_patch_embed")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	patchSize := int(getFloat(g, "patch_size"))
-	embedDim := int(getFloat(g, "embed_dim"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	patchSize := int(testutil.GetFloat(g, "patch_size"))
+	embedDim := int(testutil.GetFloat(g, "embed_dim"))
 
 	pe, err := timeseries.NewPatchEmbed[float32]("test_patch_embed", engine, ops, patchSize, embedDim)
 	if err != nil {
@@ -1494,13 +1369,13 @@ func TestParity_PatchEmbed(t *testing.T) {
 	if len(params) < 1 {
 		t.Fatalf("expected at least 1 parameter, got %d", len(params))
 	}
-	copy(params[0].Value.Data(), getFloat32s(g, "proj"))
+	copy(params[0].Value.Data(), testutil.GetFloat32s(g, "proj"))
 
 	output, err := pe.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "patch_embed_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "patch_embed_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1508,13 +1383,13 @@ func TestParity_PatchEmbed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_TSMixerBlock(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "timeseries_tsmixer_block")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "timeseries_tsmixer_block")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	numPatches := int(getFloat(g, "num_patches"))
-	dModel := int(getFloat(g, "d_model"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	numPatches := int(testutil.GetFloat(g, "num_patches"))
+	dModel := int(testutil.GetFloat(g, "d_model"))
 
 	block, err := timeseries.NewTSMixerBlock[float32](engine, ops, numPatches, dModel, 1, false)
 	if err != nil {
@@ -1528,16 +1403,16 @@ func TestParity_TSMixerBlock(t *testing.T) {
 		t.Fatalf("expected at least 4 parameters, got %d", len(params))
 	}
 
-	copy(params[0].Value.Data(), getFloat32s(g, "time_mlp1_w"))
-	copy(params[1].Value.Data(), getFloat32s(g, "time_mlp2_w"))
-	copy(params[2].Value.Data(), getFloat32s(g, "time_ln_gamma"))
-	copy(params[3].Value.Data(), getFloat32s(g, "time_ln_beta"))
+	copy(params[0].Value.Data(), testutil.GetFloat32s(g, "time_mlp1_w"))
+	copy(params[1].Value.Data(), testutil.GetFloat32s(g, "time_mlp2_w"))
+	copy(params[2].Value.Data(), testutil.GetFloat32s(g, "time_ln_gamma"))
+	copy(params[3].Value.Data(), testutil.GetFloat32s(g, "time_ln_beta"))
 
 	output, err := block.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "tsmixer_block_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "tsmixer_block_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1545,14 +1420,14 @@ func TestParity_TSMixerBlock(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_SSMLayer(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "timeseries_ssm_layer")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "timeseries_ssm_layer")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	dState := int(getFloat(g, "d_state"))
-	dInput := int(getFloat(g, "d_input"))
-	dOutput := int(getFloat(g, "d_output"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	dState := int(testutil.GetFloat(g, "d_state"))
+	dInput := int(testutil.GetFloat(g, "d_input"))
+	dOutput := int(testutil.GetFloat(g, "d_output"))
 
 	ssmLayer, err := timeseries.NewSSMLayer[float32](engine, dState, dInput, dOutput)
 	if err != nil {
@@ -1565,17 +1440,17 @@ func TestParity_SSMLayer(t *testing.T) {
 	if len(params) < 5 {
 		t.Fatalf("expected at least 5 parameters, got %d", len(params))
 	}
-	copy(params[0].Value.Data(), getFloat32s(g, "A_log"))
-	copy(params[1].Value.Data(), getFloat32s(g, "B"))
-	copy(params[2].Value.Data(), getFloat32s(g, "C"))
-	copy(params[3].Value.Data(), getFloat32s(g, "D"))
-	copy(params[4].Value.Data(), getFloat32s(g, "log_dt"))
+	copy(params[0].Value.Data(), testutil.GetFloat32s(g, "A_log"))
+	copy(params[1].Value.Data(), testutil.GetFloat32s(g, "B"))
+	copy(params[2].Value.Data(), testutil.GetFloat32s(g, "C"))
+	copy(params[3].Value.Data(), testutil.GetFloat32s(g, "D"))
+	copy(params[4].Value.Data(), testutil.GetFloat32s(g, "log_dt"))
 
 	output, err := ssmLayer.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "ssm_layer_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "ssm_layer_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1583,112 +1458,112 @@ func TestParity_SSMLayer(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_Op_Add(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_add")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_add")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	a := makeTensor(t, getFloat32s(g, "input_a"), getInts(g, "input_shape"))
-	b := makeTensor(t, getFloat32s(g, "input_b"), getInts(g, "input_shape"))
+	a := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_a"), testutil.GetInts(g, "input_shape"))
+	b := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_b"), testutil.GetInts(g, "input_shape"))
 	output, err := engine.Add(context.Background(), a, b)
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	assertClose(t, "op_add", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_add", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Op_Sub(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_sub")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_sub")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	a := makeTensor(t, getFloat32s(g, "input_a"), getInts(g, "input_shape"))
-	b := makeTensor(t, getFloat32s(g, "input_b"), getInts(g, "input_shape"))
+	a := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_a"), testutil.GetInts(g, "input_shape"))
+	b := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_b"), testutil.GetInts(g, "input_shape"))
 	output, err := engine.Sub(context.Background(), a, b)
 	if err != nil {
 		t.Fatalf("Sub: %v", err)
 	}
-	assertClose(t, "op_sub", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_sub", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Op_Mul(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_mul")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_mul")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	a := makeTensor(t, getFloat32s(g, "input_a"), getInts(g, "input_shape"))
-	b := makeTensor(t, getFloat32s(g, "input_b"), getInts(g, "input_shape"))
+	a := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_a"), testutil.GetInts(g, "input_shape"))
+	b := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_b"), testutil.GetInts(g, "input_shape"))
 	output, err := engine.Mul(context.Background(), a, b)
 	if err != nil {
 		t.Fatalf("Mul: %v", err)
 	}
-	assertClose(t, "op_mul", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_mul", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Op_Div(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_div")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_div")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	a := makeTensor(t, getFloat32s(g, "input_a"), getInts(g, "input_shape"))
-	b := makeTensor(t, getFloat32s(g, "input_b"), getInts(g, "input_shape"))
+	a := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_a"), testutil.GetInts(g, "input_shape"))
+	b := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_b"), testutil.GetInts(g, "input_shape"))
 	output, err := engine.Div(context.Background(), a, b)
 	if err != nil {
 		t.Fatalf("Div: %v", err)
 	}
-	assertClose(t, "op_div", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_div", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Op_Pow(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_pow")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_pow")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	a := makeTensor(t, getFloat32s(g, "input_a"), getInts(g, "input_shape"))
-	b := makeTensor(t, getFloat32s(g, "input_b"), getInts(g, "input_shape"))
+	a := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_a"), testutil.GetInts(g, "input_shape"))
+	b := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_b"), testutil.GetInts(g, "input_shape"))
 	output, err := engine.Pow(context.Background(), a, b)
 	if err != nil {
 		t.Fatalf("Pow: %v", err)
 	}
-	assertClose(t, "op_pow", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_pow", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Op_Sqrt(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_sqrt")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_sqrt")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	output, err := engine.Sqrt(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Sqrt: %v", err)
 	}
-	assertClose(t, "op_sqrt", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_sqrt", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Op_Sin(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_sin")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_sin")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	output, err := engine.Sin(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Sin: %v", err)
 	}
-	assertClose(t, "op_sin", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_sin", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Op_Cos(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_cos")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_cos")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	output, err := engine.Cos(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Cos: %v", err)
 	}
-	assertClose(t, "op_cos", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_cos", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1696,32 +1571,32 @@ func TestParity_Op_Cos(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_Op_Reshape(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_reshape")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_reshape")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	targetShape := getInts(g, "target_shape")
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	targetShape := testutil.GetInts(g, "target_shape")
 	output, err := engine.Reshape(context.Background(), input, targetShape)
 	if err != nil {
 		t.Fatalf("Reshape: %v", err)
 	}
-	assertClose(t, "op_reshape", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_reshape", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 func TestParity_Op_Concat(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "op_concat")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "op_concat")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	a := makeTensor(t, getFloat32s(g, "input_a"), getInts(g, "input_a_shape"))
-	b := makeTensor(t, getFloat32s(g, "input_b"), getInts(g, "input_b_shape"))
-	axis := int(getFloat(g, "axis"))
+	a := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_a"), testutil.GetInts(g, "input_a_shape"))
+	b := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_b"), testutil.GetInts(g, "input_b_shape"))
+	axis := int(testutil.GetFloat(g, "axis"))
 	output, err := engine.Concat(context.Background(), []*tensor.TensorNumeric[float32]{a, b}, axis)
 	if err != nil {
 		t.Fatalf("Concat: %v", err)
 	}
-	assertClose(t, "op_concat", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "op_concat", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1738,13 +1613,13 @@ func TestParity_AttnRes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_BlockAttnRes(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "residual_block_attn_res")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "residual_block_attn_res")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	dim := int(getFloat(g, "dim"))
-	blockSize := int(getFloat(g, "block_size"))
-	eps := float32(getFloat(g, "epsilon"))
+	dim := int(testutil.GetFloat(g, "dim"))
+	blockSize := int(testutil.GetFloat(g, "block_size"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
 
 	bar, err := residual.NewBlockAttnRes[float32](engine, ops, blockSize, dim, eps)
 	if err != nil {
@@ -1754,10 +1629,10 @@ func TestParity_BlockAttnRes(t *testing.T) {
 	// RMSNorm gain is ones by default — matches Python golden data.
 	// No need to set weights since the constructor already initializes to ones.
 
-	query := makeTensor(t, getFloat32s(g, "query"), getInts(g, "query_shape"))
-	block0 := makeTensor(t, getFloat32s(g, "block0"), getInts(g, "block0_shape"))
-	block1 := makeTensor(t, getFloat32s(g, "block1"), getInts(g, "block1_shape"))
-	partialBlock := makeTensor(t, getFloat32s(g, "partial_block"), getInts(g, "partial_block_shape"))
+	query := testutil.MakeTensor(t, testutil.GetFloat32s(g, "query"), testutil.GetInts(g, "query_shape"))
+	block0 := testutil.MakeTensor(t, testutil.GetFloat32s(g, "block0"), testutil.GetInts(g, "block0_shape"))
+	block1 := testutil.MakeTensor(t, testutil.GetFloat32s(g, "block1"), testutil.GetInts(g, "block1_shape"))
+	partialBlock := testutil.MakeTensor(t, testutil.GetFloat32s(g, "partial_block"), testutil.GetInts(g, "partial_block_shape"))
 
 	blocks := []*tensor.TensorNumeric[float32]{block0, block1}
 
@@ -1766,7 +1641,7 @@ func TestParity_BlockAttnRes(t *testing.T) {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	expectedShape := getInts(g, "output_shape")
+	expectedShape := testutil.GetInts(g, "output_shape")
 	if s := output.Shape(); len(s) != len(expectedShape) {
 		t.Fatalf("output shape: got %v, want %v", s, expectedShape)
 	}
@@ -1776,14 +1651,14 @@ func TestParity_BlockAttnRes(t *testing.T) {
 		}
 	}
 
-	assertClose(t, "block_attn_res_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "block_attn_res_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 
 	// Also verify attention weights sum to 1.
 	alpha, err := bar.AttentionWeights(context.Background(), query, blocks, partialBlock)
 	if err != nil {
 		t.Fatalf("AttentionWeights: %v", err)
 	}
-	assertClose(t, "block_attn_res_alpha", alpha.Data(), getFloat32s(g, "alpha"), tol)
+	testutil.AssertClose(t, "block_attn_res_alpha", alpha.Data(), testutil.GetFloat32s(g, "alpha"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -1793,161 +1668,161 @@ func TestParity_BlockAttnRes(t *testing.T) {
 // T86.2.1: Activation backward tests
 
 func TestParity_ReLU_Backward(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_relu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_relu")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	relu := activations.NewReLU(engine, ops)
 	if _, err := relu.Forward(ctx, input); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := relu.Backward(ctx, types.FullBackprop, gradOutput, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "relu_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+	testutil.AssertClose(t, "relu_grad_input", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_input"), tol)
 }
 
 func TestParity_GELU_Backward(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_gelu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_gelu")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	gelu := activations.NewGelu(engine, ops)
 	if _, err := gelu.Forward(ctx, input); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := gelu.Backward(ctx, types.FullBackprop, gradOutput, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "gelu_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+	testutil.AssertClose(t, "gelu_grad_input", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_input"), tol)
 }
 
 func TestParity_Sigmoid_Backward(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_sigmoid")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_sigmoid")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	sigmoid := activations.NewSigmoid(engine, ops)
 	if _, err := sigmoid.Forward(ctx, input); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := sigmoid.Backward(ctx, types.FullBackprop, gradOutput, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "sigmoid_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+	testutil.AssertClose(t, "sigmoid_grad_input", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_input"), tol)
 }
 
 func TestParity_Tanh_Backward(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_tanh")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_tanh")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	tanh := activations.NewTanh(engine, ops)
 	if _, err := tanh.Forward(ctx, input); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := tanh.Backward(ctx, types.FullBackprop, gradOutput, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "tanh_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+	testutil.AssertClose(t, "tanh_grad_input", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_input"), tol)
 }
 
 func TestParity_LeakyReLU_Backward(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_leaky_relu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_leaky_relu")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	alpha := getFloat(g, "alpha")
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	alpha := testutil.GetFloat(g, "alpha")
 	lrelu := activations.NewLeakyReLU(engine, ops, activations.WithAlpha[float32](alpha))
 	if _, err := lrelu.Forward(ctx, input); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := lrelu.Backward(ctx, types.FullBackprop, gradOutput, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "leaky_relu_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+	testutil.AssertClose(t, "leaky_relu_grad_input", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_input"), tol)
 }
 
 func TestParity_SwiGLU_Backward(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "activation_swiglu")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "activation_swiglu")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 	swiglu := activations.NewSwiGLU[float32](engine, ops)
 	if _, err := swiglu.Forward(ctx, input); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := swiglu.Backward(ctx, types.FullBackprop, gradOutput, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "swiglu_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+	testutil.AssertClose(t, "swiglu_grad_input", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_input"), tol)
 }
 
 // T86.2.2: Normalization backward tests
 
 func TestParity_LayerNorm_Backward(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "norm_layer_norm")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "norm_layer_norm")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	eps := float32(getFloat(g, "epsilon"))
-	gammaParam := makeParam(t, "gamma", getFloat32s(g, "gamma"), getInts(g, "gamma_shape"))
-	betaParam := makeParam(t, "beta", getFloat32s(g, "beta"), getInts(g, "beta_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
+	gammaParam := testutil.MakeParam(t, "gamma", testutil.GetFloat32s(g, "gamma"), testutil.GetInts(g, "gamma_shape"))
+	betaParam := testutil.MakeParam(t, "beta", testutil.GetFloat32s(g, "beta"), testutil.GetInts(g, "beta_shape"))
 
 	ln := normalization.NewLayerNormalizationFromParams(engine, eps, gammaParam, betaParam)
 	if _, err := ln.Forward(ctx, input); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := ln.Backward(ctx, types.FullBackprop, gradOutput, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "layer_norm_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+	testutil.AssertClose(t, "layer_norm_grad_input", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_input"), tol)
 }
 
 func TestParity_RMSNorm_Backward(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "norm_rms_norm")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "norm_rms_norm")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	eps := float32(getFloat(g, "epsilon"))
-	gainParam := makeParam(t, "gain", getFloat32s(g, "gain"), getInts(g, "gain_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	eps := float32(testutil.GetFloat(g, "epsilon"))
+	gainParam := testutil.MakeParam(t, "gain", testutil.GetFloat32s(g, "gain"), testutil.GetInts(g, "gain_shape"))
 
 	rms, err := normalization.NewRMSNormFromParam(engine, ops, eps, gainParam)
 	if err != nil {
@@ -1957,75 +1832,75 @@ func TestParity_RMSNorm_Backward(t *testing.T) {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := rms.Backward(ctx, types.FullBackprop, gradOutput, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "rms_norm_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+	testutil.AssertClose(t, "rms_norm_grad_input", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_input"), tol)
 }
 
 // T86.2.3: Core backward tests
 
 func TestParity_Linear_Backward(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "core_linear")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_linear")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	weightParam := makeParam(t, "weight", getFloat32s(g, "weight"), getInts(g, "weight_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	weightParam := testutil.MakeParam(t, "weight", testutil.GetFloat32s(g, "weight"), testutil.GetInts(g, "weight_shape"))
 
 	linear := core.NewLinearFromParam(engine, weightParam)
 	if _, err := linear.Forward(ctx, input); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := linear.Backward(ctx, types.FullBackprop, gradOutput, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "linear_grad_input", grads[0].Data(), getFloat32s(g, "expected_grad_input"), tol)
+	testutil.AssertClose(t, "linear_grad_input", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_input"), tol)
 
 	// Check weight gradient was accumulated into the parameter
 	params := linear.Parameters()
-	assertClose(t, "linear_grad_weight", params[0].Gradient.Data(), getFloat32s(g, "expected_grad_weight"), tol)
+	testutil.AssertClose(t, "linear_grad_weight", params[0].Gradient.Data(), testutil.GetFloat32s(g, "expected_grad_weight"), tol)
 }
 
 func TestParity_MatMul_Backward(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "core_matmul")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_matmul")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	a := makeTensor(t, getFloat32s(g, "input_a"), getInts(g, "input_a_shape"))
-	b := makeTensor(t, getFloat32s(g, "input_b"), getInts(g, "input_b_shape"))
+	a := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_a"), testutil.GetInts(g, "input_a_shape"))
+	b := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input_b"), testutil.GetInts(g, "input_b_shape"))
 
 	mm := core.NewMatMul[float32](engine)
 	if _, err := mm.Forward(ctx, a, b); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	gradOutput := makeTensor(t, getFloat32s(g, "grad_output"), getInts(g, "output_shape"))
+	gradOutput := testutil.MakeTensor(t, testutil.GetFloat32s(g, "grad_output"), testutil.GetInts(g, "output_shape"))
 	grads, err := mm.Backward(ctx, types.FullBackprop, gradOutput, a, b)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "matmul_grad_a", grads[0].Data(), getFloat32s(g, "expected_grad_a"), tol)
-	assertClose(t, "matmul_grad_b", grads[1].Data(), getFloat32s(g, "expected_grad_b"), tol)
+	testutil.AssertClose(t, "matmul_grad_a", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad_a"), tol)
+	testutil.AssertClose(t, "matmul_grad_b", grads[1].Data(), testutil.GetFloat32s(g, "expected_grad_b"), tol)
 }
 
 // T86.2.4: Loss backward tests
 
 func TestParity_MSELoss_Backward(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "loss_mse")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "loss_mse")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	pred := makeTensor(t, getFloat32s(g, "predictions"), getInts(g, "predictions_shape"))
-	target := makeTensor(t, getFloat32s(g, "targets"), getInts(g, "targets_shape"))
+	pred := testutil.MakeTensor(t, testutil.GetFloat32s(g, "predictions"), testutil.GetInts(g, "predictions_shape"))
+	target := testutil.MakeTensor(t, testutil.GetFloat32s(g, "targets"), testutil.GetInts(g, "targets_shape"))
 
 	mse := loss.NewMSE(engine, ops)
 	if _, err := mse.Forward(ctx, pred, target); err != nil {
@@ -2033,68 +1908,68 @@ func TestParity_MSELoss_Backward(t *testing.T) {
 	}
 
 	// For loss backward, dOut is typically ones (scalar 1.0)
-	dOut := makeTensor(t, []float32{1.0}, []int{1})
+	dOut := testutil.MakeTensor(t, []float32{1.0}, []int{1})
 	grads, err := mse.Backward(ctx, types.FullBackprop, dOut, pred, target)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "mse_grad", grads[0].Data(), getFloat32s(g, "expected_grad"), tol)
+	testutil.AssertClose(t, "mse_grad", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad"), tol)
 }
 
 func TestParity_BCELoss_Backward(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "loss_bce")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "loss_bce")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	pred := makeTensor(t, getFloat32s(g, "predictions"), getInts(g, "predictions_shape"))
-	target := makeTensor(t, getFloat32s(g, "targets"), getInts(g, "targets_shape"))
+	pred := testutil.MakeTensor(t, testutil.GetFloat32s(g, "predictions"), testutil.GetInts(g, "predictions_shape"))
+	target := testutil.MakeTensor(t, testutil.GetFloat32s(g, "targets"), testutil.GetInts(g, "targets_shape"))
 
 	bce := loss.NewBCELoss(engine, ops)
 	if _, err := bce.Forward(ctx, pred, target); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	dOut := makeTensor(t, []float32{1.0}, []int{1})
+	dOut := testutil.MakeTensor(t, []float32{1.0}, []int{1})
 	grads, err := bce.Backward(ctx, types.FullBackprop, dOut, pred, target)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "bce_grad", grads[0].Data(), getFloat32s(g, "expected_grad"), tol)
+	testutil.AssertClose(t, "bce_grad", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad"), tol)
 }
 
 func TestParity_CrossEntropyLoss_Backward(t *testing.T) {
-	engine, _ := setup()
-	g := loadGolden(t, "loss_cross_entropy")
-	tol := getFloat(g, "tolerance")
+	engine, _ := testutil.Setup()
+	g := testutil.LoadGolden(t, "loss_cross_entropy")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	logits := makeTensor(t, getFloat32s(g, "logits"), getInts(g, "logits_shape"))
+	logits := testutil.MakeTensor(t, testutil.GetFloat32s(g, "logits"), testutil.GetInts(g, "logits_shape"))
 	targetsRaw := g["targets"].([]interface{})
 	targetData := make([]float32, len(targetsRaw))
 	for i, v := range targetsRaw {
 		targetData[i] = float32(v.(float64))
 	}
-	targets := makeTensor(t, targetData, []int{len(targetData)})
+	targets := testutil.MakeTensor(t, targetData, []int{len(targetData)})
 
 	cel := loss.NewCrossEntropyLoss[float32](engine)
 	if _, err := cel.Forward(ctx, logits, targets); err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	dOut := makeTensor(t, []float32{1.0}, []int{1})
+	dOut := testutil.MakeTensor(t, []float32{1.0}, []int{1})
 	grads, err := cel.Backward(ctx, types.FullBackprop, dOut)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
-	assertClose(t, "cross_entropy_grad", grads[0].Data(), getFloat32s(g, "expected_grad"), tol)
+	testutil.AssertClose(t, "cross_entropy_grad", grads[0].Data(), testutil.GetFloat32s(g, "expected_grad"), tol)
 }
 
 // T86.2.5: SSM backward test
 
 func TestParity_S4_Backward(t *testing.T) {
-	g := loadGolden(t, "ssm_s4")
-	if getFloat32s(g, "grad_output") == nil {
+	g := testutil.LoadGolden(t, "ssm_s4")
+	if testutil.GetFloat32s(g, "grad_output") == nil {
 		t.Skip("no backward golden data for S4")
 	}
 }
@@ -2102,8 +1977,8 @@ func TestParity_S4_Backward(t *testing.T) {
 // T86.2.6: Attention backward test
 
 func TestParity_SDPA_Backward(t *testing.T) {
-	g := loadGolden(t, "attention_sdpa_causal")
-	if getFloat32s(g, "grad_output") == nil {
+	g := testutil.LoadGolden(t, "attention_sdpa_causal")
+	if testutil.GetFloat32s(g, "grad_output") == nil {
 		t.Skip("no backward golden data for SDPA")
 	}
 }
@@ -2113,16 +1988,16 @@ func TestParity_SDPA_Backward(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_GQA(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "attention_gqa")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "attention_gqa")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	dModel := int(getFloat(g, "d_model"))
-	nQHeads := int(getFloat(g, "n_q_heads"))
-	nKVHeads := int(getFloat(g, "n_kv_heads"))
+	dModel := int(testutil.GetFloat(g, "d_model"))
+	nQHeads := int(testutil.GetFloat(g, "n_q_heads"))
+	nKVHeads := int(testutil.GetFloat(g, "n_kv_heads"))
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 
 	gqa, err := attention.NewGroupedQueryAttention(engine, ops, dModel, nQHeads, nKVHeads,
 		attention.WithNoRoPE[float32]())
@@ -2135,20 +2010,20 @@ func TestParity_GQA(t *testing.T) {
 	if len(params) < 8 {
 		t.Fatalf("expected 8 params, got %d", len(params))
 	}
-	copy(params[0].Value.Data(), getFloat32s(g, "wq_w"))
-	copy(params[1].Value.Data(), getFloat32s(g, "wq_b"))
-	copy(params[2].Value.Data(), getFloat32s(g, "wk_w"))
-	copy(params[3].Value.Data(), getFloat32s(g, "wk_b"))
-	copy(params[4].Value.Data(), getFloat32s(g, "wv_w"))
-	copy(params[5].Value.Data(), getFloat32s(g, "wv_b"))
-	copy(params[6].Value.Data(), getFloat32s(g, "wo_w"))
-	copy(params[7].Value.Data(), getFloat32s(g, "wo_b"))
+	copy(params[0].Value.Data(), testutil.GetFloat32s(g, "wq_w"))
+	copy(params[1].Value.Data(), testutil.GetFloat32s(g, "wq_b"))
+	copy(params[2].Value.Data(), testutil.GetFloat32s(g, "wk_w"))
+	copy(params[3].Value.Data(), testutil.GetFloat32s(g, "wk_b"))
+	copy(params[4].Value.Data(), testutil.GetFloat32s(g, "wv_w"))
+	copy(params[5].Value.Data(), testutil.GetFloat32s(g, "wv_b"))
+	copy(params[6].Value.Data(), testutil.GetFloat32s(g, "wo_w"))
+	copy(params[7].Value.Data(), testutil.GetFloat32s(g, "wo_b"))
 
 	output, err := gqa.Forward(ctx, input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "gqa_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "gqa_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -2156,19 +2031,19 @@ func TestParity_GQA(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_MoE(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "core_moe")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "core_moe")
+	tol := testutil.GetFloat(g, "tolerance")
 	ctx := context.Background()
 
-	nExperts := int(getFloat(g, "n_experts"))
-	topK := int(getFloat(g, "top_k"))
+	nExperts := int(testutil.GetFloat(g, "n_experts"))
+	topK := int(testutil.GetFloat(g, "top_k"))
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
-	gateWeight := makeTensor(t, getFloat32s(g, "gate_weight"), getInts(g, "gate_weight_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
+	gateWeight := testutil.MakeTensor(t, testutil.GetFloat32s(g, "gate_weight"), testutil.GetInts(g, "gate_weight_shape"))
 
 	expertWeightsRaw := g["expert_weights"].([]interface{})
-	expertShape := getInts(g, "expert_weight_shape")
+	expertShape := testutil.GetInts(g, "expert_weight_shape")
 	experts := make([]graph.Node[float32], nExperts)
 	for i := 0; i < nExperts; i++ {
 		ewArr := expertWeightsRaw[i].([]interface{})
@@ -2176,7 +2051,7 @@ func TestParity_MoE(t *testing.T) {
 		for j, v := range ewArr {
 			ewData[j] = float32(v.(float64))
 		}
-		p := makeParam(t, fmt.Sprintf("expert_%d", i), ewData, expertShape)
+		p := testutil.MakeParam(t, fmt.Sprintf("expert_%d", i), ewData, expertShape)
 		experts[i] = core.NewLinearFromParam(engine, p)
 	}
 
@@ -2187,7 +2062,7 @@ func TestParity_MoE(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "moe_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "moe_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -2195,7 +2070,7 @@ func TestParity_MoE(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_TabNet_Structural(t *testing.T) {
-	engine, _ := setup()
+	engine, _ := testutil.Setup()
 	ops := numeric.Float32Ops{}
 	cfg := tabular.TabNetConfig{
 		InputDim: 8, OutputDim: 3, NSteps: 3,
@@ -2209,7 +2084,7 @@ func TestParity_TabNet_Structural(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i+1) * 0.1
 	}
-	output, err := model.Forward(context.Background(), makeTensor(t, inputData, []int{4, cfg.InputDim}))
+	output, err := model.Forward(context.Background(), testutil.MakeTensor(t, inputData, []int{4, cfg.InputDim}))
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
@@ -2328,7 +2203,7 @@ func TestParity_MarketVAE_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_AttentionHead_Structural(t *testing.T) {
-	engine, _ := setup()
+	engine, _ := testutil.Setup()
 	inputDim := 8
 	headDim := 4
 	batchSize := 2
@@ -2343,7 +2218,7 @@ func TestParity_AttentionHead_Structural(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i+1) * 0.01
 	}
-	input := makeTensor(t, inputData, []int{batchSize, seqLen, inputDim})
+	input := testutil.MakeTensor(t, inputData, []int{batchSize, seqLen, inputDim})
 
 	output, err := head.Forward(context.Background(), input)
 	if err != nil {
@@ -2386,7 +2261,7 @@ func TestParity_GQA_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_MIMOMambaBlock_Structural(t *testing.T) {
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 	dModel := 8
 	dInner := 8 // must be divisible by numHeads
 	dState := 4
@@ -2408,7 +2283,7 @@ func TestParity_MIMOMambaBlock_Structural(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i+1) * 0.01
 	}
-	input := makeTensor(t, inputData, []int{batchSize, seqLen, dModel})
+	input := testutil.MakeTensor(t, inputData, []int{batchSize, seqLen, dModel})
 
 	output, err := block.Forward(context.Background(), input)
 	if err != nil {
@@ -2446,7 +2321,7 @@ func TestParity_MIMOMambaBlock_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_AttnRes_Structural(t *testing.T) {
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 	modelDim := 8
 	numLayers := 3
 
@@ -2462,7 +2337,7 @@ func TestParity_AttnRes_Structural(t *testing.T) {
 		for j := range data {
 			data[j] = float32(i*modelDim+j+1) * 0.1
 		}
-		inputs[i] = makeTensor(t, data, []int{1, modelDim})
+		inputs[i] = testutil.MakeTensor(t, data, []int{1, modelDim})
 	}
 
 	output, err := ar.Forward(context.Background(), inputs...)
@@ -2486,7 +2361,7 @@ func TestParity_AttnRes_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_HModule_Structural(t *testing.T) {
-	engine, _ := setup()
+	engine, _ := testutil.Setup()
 	ops := &numeric.Float32Ops{}
 	modelDim := 8
 	ffnDim := 16
@@ -2509,7 +2384,7 @@ func TestParity_HModule_Structural(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i+1) * 0.01
 	}
-	input := makeTensor(t, inputData, []int{batchSize, seqLen, modelDim})
+	input := testutil.MakeTensor(t, inputData, []int{batchSize, seqLen, modelDim})
 
 	output, err := hmod.Forward(context.Background(), input)
 	if err != nil {
@@ -2547,7 +2422,7 @@ func TestParity_HModule_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_MLSTM_Structural(t *testing.T) {
-	engine, _ := setup()
+	engine, _ := testutil.Setup()
 	inputDim := 4
 	hiddenDim := 3
 	batch := 2
@@ -2562,11 +2437,11 @@ func TestParity_MLSTM_Structural(t *testing.T) {
 	for i := range xData {
 		xData[i] = float32(i+1) * 0.1
 	}
-	x := makeTensor(t, xData, []int{batch, inputDim})
+	x := testutil.MakeTensor(t, xData, []int{batch, inputDim})
 
-	hPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
-	cPrev := makeTensor(t, make([]float32, batch*hiddenDim*hiddenDim), []int{batch, hiddenDim, hiddenDim})
-	nPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+	hPrev := testutil.MakeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+	cPrev := testutil.MakeTensor(t, make([]float32, batch*hiddenDim*hiddenDim), []int{batch, hiddenDim, hiddenDim})
+	nPrev := testutil.MakeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
 
 	h, c, n, m, err := mlstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
@@ -2602,7 +2477,7 @@ func TestParity_MLSTM_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_SLSTM_Structural(t *testing.T) {
-	engine, _ := setup()
+	engine, _ := testutil.Setup()
 	inputDim := 4
 	hiddenDim := 3
 	batch := 2
@@ -2617,11 +2492,11 @@ func TestParity_SLSTM_Structural(t *testing.T) {
 	for i := range xData {
 		xData[i] = float32(i+1) * 0.1
 	}
-	x := makeTensor(t, xData, []int{batch, inputDim})
+	x := testutil.MakeTensor(t, xData, []int{batch, inputDim})
 
-	hPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
-	cPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
-	nPrev := makeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+	hPrev := testutil.MakeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+	cPrev := testutil.MakeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
+	nPrev := testutil.MakeTensor(t, make([]float32, batch*hiddenDim), []int{batch, hiddenDim})
 
 	h, c, n, m, err := slstm.Forward(context.Background(), x, hPrev, cPrev, nPrev, nil)
 	if err != nil {
@@ -2650,7 +2525,7 @@ func TestParity_SLSTM_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_CLIPEncoder_Structural(t *testing.T) {
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 	cfg := vision.CLIPEncoderConfig{
 		ImageSize:   16,
 		PatchSize:   4,
@@ -2672,7 +2547,7 @@ func TestParity_CLIPEncoder_Structural(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i%256) / 255.0
 	}
-	input := makeTensor(t, inputData, []int{batch, cfg.NumChannels, cfg.ImageSize, cfg.ImageSize})
+	input := testutil.MakeTensor(t, inputData, []int{batch, cfg.NumChannels, cfg.ImageSize, cfg.ImageSize})
 
 	output, err := enc.Forward(context.Background(), input)
 	if err != nil {
@@ -2737,7 +2612,7 @@ func TestParity_MelExtractor_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_WhisperEncoder_Structural(t *testing.T) {
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 	cfg := audio.WhisperEncoderConfig{
 		NumMels:    8,
 		HiddenDim:  16,
@@ -2758,7 +2633,7 @@ func TestParity_WhisperEncoder_Structural(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i+1) * 0.01
 	}
-	input := makeTensor(t, inputData, []int{batch, cfg.NumMels, frames})
+	input := testutil.MakeTensor(t, inputData, []int{batch, cfg.NumMels, frames})
 
 	output, err := enc.Forward(context.Background(), input)
 	if err != nil {
@@ -2794,7 +2669,7 @@ func TestParity_ComparisonOps(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_TransformerBlock_Structural(t *testing.T) {
-	engine, _ := setup()
+	engine, _ := testutil.Setup()
 	ops := &numeric.Float32Ops{}
 	modelDim := 8
 	ffnDim := 16
@@ -2817,7 +2692,7 @@ func TestParity_TransformerBlock_Structural(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i+1) * 0.01
 	}
-	input := makeTensor(t, inputData, []int{batchSize, seqLen, modelDim})
+	input := testutil.MakeTensor(t, inputData, []int{batchSize, seqLen, modelDim})
 
 	output, err := block.Forward(context.Background(), input)
 	if err != nil {
@@ -2840,15 +2715,15 @@ func TestParity_TransformerBlock_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_GRN(t *testing.T) {
-	engine, ops := setup()
-	g := loadGolden(t, "layer_grn")
-	tol := getFloat(g, "tolerance")
+	engine, ops := testutil.Setup()
+	g := testutil.LoadGolden(t, "layer_grn")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	inputDim := int(getFloat(g, "input_dim"))
-	hiddenDim := int(getFloat(g, "hidden_dim"))
-	outputDim := int(getFloat(g, "output_dim"))
+	inputDim := int(testutil.GetFloat(g, "input_dim"))
+	hiddenDim := int(testutil.GetFloat(g, "hidden_dim"))
+	outputDim := int(testutil.GetFloat(g, "output_dim"))
 
-	input := makeTensor(t, getFloat32s(g, "input"), getInts(g, "input_shape"))
+	input := testutil.MakeTensor(t, testutil.GetFloat32s(g, "input"), testutil.GetInts(g, "input_shape"))
 
 	grn, err := timeseries.NewGRN[float32]("test_grn", engine, ops, inputDim, hiddenDim, outputDim)
 	if err != nil {
@@ -2862,18 +2737,18 @@ func TestParity_GRN(t *testing.T) {
 		t.Fatalf("expected at least 7 parameters (w1,b1,w2,b2,wOut,gamma,beta), got %d", len(params))
 	}
 
-	copy(params[0].Value.Data(), getFloat32s(g, "w1"))
-	copy(params[1].Value.Data(), getFloat32s(g, "b1"))
-	copy(params[2].Value.Data(), getFloat32s(g, "w2"))
-	copy(params[3].Value.Data(), getFloat32s(g, "b2"))
-	copy(params[4].Value.Data(), getFloat32s(g, "w_out"))
+	copy(params[0].Value.Data(), testutil.GetFloat32s(g, "w1"))
+	copy(params[1].Value.Data(), testutil.GetFloat32s(g, "b1"))
+	copy(params[2].Value.Data(), testutil.GetFloat32s(g, "w2"))
+	copy(params[3].Value.Data(), testutil.GetFloat32s(g, "b2"))
+	copy(params[4].Value.Data(), testutil.GetFloat32s(g, "w_out"))
 	// params[5] = ln gamma (already ones), params[6] = ln beta (already zeros) — no need to set
 
 	output, err := grn.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
-	assertClose(t, "grn_forward", output.Data(), getFloat32s(g, "expected_output"), tol)
+	testutil.AssertClose(t, "grn_forward", output.Data(), testutil.GetFloat32s(g, "expected_output"), tol)
 }
 
 // ---------------------------------------------------------------------------

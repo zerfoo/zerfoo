@@ -12,6 +12,8 @@ import (
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
 )
 
 // gpuSetup creates CPU and GPU engines for GPU parity tests.
@@ -85,14 +87,14 @@ func TestGPUParity_ReLU(t *testing.T) {
 	n := 2 * 4 * 8
 	inputData := deterministicInput(n)
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLayer := activations.NewReLU(cpuEng, ops)
 	cpuOut, err := cpuLayer.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}
@@ -112,14 +114,14 @@ func TestGPUParity_GELU(t *testing.T) {
 	n := 2 * 4 * 8
 	inputData := deterministicInput(n)
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLayer := activations.NewGelu(cpuEng, ops)
 	cpuOut, err := cpuLayer.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}
@@ -139,14 +141,14 @@ func TestGPUParity_Sigmoid(t *testing.T) {
 	n := 2 * 4 * 8
 	inputData := deterministicInput(n)
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLayer := activations.NewSigmoid(cpuEng, ops)
 	cpuOut, err := cpuLayer.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}
@@ -166,14 +168,14 @@ func TestGPUParity_Tanh(t *testing.T) {
 	n := 2 * 4 * 8
 	inputData := deterministicInput(n)
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLayer := activations.NewTanh(cpuEng, ops)
 	cpuOut, err := cpuLayer.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}
@@ -193,14 +195,14 @@ func TestGPUParity_Softmax(t *testing.T) {
 	n := 2 * 4 * 8
 	inputData := deterministicInput(n)
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLayer := activations.NewSoftmax[float32](cpuEng, -1)
 	cpuOut, err := cpuLayer.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}
@@ -220,14 +222,14 @@ func TestGPUParity_LeakyReLU(t *testing.T) {
 	n := 2 * 4 * 8
 	inputData := deterministicInput(n)
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLayer := activations.NewLeakyReLU(cpuEng, ops, activations.WithAlpha[float32](0.01))
 	cpuOut, err := cpuLayer.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}
@@ -248,14 +250,14 @@ func TestGPUParity_SwiGLU(t *testing.T) {
 	n := 2 * 4 * 8
 	inputData := deterministicInput(n)
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLayer := activations.NewSwiGLU[float32](cpuEng, ops)
 	cpuOut, err := cpuLayer.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}
@@ -275,14 +277,14 @@ func TestGPUParity_Erf(t *testing.T) {
 	n := 2 * 4 * 8
 	inputData := deterministicInput(n)
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLayer := activations.NewErf(cpuEng, ops)
 	cpuOut, err := cpuLayer.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}
@@ -302,14 +304,14 @@ func TestGPUParity_FastGelu(t *testing.T) {
 	n := 2 * 4 * 8
 	inputData := deterministicInput(n)
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLayer := activations.NewFastGelu[float32](cpuEng)
 	cpuOut, err := cpuLayer.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}
@@ -343,9 +345,9 @@ func TestGPUParity_LayerNorm(t *testing.T) {
 	}
 
 	// CPU path
-	cpuInput := makeTensor(t, inputData, shape)
-	cpuGamma := makeParam(t, "gamma", gammaData, []int{hiddenSize})
-	cpuBeta := makeParam(t, "beta", betaData, []int{hiddenSize})
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
+	cpuGamma := testutil.MakeParam(t, "gamma", gammaData, []int{hiddenSize})
+	cpuBeta := testutil.MakeParam(t, "beta", betaData, []int{hiddenSize})
 	cpuLN := normalization.NewLayerNormalizationFromParams(cpuEng, float32(1e-5), cpuGamma, cpuBeta)
 	cpuOut, err := cpuLN.Forward(ctx, cpuInput)
 	if err != nil {
@@ -353,9 +355,9 @@ func TestGPUParity_LayerNorm(t *testing.T) {
 	}
 
 	// GPU path
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
-	gpuGamma := makeParam(t, "gamma", append([]float32(nil), gammaData...), []int{hiddenSize})
-	gpuBeta := makeParam(t, "beta", append([]float32(nil), betaData...), []int{hiddenSize})
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuGamma := testutil.MakeParam(t, "gamma", append([]float32(nil), gammaData...), []int{hiddenSize})
+	gpuBeta := testutil.MakeParam(t, "beta", append([]float32(nil), betaData...), []int{hiddenSize})
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{
 		gpuInput, gpuGamma.Value, gpuBeta.Value,
 	}); err != nil {
@@ -385,8 +387,8 @@ func TestGPUParity_RMSNorm(t *testing.T) {
 	}
 
 	// CPU path
-	cpuInput := makeTensor(t, inputData, shape)
-	cpuGain := makeParam(t, "gain", gainData, []int{hiddenSize})
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
+	cpuGain := testutil.MakeParam(t, "gain", gainData, []int{hiddenSize})
 	cpuRMS, err := normalization.NewRMSNormFromParam(cpuEng, ops, float32(1e-5), cpuGain)
 	if err != nil {
 		t.Fatalf("NewRMSNormFromParam CPU: %v", err)
@@ -397,8 +399,8 @@ func TestGPUParity_RMSNorm(t *testing.T) {
 	}
 
 	// GPU path
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
-	gpuGain := makeParam(t, "gain", append([]float32(nil), gainData...), []int{hiddenSize})
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuGain := testutil.MakeParam(t, "gain", append([]float32(nil), gainData...), []int{hiddenSize})
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{
 		gpuInput, gpuGain.Value,
 	}); err != nil {
@@ -438,11 +440,11 @@ func TestGPUParity_BatchNorm(t *testing.T) {
 	}
 
 	// CPU path
-	cpuInput := makeTensor(t, inputData, shape)
-	cpuScale := makeTensor(t, scaleData, []int{numChannels})
-	cpuBias := makeTensor(t, biasData, []int{numChannels})
-	cpuMean := makeTensor(t, meanData, []int{numChannels})
-	cpuVar := makeTensor(t, varData, []int{numChannels})
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
+	cpuScale := testutil.MakeTensor(t, scaleData, []int{numChannels})
+	cpuBias := testutil.MakeTensor(t, biasData, []int{numChannels})
+	cpuMean := testutil.MakeTensor(t, meanData, []int{numChannels})
+	cpuVar := testutil.MakeTensor(t, varData, []int{numChannels})
 	cpuBN := normalization.NewBatchNormalization[float32](cpuEng, ops, float32(1e-5))
 	cpuOut, err := cpuBN.Forward(ctx, cpuInput, cpuScale, cpuBias, cpuMean, cpuVar)
 	if err != nil {
@@ -450,11 +452,11 @@ func TestGPUParity_BatchNorm(t *testing.T) {
 	}
 
 	// GPU path
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
-	gpuScale := makeTensor(t, append([]float32(nil), scaleData...), []int{numChannels})
-	gpuBias := makeTensor(t, append([]float32(nil), biasData...), []int{numChannels})
-	gpuMean := makeTensor(t, append([]float32(nil), meanData...), []int{numChannels})
-	gpuVar := makeTensor(t, append([]float32(nil), varData...), []int{numChannels})
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuScale := testutil.MakeTensor(t, append([]float32(nil), scaleData...), []int{numChannels})
+	gpuBias := testutil.MakeTensor(t, append([]float32(nil), biasData...), []int{numChannels})
+	gpuMean := testutil.MakeTensor(t, append([]float32(nil), meanData...), []int{numChannels})
+	gpuVar := testutil.MakeTensor(t, append([]float32(nil), varData...), []int{numChannels})
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{
 		gpuInput, gpuScale, gpuBias, gpuMean, gpuVar,
 	}); err != nil {
@@ -485,7 +487,7 @@ func TestGPUParity_RotaryEmbedding(t *testing.T) {
 	inputData := deterministicInput(n)
 
 	// CPU path
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuRoPE, err := embeddings.NewRotaryPositionalEmbedding[float32](
 		ctx, cpuEng, headDim, seqLen, embeddings.WithRotaryBase(10000.0),
 	)
@@ -498,7 +500,7 @@ func TestGPUParity_RotaryEmbedding(t *testing.T) {
 	}
 
 	// GPU path
-	gpuInput := makeTensor(t, append([]float32(nil), inputData...), shape)
+	gpuInput := testutil.MakeTensor(t, append([]float32(nil), inputData...), shape)
 	if err := gpuEng.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
 	}

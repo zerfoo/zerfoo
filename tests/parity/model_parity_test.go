@@ -10,59 +10,22 @@ import (
 
 	"github.com/zerfoo/zerfoo/tabular"
 	tsmodels "github.com/zerfoo/zerfoo/timeseries"
+
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
 )
-
-// getFloat64s extracts a float64 slice from a JSON array.
-func getFloat64s(m map[string]interface{}, key string) []float64 {
-	arr, ok := m[key].([]interface{})
-	if !ok {
-		return nil
-	}
-	out := make([]float64, len(arr))
-	for i, v := range arr {
-		out[i] = v.(float64)
-	}
-	return out
-}
-
-// getFloat64s2D extracts a 2D float64 slice from a JSON nested array.
-func getFloat64s2D(m map[string]interface{}, key string) [][]float64 {
-	arr, ok := m[key].([]interface{})
-	if !ok {
-		return nil
-	}
-	out := make([][]float64, len(arr))
-	for i, row := range arr {
-		rowArr := row.([]interface{})
-		out[i] = make([]float64, len(rowArr))
-		for j, v := range rowArr {
-			out[i][j] = v.(float64)
-		}
-	}
-	return out
-}
-
-// reshapeFloat64 reshapes a flat float64 slice into a 2D slice [rows][cols].
-func reshapeFloat64(flat []float64, rows, cols int) [][]float64 {
-	result := make([][]float64, rows)
-	for r := 0; r < rows; r++ {
-		result[r] = flat[r*cols : (r+1)*cols]
-	}
-	return result
-}
 
 // ---------------------------------------------------------------------------
 // T86.4.3: DLinear golden-file forward parity (PyTorch reference)
 // ---------------------------------------------------------------------------
 
 func TestParity_DLinear(t *testing.T) {
-	g := loadGolden(t, "timeseries_dlinear")
-	tol := getFloat(g, "tolerance")
+	g := testutil.LoadGolden(t, "timeseries_dlinear")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	inputLen := int(getFloat(g, "input_len"))
-	outputLen := int(getFloat(g, "output_len"))
-	channels := int(getFloat(g, "channels"))
-	kernelSize := int(getFloat(g, "kernel_size"))
+	inputLen := int(testutil.GetFloat(g, "input_len"))
+	outputLen := int(testutil.GetFloat(g, "output_len"))
+	channels := int(testutil.GetFloat(g, "channels"))
+	kernelSize := int(testutil.GetFloat(g, "kernel_size"))
 
 	m, err := tsmodels.NewDLinear(inputLen, outputLen, channels, kernelSize)
 	if err != nil {
@@ -70,10 +33,10 @@ func TestParity_DLinear(t *testing.T) {
 	}
 
 	// Load golden weights into the model via SaveWeights/loadWeights round-trip.
-	trendW := getFloat64s(g, "trend_w")
-	trendB := getFloat64s(g, "trend_b")
-	seasonalW := getFloat64s(g, "seasonal_w")
-	seasonalB := getFloat64s(g, "seasonal_b")
+	trendW := testutil.GetFloat64s(g, "trend_w")
+	trendB := testutil.GetFloat64s(g, "trend_b")
+	seasonalW := testutil.GetFloat64s(g, "seasonal_w")
+	seasonalB := testutil.GetFloat64s(g, "seasonal_b")
 
 	// Write golden weights to a temp file in DLinear's JSON format.
 	dir := t.TempDir()
@@ -85,10 +48,10 @@ func TestParity_DLinear(t *testing.T) {
 			"Channels":   channels,
 			"KernelSize": kernelSize,
 		},
-		"trend_w":    reshapeFloat64(trendW, channels, outputLen*inputLen),
-		"trend_b":    reshapeFloat64(trendB, channels, outputLen),
-		"seasonal_w": reshapeFloat64(seasonalW, channels, outputLen*inputLen),
-		"seasonal_b": reshapeFloat64(seasonalB, channels, outputLen),
+		"trend_w":    testutil.ReshapeFloat64(trendW, channels, outputLen*inputLen),
+		"trend_b":    testutil.ReshapeFloat64(trendB, channels, outputLen),
+		"seasonal_w": testutil.ReshapeFloat64(seasonalW, channels, outputLen*inputLen),
+		"seasonal_b": testutil.ReshapeFloat64(seasonalB, channels, outputLen),
 	}
 	wData, err := json.Marshal(weightsJSON)
 	if err != nil {
@@ -99,7 +62,7 @@ func TestParity_DLinear(t *testing.T) {
 	}
 
 	// Build input from golden data.
-	inputFlat := getFloat64s(g, "input")
+	inputFlat := testutil.GetFloat64s(g, "input")
 	input := make([][]float64, channels)
 	for c := 0; c < channels; c++ {
 		input[c] = inputFlat[c*inputLen : (c+1)*inputLen]
@@ -112,7 +75,7 @@ func TestParity_DLinear(t *testing.T) {
 	}
 
 	// Compare against golden expected output.
-	expectedOutput := getFloat64s(g, "expected_output")
+	expectedOutput := testutil.GetFloat64s(g, "expected_output")
 	if len(preds) != len(expectedOutput) {
 		t.Fatalf("output length: got %d, want %d", len(preds), len(expectedOutput))
 	}
@@ -129,18 +92,18 @@ func TestParity_DLinear(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_PatchTST(t *testing.T) {
-	g := loadGolden(t, "model_patchtst")
-	tol := getFloat(g, "tolerance")
+	g := testutil.LoadGolden(t, "model_patchtst")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	inputLen := int(getFloat(g, "input_len"))
-	patchLen := int(getFloat(g, "patch_len"))
-	stride := int(getFloat(g, "stride"))
-	dModel := int(getFloat(g, "d_model"))
-	nHeads := int(getFloat(g, "n_heads"))
-	nLayers := int(getFloat(g, "n_layers"))
-	outputDim := int(getFloat(g, "output_dim"))
-	batch := int(getFloat(g, "batch"))
-	goldenParamCount := int(getFloat(g, "param_count"))
+	inputLen := int(testutil.GetFloat(g, "input_len"))
+	patchLen := int(testutil.GetFloat(g, "patch_len"))
+	stride := int(testutil.GetFloat(g, "stride"))
+	dModel := int(testutil.GetFloat(g, "d_model"))
+	nHeads := int(testutil.GetFloat(g, "n_heads"))
+	nLayers := int(testutil.GetFloat(g, "n_layers"))
+	outputDim := int(testutil.GetFloat(g, "output_dim"))
+	batch := int(testutil.GetFloat(g, "batch"))
+	goldenParamCount := int(testutil.GetFloat(g, "param_count"))
 
 	config := tsmodels.PatchTSTConfig{
 		InputLength: inputLen,
@@ -152,7 +115,7 @@ func TestParity_PatchTST(t *testing.T) {
 		OutputDim:   outputDim,
 	}
 
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 	m, err := tsmodels.NewPatchTST(config, engine, ops)
 	if err != nil {
 		t.Fatalf("NewPatchTST: %v", err)
@@ -164,14 +127,14 @@ func TestParity_PatchTST(t *testing.T) {
 	}
 
 	// Extract golden flat params and weights from golden data.
-	flatParams := getFloat64s(g, "flat_params")
+	flatParams := testutil.GetFloat64s(g, "flat_params")
 
 	// Build the patchTSTWeights JSON using golden flat_params.
 	// Flat param order: patchEmbW, patchEmbB, posEmb,
 	//   per-layer: qW, qB, kW, kB, vW, vB, oW, oB,
 	//              ffn1W, ffn1B, ffn2W, ffn2B, norm1, bias1, norm2, bias2,
 	//   headW, headB.
-	numPatches := (inputLen - patchLen) / stride + 1
+	numPatches := (inputLen-patchLen)/stride + 1
 	ffnDim := dModel * 4
 	off := 0
 
@@ -263,7 +226,7 @@ func TestParity_PatchTST(t *testing.T) {
 	}
 
 	// Build input windows: [batch][1 channel][inputLen].
-	inputFlat := getFloat64s(g, "input")
+	inputFlat := testutil.GetFloat64s(g, "input")
 	windows := make([][][]float64, batch)
 	for b := 0; b < batch; b++ {
 		windows[b] = [][]float64{inputFlat[b*inputLen : (b+1)*inputLen]}
@@ -276,7 +239,7 @@ func TestParity_PatchTST(t *testing.T) {
 	}
 
 	// Compare against golden expected output.
-	expectedOutput := getFloat64s(g, "expected_output")
+	expectedOutput := testutil.GetFloat64s(g, "expected_output")
 	if len(preds) != len(expectedOutput) {
 		t.Fatalf("output length: got %d, want %d", len(preds), len(expectedOutput))
 	}
@@ -294,7 +257,7 @@ func TestParity_PatchTST(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_PatchTST_Structural(t *testing.T) {
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 
 	config := tsmodels.PatchTSTConfig{
 		InputLength:        16,
@@ -317,7 +280,7 @@ func TestParity_PatchTST_Structural(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i+1) * 0.01
 	}
-	input := makeTensor(t, inputData, []int{batch, config.InputLength})
+	input := testutil.MakeTensor(t, inputData, []int{batch, config.InputLength})
 
 	output, err := m.Forward(context.Background(), input)
 	if err != nil {
@@ -343,7 +306,7 @@ func TestParity_PatchTST_Structural(t *testing.T) {
 	for i := range inputData2 {
 		inputData2[i] = float32(i+1) * 0.5
 	}
-	input2 := makeTensor(t, inputData2, []int{batch, config.InputLength})
+	input2 := testutil.MakeTensor(t, inputData2, []int{batch, config.InputLength})
 	output2, err := m.Forward(context.Background(), input2)
 	if err != nil {
 		t.Fatalf("Forward (input2): %v", err)
@@ -366,7 +329,7 @@ func TestParity_PatchTST_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_NBEATS_Structural(t *testing.T) {
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 
 	config := tsmodels.NBEATSConfig{
 		InputLength:     12,
@@ -387,7 +350,7 @@ func TestParity_NBEATS_Structural(t *testing.T) {
 	for i := range inputData {
 		inputData[i] = float32(i+1) * 0.1
 	}
-	input := makeTensor(t, inputData, []int{batch, config.InputLength})
+	input := testutil.MakeTensor(t, inputData, []int{batch, config.InputLength})
 
 	result, err := m.Forward(context.Background(), input)
 	if err != nil {
@@ -413,7 +376,7 @@ func TestParity_NBEATS_Structural(t *testing.T) {
 	for i := range inputData2 {
 		inputData2[i] = float32(i+1) * 0.5
 	}
-	input2 := makeTensor(t, inputData2, []int{batch, config.InputLength})
+	input2 := testutil.MakeTensor(t, inputData2, []int{batch, config.InputLength})
 	result2, err := m.Forward(context.Background(), input2)
 	if err != nil {
 		t.Fatalf("Forward (input2): %v", err)
@@ -508,16 +471,16 @@ func TestParity_ITransformer_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_NBEATS(t *testing.T) {
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 
-	g := loadGolden(t, "model_nbeats")
-	tol := getFloat(g, "tolerance")
+	g := testutil.LoadGolden(t, "model_nbeats")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	inputLen := int(getFloat(g, "input_length"))
-	outputLen := int(getFloat(g, "output_length"))
-	hiddenDim := int(getFloat(g, "hidden_dim"))
-	nHarmonics := int(getFloat(g, "n_harmonics"))
-	batch := int(getFloat(g, "batch"))
+	inputLen := int(testutil.GetFloat(g, "input_length"))
+	outputLen := int(testutil.GetFloat(g, "output_length"))
+	hiddenDim := int(testutil.GetFloat(g, "hidden_dim"))
+	nHarmonics := int(testutil.GetFloat(g, "n_harmonics"))
+	batch := int(testutil.GetFloat(g, "batch"))
 
 	config := tsmodels.NBEATSConfig{
 		InputLength:     inputLen,
@@ -534,7 +497,7 @@ func TestParity_NBEATS(t *testing.T) {
 	}
 
 	// Load golden params into model.
-	goldenParams := getFloat64s(g, "params")
+	goldenParams := testutil.GetFloat64s(g, "params")
 	flatPtrs := m.FlatParams()
 	if len(goldenParams) != len(flatPtrs) {
 		t.Fatalf("param count mismatch: golden=%d, model=%d", len(goldenParams), len(flatPtrs))
@@ -544,21 +507,21 @@ func TestParity_NBEATS(t *testing.T) {
 	}
 
 	// Build input tensor.
-	inputFlat := getFloat32s(g, "input")
-	input := makeTensor(t, inputFlat, []int{batch, inputLen})
+	inputFlat := testutil.GetFloat32s(g, "input")
+	input := testutil.MakeTensor(t, inputFlat, []int{batch, inputLen})
 
 	result, err := m.Forward(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Forward: %v", err)
 	}
 
-	expectedOutput := getFloat32s(g, "expected_output")
+	expectedOutput := testutil.GetFloat32s(g, "expected_output")
 	got := result.Forecast.Data()
 
 	if len(got) != len(expectedOutput) {
 		t.Fatalf("output length: got %d, want %d", len(got), len(expectedOutput))
 	}
-	assertClose(t, "nbeats_forecast", got, expectedOutput, tol)
+	testutil.AssertClose(t, "nbeats_forecast", got, expectedOutput, tol)
 }
 
 // ---------------------------------------------------------------------------
@@ -566,16 +529,16 @@ func TestParity_NBEATS(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_ITransformer(t *testing.T) {
-	g := loadGolden(t, "model_itransformer")
-	tol := getFloat(g, "tolerance")
+	g := testutil.LoadGolden(t, "model_itransformer")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	channels := int(getFloat(g, "channels"))
-	inputLen := int(getFloat(g, "input_len"))
-	outputLen := int(getFloat(g, "output_len"))
-	dModel := int(getFloat(g, "d_model"))
-	dFF := int(getFloat(g, "d_ff"))
-	nHeads := int(getFloat(g, "n_heads"))
-	nLayers := int(getFloat(g, "n_layers"))
+	channels := int(testutil.GetFloat(g, "channels"))
+	inputLen := int(testutil.GetFloat(g, "input_len"))
+	outputLen := int(testutil.GetFloat(g, "output_len"))
+	dModel := int(testutil.GetFloat(g, "d_model"))
+	dFF := int(testutil.GetFloat(g, "d_ff"))
+	nHeads := int(testutil.GetFloat(g, "n_heads"))
+	nLayers := int(testutil.GetFloat(g, "n_layers"))
 
 	config := tsmodels.ITransformerConfig{
 		Channels:  channels,
@@ -593,7 +556,7 @@ func TestParity_ITransformer(t *testing.T) {
 	}
 
 	// Load golden params via flatParams pointers.
-	goldenParams := getFloat64s(g, "params")
+	goldenParams := testutil.GetFloat64s(g, "params")
 	flatPtrs := m.FlatParams()
 	if len(goldenParams) != len(flatPtrs) {
 		t.Fatalf("param count mismatch: golden=%d, model=%d", len(goldenParams), len(flatPtrs))
@@ -642,7 +605,7 @@ func TestParity_ITransformer(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_TFT_Structural(t *testing.T) {
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 
 	config := tsmodels.TFTConfig{
 		NumStaticFeatures: 3,
@@ -718,15 +681,15 @@ func TestParity_TFT_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_CfC(t *testing.T) {
-	g := loadGolden(t, "model_cfc")
-	tol := getFloat(g, "tolerance")
+	g := testutil.LoadGolden(t, "model_cfc")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	inputSize := int(getFloat(g, "input_size"))
-	hiddenSize := int(getFloat(g, "hidden_size"))
-	outputSize := int(getFloat(g, "output_size"))
-	numLayers := int(getFloat(g, "num_layers"))
-	outputLen := int(getFloat(g, "output_len"))
-	seqLen := int(getFloat(g, "seq_len"))
+	inputSize := int(testutil.GetFloat(g, "input_size"))
+	hiddenSize := int(testutil.GetFloat(g, "hidden_size"))
+	outputSize := int(testutil.GetFloat(g, "output_size"))
+	numLayers := int(testutil.GetFloat(g, "num_layers"))
+	outputLen := int(testutil.GetFloat(g, "output_len"))
+	seqLen := int(testutil.GetFloat(g, "seq_len"))
 
 	config := tsmodels.CfCConfig{
 		InputSize:  inputSize,
@@ -742,13 +705,13 @@ func TestParity_CfC(t *testing.T) {
 	}
 
 	// Extract golden weights from JSON.
-	whFlat := getFloat64s2D(g, "wh")
-	wxFlat := getFloat64s2D(g, "wx")
-	bhFlat := getFloat64s(g, "bh")
-	wtauFlat := getFloat64s2D(g, "wtau")
-	btauFlat := getFloat64s(g, "btau")
-	outWFlat := getFloat64s2D(g, "out_w")
-	outBFlat := getFloat64s(g, "out_b")
+	whFlat := testutil.GetFloat64s2D(g, "wh")
+	wxFlat := testutil.GetFloat64s2D(g, "wx")
+	bhFlat := testutil.GetFloat64s(g, "bh")
+	wtauFlat := testutil.GetFloat64s2D(g, "wtau")
+	btauFlat := testutil.GetFloat64s(g, "btau")
+	outWFlat := testutil.GetFloat64s2D(g, "out_w")
+	outBFlat := testutil.GetFloat64s(g, "out_b")
 
 	// Write golden weights to a temp file in CfC's JSON format.
 	dir := t.TempDir()
@@ -782,7 +745,7 @@ func TestParity_CfC(t *testing.T) {
 	}
 
 	// Build input: [channels][seqLen] from golden flat data.
-	inputFlat := getFloat64s(g, "input")
+	inputFlat := testutil.GetFloat64s(g, "input")
 	channels := inputSize
 	input := make([][]float64, channels)
 	for c := 0; c < channels; c++ {
@@ -796,7 +759,7 @@ func TestParity_CfC(t *testing.T) {
 	}
 
 	// Compare against golden expected output.
-	expectedOutput := getFloat64s(g, "expected_output")
+	expectedOutput := testutil.GetFloat64s(g, "expected_output")
 	if len(preds) != len(expectedOutput) {
 		t.Fatalf("output length: got %d, want %d", len(preds), len(expectedOutput))
 	}
@@ -887,7 +850,7 @@ func TestParity_CfC_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_FTTransformer_Structural(t *testing.T) {
-	engine, ops := setup()
+	engine, ops := testutil.Setup()
 
 	config := tabular.FTTransformerConfig{
 		NumFeatures: 4,
@@ -940,14 +903,14 @@ func TestParity_FTTransformer_Structural(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_FreTS(t *testing.T) {
-	g := loadGolden(t, "model_frets")
-	tol := getFloat(g, "tolerance")
+	g := testutil.LoadGolden(t, "model_frets")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	channels := int(getFloat(g, "channels"))
-	inputLen := int(getFloat(g, "input_len"))
-	outputLen := int(getFloat(g, "output_len"))
-	topK := int(getFloat(g, "top_k"))
-	hiddenSize := int(getFloat(g, "hidden_size"))
+	channels := int(testutil.GetFloat(g, "channels"))
+	inputLen := int(testutil.GetFloat(g, "input_len"))
+	outputLen := int(testutil.GetFloat(g, "output_len"))
+	topK := int(testutil.GetFloat(g, "top_k"))
+	hiddenSize := int(testutil.GetFloat(g, "hidden_size"))
 
 	config := tsmodels.FreTSConfig{
 		Channels:   channels,
@@ -964,16 +927,16 @@ func TestParity_FreTS(t *testing.T) {
 
 	// Load golden weights via FlatParams pointers.
 	// FlatParams order: chanW1, chanB1, chanW2, chanB2, tempW1, tempB1, tempW2, tempB2, outW, outB
-	chanW1 := getFloat64s(g, "chan_w1")
-	chanB1 := getFloat64s(g, "chan_b1")
-	chanW2 := getFloat64s(g, "chan_w2")
-	chanB2 := getFloat64s(g, "chan_b2")
-	tempW1 := getFloat64s(g, "temp_w1")
-	tempB1 := getFloat64s(g, "temp_b1")
-	tempW2 := getFloat64s(g, "temp_w2")
-	tempB2 := getFloat64s(g, "temp_b2")
-	outW := getFloat64s(g, "out_w")
-	outB := getFloat64s(g, "out_b")
+	chanW1 := testutil.GetFloat64s(g, "chan_w1")
+	chanB1 := testutil.GetFloat64s(g, "chan_b1")
+	chanW2 := testutil.GetFloat64s(g, "chan_w2")
+	chanB2 := testutil.GetFloat64s(g, "chan_b2")
+	tempW1 := testutil.GetFloat64s(g, "temp_w1")
+	tempB1 := testutil.GetFloat64s(g, "temp_b1")
+	tempW2 := testutil.GetFloat64s(g, "temp_w2")
+	tempB2 := testutil.GetFloat64s(g, "temp_b2")
+	outW := testutil.GetFloat64s(g, "out_w")
+	outB := testutil.GetFloat64s(g, "out_b")
 
 	allWeights := make([]float64, 0)
 	allWeights = append(allWeights, chanW1...)
@@ -996,7 +959,7 @@ func TestParity_FreTS(t *testing.T) {
 	}
 
 	// Build input: [channels][inputLen] from golden flat data.
-	inputFlat := getFloat64s(g, "input")
+	inputFlat := testutil.GetFloat64s(g, "input")
 	input := make([][]float64, channels)
 	for c := 0; c < channels; c++ {
 		input[c] = inputFlat[c*inputLen : (c+1)*inputLen]
@@ -1009,7 +972,7 @@ func TestParity_FreTS(t *testing.T) {
 	}
 
 	// Compare against expected output.
-	expectedOutput := getFloat64s(g, "expected_output")
+	expectedOutput := testutil.GetFloat64s(g, "expected_output")
 	if len(output) != len(expectedOutput) {
 		t.Fatalf("output length: got %d, want %d", len(output), len(expectedOutput))
 	}
@@ -1026,15 +989,15 @@ func TestParity_FreTS(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestParity_TimeMixer(t *testing.T) {
-	g := loadGolden(t, "model_timemixer")
-	tol := getFloat(g, "tolerance")
+	g := testutil.LoadGolden(t, "model_timemixer")
+	tol := testutil.GetFloat(g, "tolerance")
 
-	inputLen := int(getFloat(g, "input_len"))
-	outputLen := int(getFloat(g, "output_len"))
-	numFeatures := int(getFloat(g, "num_features"))
-	numScales := int(getFloat(g, "num_scales"))
-	hiddenSize := int(getFloat(g, "hidden_size"))
-	numLayers := int(getFloat(g, "num_layers"))
+	inputLen := int(testutil.GetFloat(g, "input_len"))
+	outputLen := int(testutil.GetFloat(g, "output_len"))
+	numFeatures := int(testutil.GetFloat(g, "num_features"))
+	numScales := int(testutil.GetFloat(g, "num_scales"))
+	hiddenSize := int(testutil.GetFloat(g, "hidden_size"))
+	numLayers := int(testutil.GetFloat(g, "num_layers"))
 
 	cfg := tsmodels.TimeMixerConfig{
 		InputLen:    inputLen,
@@ -1048,7 +1011,7 @@ func TestParity_TimeMixer(t *testing.T) {
 	m := tsmodels.NewTimeMixer(cfg)
 
 	// Inject golden flat params (MA weights + MLP weights) via FlatParams pointers.
-	flatParams := getFloat64s(g, "flat_params")
+	flatParams := testutil.GetFloat64s(g, "flat_params")
 	ptrs := m.FlatParams()
 	if len(ptrs) != len(flatParams) {
 		t.Fatalf("flat_params length mismatch: got %d pointers, want %d values", len(ptrs), len(flatParams))
@@ -1064,8 +1027,8 @@ func TestParity_TimeMixer(t *testing.T) {
 	}
 	trendHeads := make([][][]float64, numScales)
 	for s := 0; s < numScales; s++ {
-		flat := toFloat64Slice(trendHeadsRaw[s])
-		trendHeads[s] = reshapeFloat64(flat, inputLen, outputLen)
+		flat := testutil.ToFloat64Slice(trendHeadsRaw[s])
+		trendHeads[s] = testutil.ReshapeFloat64(flat, inputLen, outputLen)
 	}
 	m.SetTrendHeads(trendHeads)
 
@@ -1075,16 +1038,16 @@ func TestParity_TimeMixer(t *testing.T) {
 	}
 	seasonalHeads := make([][][]float64, numScales)
 	for s := 0; s < numScales; s++ {
-		flat := toFloat64Slice(seasonalHeadsRaw[s])
-		seasonalHeads[s] = reshapeFloat64(flat, inputLen, outputLen)
+		flat := testutil.ToFloat64Slice(seasonalHeadsRaw[s])
+		seasonalHeads[s] = testutil.ReshapeFloat64(flat, inputLen, outputLen)
 	}
 	m.SetSeasonalHeads(seasonalHeads)
 
-	mixWeights := getFloat64s(g, "mix_weights")
+	mixWeights := testutil.GetFloat64s(g, "mix_weights")
 	m.SetMixWeights(mixWeights)
 
 	// Build input [numFeatures][inputLen].
-	inputFlat := getFloat64s(g, "input")
+	inputFlat := testutil.GetFloat64s(g, "input")
 	input := make([][]float64, numFeatures)
 	for f := 0; f < numFeatures; f++ {
 		input[f] = inputFlat[f*inputLen : (f+1)*inputLen]
@@ -1097,7 +1060,7 @@ func TestParity_TimeMixer(t *testing.T) {
 	}
 
 	// Compare against golden expected output.
-	expectedOutput := getFloat64s(g, "expected_output")
+	expectedOutput := testutil.GetFloat64s(g, "expected_output")
 	got := make([]float64, 0, numFeatures*outputLen)
 	for f := 0; f < numFeatures; f++ {
 		got = append(got, out.Forecast[f]...)
@@ -1111,14 +1074,4 @@ func TestParity_TimeMixer(t *testing.T) {
 			t.Errorf("output[%d]: got %g, want %g (diff=%g, tol=%g)", i, got[i], expectedOutput[i], diff, tol)
 		}
 	}
-}
-
-// toFloat64Slice converts a JSON array ([]interface{}) to []float64.
-func toFloat64Slice(v interface{}) []float64 {
-	arr := v.([]interface{})
-	out := make([]float64, len(arr))
-	for i, x := range arr {
-		out[i] = x.(float64)
-	}
-	return out
 }

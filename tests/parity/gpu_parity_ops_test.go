@@ -14,6 +14,8 @@ import (
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
+
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
 	"github.com/zerfoo/ztensor/types"
 )
 
@@ -86,8 +88,8 @@ func TestGPUParity_Linear(t *testing.T) {
 	weightData := deterministicData(inFeatures * outFeatures)
 
 	// CPU
-	cpuInput := makeTensor(t, inputData, []int{2, inFeatures})
-	cpuWeightParam := makeParam(t, "weight", weightData, []int{inFeatures, outFeatures})
+	cpuInput := testutil.MakeTensor(t, inputData, []int{2, inFeatures})
+	cpuWeightParam := testutil.MakeParam(t, "weight", weightData, []int{inFeatures, outFeatures})
 	cpuLinear := core.NewLinearFromParam(cpuEng, cpuWeightParam)
 	cpuOut, err := cpuLinear.Forward(ctx, cpuInput)
 	if err != nil {
@@ -95,8 +97,8 @@ func TestGPUParity_Linear(t *testing.T) {
 	}
 
 	// GPU
-	gpuInput := makeTensor(t, cloneF32(inputData), []int{2, inFeatures})
-	gpuWeightParam := makeParam(t, "weight", cloneF32(weightData), []int{inFeatures, outFeatures})
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), []int{2, inFeatures})
+	gpuWeightParam := testutil.MakeParam(t, "weight", cloneF32(weightData), []int{inFeatures, outFeatures})
 	gpuLinear := core.NewLinearFromParam(gpuEng, gpuWeightParam)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput, gpuWeightParam.Value}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -117,8 +119,8 @@ func TestGPUParity_MatMul(t *testing.T) {
 	bData := deterministicData(4 * 3)
 
 	// CPU
-	cpuA := makeTensor(t, aData, []int{2, 4})
-	cpuB := makeTensor(t, bData, []int{4, 3})
+	cpuA := testutil.MakeTensor(t, aData, []int{2, 4})
+	cpuB := testutil.MakeTensor(t, bData, []int{4, 3})
 	cpuMM := core.NewMatMul[float32](cpuEng)
 	cpuOut, err := cpuMM.Forward(ctx, cpuA, cpuB)
 	if err != nil {
@@ -126,8 +128,8 @@ func TestGPUParity_MatMul(t *testing.T) {
 	}
 
 	// GPU
-	gpuA := makeTensor(t, cloneF32(aData), []int{2, 4})
-	gpuB := makeTensor(t, cloneF32(bData), []int{4, 3})
+	gpuA := testutil.MakeTensor(t, cloneF32(aData), []int{2, 4})
+	gpuB := testutil.MakeTensor(t, cloneF32(bData), []int{4, 3})
 	gpuMM := core.NewMatMul[float32](gpuEng)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuA, gpuB}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -148,7 +150,7 @@ func TestGPUParity_Conv1D(t *testing.T) {
 	inputData := deterministicData(batch * seqLen * inCh)
 
 	// CPU
-	cpuInput := makeTensor(t, inputData, []int{batch, seqLen, inCh})
+	cpuInput := testutil.MakeTensor(t, inputData, []int{batch, seqLen, inCh})
 	cpuConv, err := core.NewConv1D[float32]("test_conv", cpuEng, ops, inCh, outCh, kernel)
 	if err != nil {
 		t.Fatalf("CPU NewConv1D: %v", err)
@@ -169,7 +171,7 @@ func TestGPUParity_Conv1D(t *testing.T) {
 	}
 
 	// GPU
-	gpuInput := makeTensor(t, cloneF32(inputData), []int{batch, seqLen, inCh})
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), []int{batch, seqLen, inCh})
 	gpuConv, err := core.NewConv1D[float32]("test_conv", gpuEng, ops, inCh, outCh, kernel)
 	if err != nil {
 		t.Fatalf("GPU NewConv1D: %v", err)
@@ -207,7 +209,7 @@ func TestGPUParity_FFN(t *testing.T) {
 	inputData := deterministicData(2 * inputDim)
 
 	// CPU
-	cpuInput := makeTensor(t, inputData, []int{2, inputDim})
+	cpuInput := testutil.MakeTensor(t, inputData, []int{2, inputDim})
 	cpuFFN, err := core.NewFFN[float32]("test_ffn", cpuEng, ops, inputDim, hiddenDim, outputDim, core.WithFFNNoBias[float32]())
 	if err != nil {
 		t.Fatalf("CPU NewFFN: %v", err)
@@ -228,7 +230,7 @@ func TestGPUParity_FFN(t *testing.T) {
 	}
 
 	// GPU
-	gpuInput := makeTensor(t, cloneF32(inputData), []int{2, inputDim})
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), []int{2, inputDim})
 	gpuFFN, err := core.NewFFN[float32]("test_ffn", gpuEng, ops, inputDim, hiddenDim, outputDim, core.WithFFNNoBias[float32]())
 	if err != nil {
 		t.Fatalf("GPU NewFFN: %v", err)
@@ -270,9 +272,9 @@ func TestGPUParity_SDPA_Causal(t *testing.T) {
 	vData := deterministicData(n)
 
 	// CPU
-	cpuQ := makeTensor(t, qData, []int{batch, seq, headDim})
-	cpuK := makeTensor(t, kData, []int{batch, seq, headDim})
-	cpuV := makeTensor(t, vData, []int{batch, seq, headDim})
+	cpuQ := testutil.MakeTensor(t, qData, []int{batch, seq, headDim})
+	cpuK := testutil.MakeTensor(t, kData, []int{batch, seq, headDim})
+	cpuV := testutil.MakeTensor(t, vData, []int{batch, seq, headDim})
 	cpuSDPA := attention.NewScaledDotProductAttention[float32](cpuEng, headDim)
 	cpuSDPA.SetCausal(true)
 	cpuOut, err := cpuSDPA.Forward(ctx, cpuQ, cpuK, cpuV, nil)
@@ -281,9 +283,9 @@ func TestGPUParity_SDPA_Causal(t *testing.T) {
 	}
 
 	// GPU
-	gpuQ := makeTensor(t, cloneF32(qData), []int{batch, seq, headDim})
-	gpuK := makeTensor(t, cloneF32(kData), []int{batch, seq, headDim})
-	gpuV := makeTensor(t, cloneF32(vData), []int{batch, seq, headDim})
+	gpuQ := testutil.MakeTensor(t, cloneF32(qData), []int{batch, seq, headDim})
+	gpuK := testutil.MakeTensor(t, cloneF32(kData), []int{batch, seq, headDim})
+	gpuV := testutil.MakeTensor(t, cloneF32(vData), []int{batch, seq, headDim})
 	gpuSDPA := attention.NewScaledDotProductAttention[float32](gpuEng, headDim)
 	gpuSDPA.SetCausal(true)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuQ, gpuK, gpuV}); err != nil {
@@ -308,9 +310,9 @@ func TestGPUParity_SDPA_Bidirectional(t *testing.T) {
 	vData := deterministicData(n)
 
 	// CPU
-	cpuQ := makeTensor(t, qData, []int{batch, seq, headDim})
-	cpuK := makeTensor(t, kData, []int{batch, seq, headDim})
-	cpuV := makeTensor(t, vData, []int{batch, seq, headDim})
+	cpuQ := testutil.MakeTensor(t, qData, []int{batch, seq, headDim})
+	cpuK := testutil.MakeTensor(t, kData, []int{batch, seq, headDim})
+	cpuV := testutil.MakeTensor(t, vData, []int{batch, seq, headDim})
 	cpuSDPA := attention.NewBidirectionalSDPA[float32](cpuEng, headDim)
 	cpuOut, err := cpuSDPA.Forward(ctx, cpuQ, cpuK, cpuV, nil)
 	if err != nil {
@@ -318,9 +320,9 @@ func TestGPUParity_SDPA_Bidirectional(t *testing.T) {
 	}
 
 	// GPU
-	gpuQ := makeTensor(t, cloneF32(qData), []int{batch, seq, headDim})
-	gpuK := makeTensor(t, cloneF32(kData), []int{batch, seq, headDim})
-	gpuV := makeTensor(t, cloneF32(vData), []int{batch, seq, headDim})
+	gpuQ := testutil.MakeTensor(t, cloneF32(qData), []int{batch, seq, headDim})
+	gpuK := testutil.MakeTensor(t, cloneF32(kData), []int{batch, seq, headDim})
+	gpuV := testutil.MakeTensor(t, cloneF32(vData), []int{batch, seq, headDim})
 	gpuSDPA := attention.NewBidirectionalSDPA[float32](gpuEng, headDim)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuQ, gpuK, gpuV}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -356,7 +358,7 @@ func TestGPUParity_GQA(t *testing.T) {
 		paramWeights[i] = wd
 	}
 
-	cpuInput := makeTensor(t, inputData, []int{1, 2, dModel})
+	cpuInput := testutil.MakeTensor(t, inputData, []int{1, 2, dModel})
 	cpuOut, err := cpuGQA.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
@@ -374,7 +376,7 @@ func TestGPUParity_GQA(t *testing.T) {
 		copy(p.Value.Data(), paramWeights[i])
 	}
 
-	gpuInput := makeTensor(t, cloneF32(inputData), []int{1, 2, dModel})
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), []int{1, 2, dModel})
 	toUpload := []*tensor.TensorNumeric[float32]{gpuInput}
 	for _, p := range gpuParams {
 		toUpload = append(toUpload, p.Value)
@@ -404,20 +406,20 @@ func TestGPUParity_ReLU_Backward(t *testing.T) {
 	shape := []int{2, 8}
 
 	// CPU
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuRelu := activations.NewReLU(cpuEng, ops)
 	cpuOut, err := cpuRelu.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuGradOut := makeTensor(t, gradOutData, cpuOut.Shape())
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, cpuOut.Shape())
 	cpuGrads, err := cpuRelu.Backward(ctx, types.FullBackprop, cpuGradOut, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
 	// GPU
-	gpuInput := makeTensor(t, cloneF32(inputData), shape)
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), shape)
 	gpuRelu := activations.NewReLU(gpuEng, ops)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -426,7 +428,7 @@ func TestGPUParity_ReLU_Backward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -446,19 +448,19 @@ func TestGPUParity_GELU_Backward(t *testing.T) {
 	gradOutData := deterministicData(2 * 8)
 	shape := []int{2, 8}
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuGelu := activations.NewGelu(cpuEng, ops)
 	cpuOut, err := cpuGelu.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuGradOut := makeTensor(t, gradOutData, cpuOut.Shape())
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, cpuOut.Shape())
 	cpuGrads, err := cpuGelu.Backward(ctx, types.FullBackprop, cpuGradOut, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, cloneF32(inputData), shape)
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), shape)
 	gpuGelu := activations.NewGelu(gpuEng, ops)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -467,7 +469,7 @@ func TestGPUParity_GELU_Backward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -487,19 +489,19 @@ func TestGPUParity_Sigmoid_Backward(t *testing.T) {
 	gradOutData := deterministicData(2 * 8)
 	shape := []int{2, 8}
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuSigmoid := activations.NewSigmoid(cpuEng, ops)
 	cpuOut, err := cpuSigmoid.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuGradOut := makeTensor(t, gradOutData, cpuOut.Shape())
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, cpuOut.Shape())
 	cpuGrads, err := cpuSigmoid.Backward(ctx, types.FullBackprop, cpuGradOut, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, cloneF32(inputData), shape)
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), shape)
 	gpuSigmoid := activations.NewSigmoid(gpuEng, ops)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -508,7 +510,7 @@ func TestGPUParity_Sigmoid_Backward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -528,19 +530,19 @@ func TestGPUParity_Tanh_Backward(t *testing.T) {
 	gradOutData := deterministicData(2 * 8)
 	shape := []int{2, 8}
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuTanh := activations.NewTanh(cpuEng, ops)
 	cpuOut, err := cpuTanh.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuGradOut := makeTensor(t, gradOutData, cpuOut.Shape())
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, cpuOut.Shape())
 	cpuGrads, err := cpuTanh.Backward(ctx, types.FullBackprop, cpuGradOut, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, cloneF32(inputData), shape)
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), shape)
 	gpuTanh := activations.NewTanh(gpuEng, ops)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -549,7 +551,7 @@ func TestGPUParity_Tanh_Backward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -570,19 +572,19 @@ func TestGPUParity_LeakyReLU_Backward(t *testing.T) {
 	shape := []int{2, 8}
 	alpha := 0.01
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLRelu := activations.NewLeakyReLU(cpuEng, ops, activations.WithAlpha[float32](alpha))
 	cpuOut, err := cpuLRelu.Forward(ctx, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuGradOut := makeTensor(t, gradOutData, cpuOut.Shape())
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, cpuOut.Shape())
 	cpuGrads, err := cpuLRelu.Backward(ctx, types.FullBackprop, cpuGradOut, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, cloneF32(inputData), shape)
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), shape)
 	gpuLRelu := activations.NewLeakyReLU(gpuEng, ops, activations.WithAlpha[float32](alpha))
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -591,7 +593,7 @@ func TestGPUParity_LeakyReLU_Backward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -611,7 +613,7 @@ func TestGPUParity_SwiGLU_Backward(t *testing.T) {
 	inputData := deterministicData(2 * 8)
 	shape := []int{2, 8}
 
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuSwiGLU := activations.NewSwiGLU[float32](cpuEng, ops)
 	cpuOut, err := cpuSwiGLU.Forward(ctx, cpuInput)
 	if err != nil {
@@ -619,13 +621,13 @@ func TestGPUParity_SwiGLU_Backward(t *testing.T) {
 	}
 
 	gradOutData := deterministicData(len(cpuOut.Data()))
-	cpuGradOut := makeTensor(t, gradOutData, cpuOut.Shape())
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, cpuOut.Shape())
 	cpuGrads, err := cpuSwiGLU.Backward(ctx, types.FullBackprop, cpuGradOut, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
-	gpuInput := makeTensor(t, cloneF32(inputData), shape)
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), shape)
 	gpuSwiGLU := activations.NewSwiGLU[float32](gpuEng, ops)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -634,7 +636,7 @@ func TestGPUParity_SwiGLU_Backward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -660,23 +662,23 @@ func TestGPUParity_LayerNorm_Backward(t *testing.T) {
 	betaData := deterministicData(features)
 
 	// CPU
-	cpuGammaParam := makeParam(t, "gamma", gammaData, []int{features})
-	cpuBetaParam := makeParam(t, "beta", betaData, []int{features})
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuGammaParam := testutil.MakeParam(t, "gamma", gammaData, []int{features})
+	cpuBetaParam := testutil.MakeParam(t, "beta", betaData, []int{features})
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuLN := normalization.NewLayerNormalizationFromParams(cpuEng, eps, cpuGammaParam, cpuBetaParam)
 	if _, err := cpuLN.Forward(ctx, cpuInput); err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuGradOut := makeTensor(t, gradOutData, shape)
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, shape)
 	cpuGrads, err := cpuLN.Backward(ctx, types.FullBackprop, cpuGradOut, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
 	// GPU
-	gpuGammaParam := makeParam(t, "gamma", cloneF32(gammaData), []int{features})
-	gpuBetaParam := makeParam(t, "beta", cloneF32(betaData), []int{features})
-	gpuInput := makeTensor(t, cloneF32(inputData), shape)
+	gpuGammaParam := testutil.MakeParam(t, "gamma", cloneF32(gammaData), []int{features})
+	gpuBetaParam := testutil.MakeParam(t, "beta", cloneF32(betaData), []int{features})
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), shape)
 	gpuLN := normalization.NewLayerNormalizationFromParams(gpuEng, eps, gpuGammaParam, gpuBetaParam)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput, gpuGammaParam.Value, gpuBetaParam.Value}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -684,7 +686,7 @@ func TestGPUParity_LayerNorm_Backward(t *testing.T) {
 	if _, err := gpuLN.Forward(ctx, gpuInput); err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), shape)
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), shape)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -709,8 +711,8 @@ func TestGPUParity_RMSNorm_Backward(t *testing.T) {
 	gainData := deterministicData(features)
 
 	// CPU
-	cpuGainParam := makeParam(t, "gain", gainData, []int{features})
-	cpuInput := makeTensor(t, inputData, shape)
+	cpuGainParam := testutil.MakeParam(t, "gain", gainData, []int{features})
+	cpuInput := testutil.MakeTensor(t, inputData, shape)
 	cpuRMS, err := normalization.NewRMSNormFromParam(cpuEng, ops, eps, cpuGainParam)
 	if err != nil {
 		t.Fatalf("CPU NewRMSNorm: %v", err)
@@ -718,15 +720,15 @@ func TestGPUParity_RMSNorm_Backward(t *testing.T) {
 	if _, err := cpuRMS.Forward(ctx, cpuInput); err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuGradOut := makeTensor(t, gradOutData, shape)
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, shape)
 	cpuGrads, err := cpuRMS.Backward(ctx, types.FullBackprop, cpuGradOut, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
 	// GPU
-	gpuGainParam := makeParam(t, "gain", cloneF32(gainData), []int{features})
-	gpuInput := makeTensor(t, cloneF32(inputData), shape)
+	gpuGainParam := testutil.MakeParam(t, "gain", cloneF32(gainData), []int{features})
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), shape)
 	gpuRMS, err := normalization.NewRMSNormFromParam(gpuEng, ops, eps, gpuGainParam)
 	if err != nil {
 		t.Fatalf("GPU NewRMSNorm: %v", err)
@@ -737,7 +739,7 @@ func TestGPUParity_RMSNorm_Backward(t *testing.T) {
 	if _, err := gpuRMS.Forward(ctx, gpuInput); err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), shape)
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), shape)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -759,21 +761,21 @@ func TestGPUParity_Linear_Backward(t *testing.T) {
 	gradOutData := deterministicData(2 * outFeatures)
 
 	// CPU
-	cpuInput := makeTensor(t, inputData, []int{2, inFeatures})
-	cpuWeightParam := makeParam(t, "weight", weightData, []int{inFeatures, outFeatures})
+	cpuInput := testutil.MakeTensor(t, inputData, []int{2, inFeatures})
+	cpuWeightParam := testutil.MakeParam(t, "weight", weightData, []int{inFeatures, outFeatures})
 	cpuLinear := core.NewLinearFromParam(cpuEng, cpuWeightParam)
 	if _, err := cpuLinear.Forward(ctx, cpuInput); err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuGradOut := makeTensor(t, gradOutData, []int{2, outFeatures})
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, []int{2, outFeatures})
 	cpuGrads, err := cpuLinear.Backward(ctx, types.FullBackprop, cpuGradOut, cpuInput)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
 	// GPU
-	gpuInput := makeTensor(t, cloneF32(inputData), []int{2, inFeatures})
-	gpuWeightParam := makeParam(t, "weight", cloneF32(weightData), []int{inFeatures, outFeatures})
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), []int{2, inFeatures})
+	gpuWeightParam := testutil.MakeParam(t, "weight", cloneF32(weightData), []int{inFeatures, outFeatures})
 	gpuLinear := core.NewLinearFromParam(gpuEng, gpuWeightParam)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuInput, gpuWeightParam.Value}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -781,7 +783,7 @@ func TestGPUParity_Linear_Backward(t *testing.T) {
 	if _, err := gpuLinear.Forward(ctx, gpuInput); err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), []int{2, outFeatures})
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), []int{2, outFeatures})
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -809,21 +811,21 @@ func TestGPUParity_MatMul_Backward(t *testing.T) {
 	gradOutData := deterministicData(2 * 3)
 
 	// CPU
-	cpuA := makeTensor(t, aData, []int{2, 4})
-	cpuB := makeTensor(t, bData, []int{4, 3})
+	cpuA := testutil.MakeTensor(t, aData, []int{2, 4})
+	cpuB := testutil.MakeTensor(t, bData, []int{4, 3})
 	cpuMM := core.NewMatMul[float32](cpuEng)
 	if _, err := cpuMM.Forward(ctx, cpuA, cpuB); err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuGradOut := makeTensor(t, gradOutData, []int{2, 3})
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, []int{2, 3})
 	cpuGrads, err := cpuMM.Backward(ctx, types.FullBackprop, cpuGradOut, cpuA, cpuB)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
 	// GPU
-	gpuA := makeTensor(t, cloneF32(aData), []int{2, 4})
-	gpuB := makeTensor(t, cloneF32(bData), []int{4, 3})
+	gpuA := testutil.MakeTensor(t, cloneF32(aData), []int{2, 4})
+	gpuB := testutil.MakeTensor(t, cloneF32(bData), []int{4, 3})
 	gpuMM := core.NewMatMul[float32](gpuEng)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuA, gpuB}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -831,7 +833,7 @@ func TestGPUParity_MatMul_Backward(t *testing.T) {
 	if _, err := gpuMM.Forward(ctx, gpuA, gpuB); err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), []int{2, 3})
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), []int{2, 3})
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -853,21 +855,21 @@ func TestGPUParity_MSELoss_Backward(t *testing.T) {
 	shape := []int{2, 4}
 
 	// CPU
-	cpuPred := makeTensor(t, predData, shape)
-	cpuTarget := makeTensor(t, targetData, shape)
+	cpuPred := testutil.MakeTensor(t, predData, shape)
+	cpuTarget := testutil.MakeTensor(t, targetData, shape)
 	cpuMSE := loss.NewMSE(cpuEng, ops)
 	if _, err := cpuMSE.Forward(ctx, cpuPred, cpuTarget); err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuDOut := makeTensor(t, []float32{1.0}, []int{1})
+	cpuDOut := testutil.MakeTensor(t, []float32{1.0}, []int{1})
 	cpuGrads, err := cpuMSE.Backward(ctx, types.FullBackprop, cpuDOut, cpuPred, cpuTarget)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
 	// GPU
-	gpuPred := makeTensor(t, cloneF32(predData), shape)
-	gpuTarget := makeTensor(t, cloneF32(targetData), shape)
+	gpuPred := testutil.MakeTensor(t, cloneF32(predData), shape)
+	gpuTarget := testutil.MakeTensor(t, cloneF32(targetData), shape)
 	gpuMSE := loss.NewMSE(gpuEng, ops)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuPred, gpuTarget}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -875,7 +877,7 @@ func TestGPUParity_MSELoss_Backward(t *testing.T) {
 	if _, err := gpuMSE.Forward(ctx, gpuPred, gpuTarget); err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuDOut := makeTensor(t, []float32{1.0}, []int{1})
+	gpuDOut := testutil.MakeTensor(t, []float32{1.0}, []int{1})
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuDOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -897,21 +899,21 @@ func TestGPUParity_BCELoss_Backward(t *testing.T) {
 	shape := []int{2, 4}
 
 	// CPU
-	cpuPred := makeTensor(t, predData, shape)
-	cpuTarget := makeTensor(t, targetData, shape)
+	cpuPred := testutil.MakeTensor(t, predData, shape)
+	cpuTarget := testutil.MakeTensor(t, targetData, shape)
 	cpuBCE := loss.NewBCELoss(cpuEng, ops)
 	if _, err := cpuBCE.Forward(ctx, cpuPred, cpuTarget); err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuDOut := makeTensor(t, []float32{1.0}, []int{1})
+	cpuDOut := testutil.MakeTensor(t, []float32{1.0}, []int{1})
 	cpuGrads, err := cpuBCE.Backward(ctx, types.FullBackprop, cpuDOut, cpuPred, cpuTarget)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
 	// GPU
-	gpuPred := makeTensor(t, cloneF32(predData), shape)
-	gpuTarget := makeTensor(t, cloneF32(targetData), shape)
+	gpuPred := testutil.MakeTensor(t, cloneF32(predData), shape)
+	gpuTarget := testutil.MakeTensor(t, cloneF32(targetData), shape)
 	gpuBCE := loss.NewBCELoss(gpuEng, ops)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuPred, gpuTarget}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -919,7 +921,7 @@ func TestGPUParity_BCELoss_Backward(t *testing.T) {
 	if _, err := gpuBCE.Forward(ctx, gpuPred, gpuTarget); err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuDOut := makeTensor(t, []float32{1.0}, []int{1})
+	gpuDOut := testutil.MakeTensor(t, []float32{1.0}, []int{1})
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuDOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -941,21 +943,21 @@ func TestGPUParity_CrossEntropyLoss_Backward(t *testing.T) {
 	logitShape := []int{3, 5}
 
 	// CPU
-	cpuLogits := makeTensor(t, logitData, logitShape)
-	cpuTargets := makeTensor(t, targetData, []int{3})
+	cpuLogits := testutil.MakeTensor(t, logitData, logitShape)
+	cpuTargets := testutil.MakeTensor(t, targetData, []int{3})
 	cpuCEL := loss.NewCrossEntropyLoss[float32](cpuEng)
 	if _, err := cpuCEL.Forward(ctx, cpuLogits, cpuTargets); err != nil {
 		t.Fatalf("CPU Forward: %v", err)
 	}
-	cpuDOut := makeTensor(t, []float32{1.0}, []int{1})
+	cpuDOut := testutil.MakeTensor(t, []float32{1.0}, []int{1})
 	cpuGrads, err := cpuCEL.Backward(ctx, types.FullBackprop, cpuDOut)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
 	// GPU
-	gpuLogits := makeTensor(t, cloneF32(logitData), logitShape)
-	gpuTargets := makeTensor(t, cloneF32(targetData), []int{3})
+	gpuLogits := testutil.MakeTensor(t, cloneF32(logitData), logitShape)
+	gpuTargets := testutil.MakeTensor(t, cloneF32(targetData), []int{3})
 	gpuCEL := loss.NewCrossEntropyLoss[float32](gpuEng)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuLogits, gpuTargets}); err != nil {
 		t.Fatalf("UploadWeights: %v", err)
@@ -963,7 +965,7 @@ func TestGPUParity_CrossEntropyLoss_Backward(t *testing.T) {
 	if _, err := gpuCEL.Forward(ctx, gpuLogits, gpuTargets); err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuDOut := makeTensor(t, []float32{1.0}, []int{1})
+	gpuDOut := testutil.MakeTensor(t, []float32{1.0}, []int{1})
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuDOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}
@@ -987,9 +989,9 @@ func TestGPUParity_SDPA_Backward(t *testing.T) {
 	shape := []int{batch, seq, headDim}
 
 	// CPU
-	cpuQ := makeTensor(t, qData, shape)
-	cpuK := makeTensor(t, kData, shape)
-	cpuV := makeTensor(t, vData, shape)
+	cpuQ := testutil.MakeTensor(t, qData, shape)
+	cpuK := testutil.MakeTensor(t, kData, shape)
+	cpuV := testutil.MakeTensor(t, vData, shape)
 	cpuSDPA := attention.NewScaledDotProductAttention[float32](cpuEng, headDim)
 	cpuSDPA.SetCausal(true)
 	cpuOut, err := cpuSDPA.Forward(ctx, cpuQ, cpuK, cpuV, nil)
@@ -997,16 +999,16 @@ func TestGPUParity_SDPA_Backward(t *testing.T) {
 		t.Fatalf("CPU Forward: %v", err)
 	}
 	gradOutData := deterministicData(len(cpuOut.Data()))
-	cpuGradOut := makeTensor(t, gradOutData, cpuOut.Shape())
+	cpuGradOut := testutil.MakeTensor(t, gradOutData, cpuOut.Shape())
 	cpuGrads, err := cpuSDPA.Backward(ctx, types.FullBackprop, cpuGradOut, cpuQ, cpuK, cpuV)
 	if err != nil {
 		t.Fatalf("CPU Backward: %v", err)
 	}
 
 	// GPU
-	gpuQ := makeTensor(t, cloneF32(qData), shape)
-	gpuK := makeTensor(t, cloneF32(kData), shape)
-	gpuV := makeTensor(t, cloneF32(vData), shape)
+	gpuQ := testutil.MakeTensor(t, cloneF32(qData), shape)
+	gpuK := testutil.MakeTensor(t, cloneF32(kData), shape)
+	gpuV := testutil.MakeTensor(t, cloneF32(vData), shape)
 	gpuSDPA := attention.NewScaledDotProductAttention[float32](gpuEng, headDim)
 	gpuSDPA.SetCausal(true)
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuQ, gpuK, gpuV}); err != nil {
@@ -1016,7 +1018,7 @@ func TestGPUParity_SDPA_Backward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GPU Forward: %v", err)
 	}
-	gpuGradOut := makeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
+	gpuGradOut := testutil.MakeTensor(t, cloneF32(gradOutData), gpuOut.Shape())
 	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGradOut}); err != nil {
 		t.Fatalf("UploadWeights grad: %v", err)
 	}

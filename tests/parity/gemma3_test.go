@@ -3,10 +3,12 @@ package parity_test
 import (
 	"testing"
 
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
+
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 )
 
-var gemma3Config = modelParityConfig{
+var gemma3Config = testutil.ModelParityConfig{
 	Name:           "Gemma 3",
 	ZMFEnvVar:      "GEMMA3_ZMF_PATH",
 	ModelDirEnvVar: "GEMMA3_MODEL_DIR",
@@ -16,15 +18,15 @@ var gemma3Config = modelParityConfig{
 
 func TestGemma3ForwardPass(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelForwardPass(t, gemma3Config)
+	testutil.RunModelForwardPass(t, gemma3Config)
 }
 
 func TestGemma3GreedyDecode(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGreedyDecode(t, gemma3Config)
+	testutil.RunModelGreedyDecode(t, gemma3Config)
 }
 
 func TestGemma3Generation(t *testing.T) {
 	layerreg.RegisterAll()
-	runModelGeneration(t, gemma3Config)
+	testutil.RunModelGeneration(t, gemma3Config)
 }

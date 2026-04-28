@@ -3,6 +3,8 @@ package parity_test
 import (
 	"testing"
 
+	"github.com/zerfoo/zerfoo/tests/parity/testutil"
+
 	layerreg "github.com/zerfoo/zerfoo/layers/registry"
 )
 
@@ -23,7 +25,7 @@ import (
 func TestNewArchParity(t *testing.T) {
 	layerreg.RegisterAll()
 
-	archs := []modelParityConfig{
+	archs := []testutil.ModelParityConfig{
 		llama4Config,
 		gemma3nConfig,
 		commandRConfig,
@@ -34,13 +36,13 @@ func TestNewArchParity(t *testing.T) {
 
 	for _, arch := range archs {
 		t.Run(arch.Name+"/forward_pass", func(t *testing.T) {
-			runModelForwardPass(t, arch)
+			testutil.RunModelForwardPass(t, arch)
 		})
 		t.Run(arch.Name+"/greedy_decode", func(t *testing.T) {
-			runModelGreedyDecode(t, arch)
+			testutil.RunModelGreedyDecode(t, arch)
 		})
 		t.Run(arch.Name+"/generation", func(t *testing.T) {
-			runModelGeneration(t, arch)
+			testutil.RunModelGeneration(t, arch)
 		})
 	}
 }
