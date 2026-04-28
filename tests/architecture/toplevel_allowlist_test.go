@@ -28,8 +28,6 @@ func TestTopLevelAllowlist(t *testing.T) {
 	//      log, inference, generate, serve, data, internal, tests, sdk)
 	//   - infra/tooling dirs explicitly excluded from the package count
 	//     (docs, examples, scripts, benchmarks, bin, deploy, infra)
-	//   - open-core placement deferred to T124.7.1 ADR
-	//     (cloud, marketplace, compliance)
 	//   - pending-migration dirs still tracked under E124 sub-tasks;
 	//     entries marked PENDING must be removed once the migration
 	//     task lands. Each PENDING entry names its blocking task.
@@ -58,10 +56,6 @@ func TestTopLevelAllowlist(t *testing.T) {
 		"examples",
 		"infra",
 		"scripts",
-		// open-core placement deferred (T124.7.1 ADR pending)
-		"cloud",
-		"compliance",
-		"marketplace",
 		// PENDING migrations (E124) -- remove once each task lands
 		"results",      // PENDING -- benchmark output, candidate for benchmarks/results
 		"tabular",      // PENDING -- candidate for layers/tabular per E62 work
