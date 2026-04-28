@@ -7,11 +7,11 @@ import (
 
 func TestFedProx_ProximalTerm(t *testing.T) {
 	tests := []struct {
-		name         string
-		local        []float64
-		global       []float64
-		mu           float64
-		wantPenalty  float64
+		name        string
+		local       []float64
+		global      []float64
+		mu          float64
+		wantPenalty float64
 	}{
 		{
 			name:        "zero divergence",
