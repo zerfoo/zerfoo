@@ -3769,7 +3769,16 @@ left behind.
   Acceptance: ADR Accepted; clear placement decision with rationale.
   Verdict: extract all three packages to `feza-ai/zerfoo-enterprise`.
 
-- [ ] T124.7.2 Execute the placement decision (move or keep + document)  Owner: TBD  Est: 4h  verifies: [infrastructure]
+- [x] DONE 2026-04-28 T124.7.2 Execute the placement decision (move or keep + document)  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  Action taken: Path A. No external zerfoo callers detected (only intra-package
+  sibling imports inside cloud/marketplace/compliance themselves). git mv'd all
+  three top-level dirs to docs/archive/_extracted-to-enterprise/{cloud,marketplace,compliance}/
+  with ARCHIVED.md notices and a parent README. Underscore-prefixed parent dir
+  ensures Go toolchain ignores the archived sources. Architecture allowlist
+  tests (toplevel_allowlist_test.go, composition_test.go) updated to drop the
+  three entries. Push to feza-ai/zerfoo-enterprise is a separate human-led
+  workstream and is intentionally out of scope here.
+
   Deps: T124.7.1
   If split: extract dirs to new repo. If keep: add doc.go ADR refs to
   satisfy T124.1.3 lint. Either way, update the layout-test allowlist.
@@ -3844,7 +3853,7 @@ these fail in worktree isolation, drop to 4 per wave.)
 - [ ] T124.7.1 Open-core scope ADR  verifies: [infrastructure]
 
 #### Wave E124-6: Open-core execute + design refresh (2 agents)
-- [ ] T124.7.2 Execute placement decision  verifies: [infrastructure]
+- [x] DONE 2026-04-28 T124.7.2 Execute placement decision  verifies: [infrastructure]
 - [ ] T124.8.1 Refresh docs/design.md  verifies: [infrastructure]
 
 ### E124 Risk Register
