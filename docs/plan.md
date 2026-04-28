@@ -3709,7 +3709,7 @@ left behind.
 - [ ] T124.4.4 Move `monitor/` + `recover/` -> `training/mlops/{monitor,recover}/`  Owner: TBD  Est: 1.5h  verifies: [infrastructure]
   6 files total. `recover/retrain.go` already imports `monitor`.
 
-- [ ] T124.4.5 Move `provenance/` -> `training/provenance/`  Owner: TBD  Est: 1h  verifies: [infrastructure]
+- [x] T124.4.5 Move `provenance/` -> `training/provenance/`  Owner: TBD  Est: 1h  verifies: [infrastructure] DONE 2026-04-27
   Hash-chain model lifecycle audit.
 
 - [x] T124.4.6 Move `federated/` -> `training/federated/`  Owner: TBD  Est: 1h  verifies: [infrastructure]  DONE 2026-04-27
@@ -3826,7 +3826,7 @@ sync.
 these fail in worktree isolation, drop to 4 per wave.)
 
 #### Wave E124-3: Tail consolidation + activation unification (8 agents)
-- [ ] T124.4.5 provenance/ -> training/provenance/  verifies: [infrastructure]
+- [x] T124.4.5 provenance/ -> training/provenance/  verifies: [infrastructure] DONE 2026-04-27
 - [x] T124.4.6 federated/ -> training/federated/  verifies: [infrastructure]  DONE 2026-04-27
 - [x] T124.5.2 synth/ -> layers/generative/synth/  verifies: [infrastructure] DONE 2026-04-27
 - [ ] T124.5.3 shared/ -> layers/shared_latent/  verifies: [infrastructure]
