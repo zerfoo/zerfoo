@@ -19,7 +19,7 @@ func TestAndroidDemo_Build(t *testing.T) {
 	// that the command starts without immediate flag errors. A full bind
 	// requires the Android NDK, so we fall back to GOOS/GOARCH cross-compile
 	// if gomobile bind is not feasible.
-	cmd := exec.Command(gomobilePath, "bind", "-target=android", "-androidapi=24", "-o", t.TempDir()+"/mobile.aar", "github.com/zerfoo/zerfoo/mobile")
+	cmd := exec.Command(gomobilePath, "bind", "-target=android", "-androidapi=24", "-o", t.TempDir()+"/mobile.aar", "github.com/zerfoo/zerfoo/tests/mobile")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// If gomobile bind fails due to missing NDK, verify the package at
@@ -27,7 +27,7 @@ func TestAndroidDemo_Build(t *testing.T) {
 		t.Logf("gomobile bind failed (likely missing NDK): %s\n%s", err, output)
 		t.Log("Falling back to GOOS=android cross-compilation check")
 
-		crossCmd := exec.Command("go", "build", "github.com/zerfoo/zerfoo/mobile")
+		crossCmd := exec.Command("go", "build", "github.com/zerfoo/zerfoo/tests/mobile")
 		crossCmd.Env = append(crossCmd.Environ(), "GOOS=android", "GOARCH=arm64", "CGO_ENABLED=0")
 		crossOutput, crossErr := crossCmd.CombinedOutput()
 		if crossErr != nil {
