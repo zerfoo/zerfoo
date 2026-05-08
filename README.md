@@ -374,6 +374,35 @@ trainer.Fit(ctx, trainX, trainY)
 predictions, _ := model.Predict(ctx, testX)
 ```
 
+### Fused SDPA graph node
+
+`layers/attention.FusedSDPA[T]` wraps the existing `ScaledDotProductAttention`
+as a `graph.Node[T]` so callers can compose fused scale + softmax + matmul
+attention inside autograd graphs without re-implementing the math:
+
+```go
+import (
+    "github.com/zerfoo/zerfoo/layers/attention"
+)
+
+// Causal (decoder) SDPA, head_dim=64.
+sdpa := attention.NewFusedSDPA[float32](engine, 64)
+
+// Bidirectional (encoder) SDPA with explicit Q/KV head counts.
+enc := attention.NewFusedSDPA[float32](engine, 64,
+    attention.WithFusedSDPABidirectional[float32](),
+    attention.WithFusedSDPAHeadCounts[float32](8, 8),
+)
+
+// Forward accepts (Q, K, V) or (Q, K, V, mask); Backward returns gradients
+// for [Q, K, V] (and a nil slot for mask when one was supplied).
+out, err := sdpa.Forward(ctx, q, k, v)
+```
+
+The node is numerically equivalent to the unfused
+`Q @ Kᵀ → scale → softmax → dropout → V` chain (fp32 ≤ 1e-5 fwd / 1e-5 bwd,
+fp64 ≤ 1e-12 fwd / 1e-10 bwd; see `layers/attention/fused_sdpa_node_test.go`).
+
 ## CLI
 
 ```bash
