@@ -64,13 +64,21 @@ func NewAdamW[T tensor.Numeric](engine compute.Engine[T], learningRate, beta1, b
 }
 
 // shouldUseMixedPrecisionV returns true when AdamW should keep the
-// second-moment accumulator in float64 instead of T. True only when T is
-// float32 or below (float64 T doesn't need promotion) AND the engine is
-// a CPU engine. GPU engines preserve the current all-T path so their
-// CUDA-native kernels keep working; upgrading them to mixed precision
-// is a follow-up once a native GPU kernel exists for the division.
+// second-moment accumulator in float64 instead of T. True when T is float32
+// or below (float64 T doesn't need promotion) on a CPU or CUDA GPU engine.
+//
+// An all-T (f32) second moment is numerically unstable for GPU f32 training:
+// sqrt(v)+eps in the denominator loses precision when gradients span a wide
+// dynamic range, so m/sqrt(v) drifts the weights until they overflow to NaN a
+// few optimizer steps in -- the "CrossAsset cliff" GPU-only blow-up. The CPU
+// path has always used an f64 v and trains the same model cleanly, so GPU must
+// match. stepMixedV does the f64 update on host then writes param/m/grad back
+// to device storage (a no-op for host storage), so it is correct on the GB10
+// unified-memory engine and on discrete CUDA GPUs alike.
 func shouldUseMixedPrecisionV[T tensor.Numeric](engine compute.Engine[T]) bool {
-	if _, ok := engine.(*compute.CPUEngine[T]); !ok {
+	switch engine.(type) {
+	case *compute.CPUEngine[T], *compute.GPUEngine[T]:
+	default:
 		return false
 	}
 	var zero T
@@ -310,6 +318,15 @@ func (a *AdamW[T]) stepMixedV(_ context.Context, params []*graph.Parameter[T]) e
 
 			gradData[i] = zero
 		}
+
+		// Persist the host-side updates back to the parameter's storage. For
+		// CPU storage Data() returns the backing slice and this is a no-op
+		// reassignment; for GPU storage Data() returned a host copy, so the
+		// updated weights, first moment, and zeroed gradient must be copied
+		// back to the device (H2D) or the step would be silently discarded.
+		param.Value.GetStorage().Set(paramData)
+		m.GetStorage().Set(mData)
+		grad.GetStorage().Set(gradData)
 	}
 
 	return nil
