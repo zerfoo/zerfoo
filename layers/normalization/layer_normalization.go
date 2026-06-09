@@ -132,10 +132,14 @@ func NewLayerNormalizationFromParams[T tensor.Numeric](
 // when T is float32 or below AND the engine is a CPU engine. GPU engines
 // keep the current all-T path so their CUDA-native kernels remain in
 // charge of precision.
-func shouldUseMixedPrecisionBackward[T tensor.Numeric](engine compute.Engine[T]) bool {
-	if _, ok := engine.(*compute.CPUEngine[T]); !ok {
-		return false
-	}
+func shouldUseMixedPrecisionBackward[T tensor.Numeric](_ compute.Engine[T]) bool {
+	// Enabled for the low-precision float types on ALL engines (CPU and GPU).
+	// LayerNorm.Backward divides by the per-row stddev; in float32 an early-
+	// training gradient spike overflows (the GPU "CrossAsset cliff": gamma/beta
+	// grads -> ~1e12, cascading to ~1e34/NaN, while CPU's float64 backward
+	// absorbed it). Running the per-element backward in float64 fixes both.
+	// Previously gated to *compute.CPUEngine only, which left GPU float32
+	// LayerNorm backward overflowing to NaN.
 	var zero T
 	switch any(zero).(type) {
 	case float64:
