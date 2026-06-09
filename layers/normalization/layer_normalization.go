@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"sync"
 
 	"github.com/zerfoo/float16"
 	"github.com/zerfoo/float8"
@@ -13,6 +15,34 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
 )
+
+// ZERFOO_TRACE_LNBWD dumps the integrity of the cached forward stats
+// (mean/variance/normedInput) and the first NaN-producing position's
+// intermediates on the first LayerNorm backward that yields a non-finite
+// dInput. Pins whether the NaN comes from corrupted/overflowed forward stats
+// (arena reuse / forward overflow) vs the backward arithmetic itself
+// (Wolf docs/plan-gpu-f32-residual). Diagnostic only.
+var (
+	traceLnBwd = os.Getenv("ZERFOO_TRACE_LNBWD") != ""
+	lnBwdOnce  sync.Once
+)
+
+// lnScanT reports the max finite |.| and NaN/Inf count of a tensor.Numeric slice.
+func lnScanT[T tensor.Numeric](d []T) (maxAbs float64, bad int) {
+	for _, v := range d {
+		f := lnNumericToFloat64(v)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			bad++
+
+			continue
+		}
+		if a := math.Abs(f); a > maxAbs {
+			maxAbs = a
+		}
+	}
+
+	return maxAbs, bad
+}
 
 // LayerNormalization implements the Layer Normalization operation.
 //
@@ -433,6 +463,10 @@ func (ln *LayerNormalization[T]) backwardMixedCPU(dOut *tensor.TensorNumeric[T],
 	dBeta64 := make([]float64, nFeat)
 	nFeatF := float64(nFeat)
 
+	// Diagnostic capture of the first NaN-producing position.
+	badP := -1
+	var badVar, badMu, badSigma, badSumDNorm, badSumDNormXMu, badInMax float64
+
 	for p := 0; p < positions; p++ {
 		mu := lnNumericToFloat64(meanData[p])
 		sigma := math.Sqrt(lnNumericToFloat64(varData[p]) + epsilon)
@@ -460,10 +494,43 @@ func (ln *LayerNormalization[T]) backwardMixedCPU(dOut *tensor.TensorNumeric[T],
 			term2 := xMinusMu * sumDNormXMu / (nFeatF * sigma3)
 			term3 := sumDNorm / (nFeatF * sigma)
 
-			dInputData[base+i] = ops.FromFloat64(term1 - term2 - term3)
+			out := term1 - term2 - term3
+			dInputData[base+i] = ops.FromFloat64(out)
 			dGamma64[i] += dOutI * normed
 			dBeta64[i] += dOutI
+
+			if traceLnBwd && badP < 0 && (math.IsNaN(out) || math.IsInf(out, 0)) {
+				badP = p
+				badVar = lnNumericToFloat64(varData[p])
+				badMu = mu
+				badSigma = sigma
+				badSumDNorm = sumDNorm
+				badSumDNormXMu = sumDNormXMu
+				if a := math.Abs(lnNumericToFloat64(inputData[base+i])); a > badInMax {
+					badInMax = a
+				}
+			}
 		}
+	}
+
+	if traceLnBwd && badP >= 0 {
+		lnBwdOnce.Do(func() {
+			dOutMax, dOutBad := lnScanT(dOutData)
+			meanMax, meanBad := lnScanT(meanData)
+			varMax, varBad := lnScanT(varData)
+			normMax, normBad := lnScanT(normedData)
+			inMax, inBad := lnScanT(inputData)
+			fmt.Fprintf(os.Stderr,
+				"[LNBWD-NAN] positions=%d nFeat=%d eps=%.3g | CACHED FWD STATS: "+
+					"mean(max=%.5g bad=%d) var(max=%.5g bad=%d) normed(max=%.5g bad=%d) "+
+					"input(max=%.5g bad=%d) dOut(max=%.5g bad=%d)\n",
+				positions, nFeat, epsilon, meanMax, meanBad, varMax, varBad,
+				normMax, normBad, inMax, inBad, dOutMax, dOutBad)
+			fmt.Fprintf(os.Stderr,
+				"[LNBWD-NAN] first bad position p=%d: var=%.6g mean=%.6g sigma=%.6g "+
+					"sumDNorm=%.6g sumDNormXMu=%.6g input_abs=%.6g\n",
+				badP, badVar, badMu, badSigma, badSumDNorm, badSumDNormXMu, badInMax)
+		})
 	}
 
 	dGammaTensor, err := tensor.New[T]([]int{nFeat}, nil)
