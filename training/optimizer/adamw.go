@@ -37,10 +37,16 @@ type AdamW[T tensor.Numeric] struct {
 	m map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // First moment estimates (T-precision)
 	v map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // Second moment estimates (T-precision, GPU path)
 
-	// Mixed-precision sidecar. When useMixedV is true, v64[p] holds the
-	// second moment in float64 and v[p] is unused. Allocated lazily per
+	// Mixed-precision sidecars. When useMixedV is true the second moment is
+	// held host-side in v64[p] (float64) and the first moment is held host-side
+	// in mMixed[p] (T-precision); the device tensors v[p] and m[p] are unused.
+	// Keeping both moments host-only is the ADR-070 optimization: on a GPU
+	// engine GPUStorage.Data() is a D2H copy and Set() an H2D copy, so holding
+	// the optimizer state that only the host update touches in plain Go slices
+	// removes those per-step round-trips entirely. Allocated lazily per
 	// parameter on the first Step call.
 	v64       map[*graph.Parameter[T]][]float64
+	mMixed    map[*graph.Parameter[T]][]T
 	useMixedV bool
 
 	t int // Timestep
@@ -58,6 +64,7 @@ func NewAdamW[T tensor.Numeric](engine compute.Engine[T], learningRate, beta1, b
 		m:            make(map[*graph.Parameter[T]]*tensor.TensorNumeric[T]),
 		v:            make(map[*graph.Parameter[T]]*tensor.TensorNumeric[T]),
 		v64:          make(map[*graph.Parameter[T]][]float64),
+		mMixed:       make(map[*graph.Parameter[T]][]T),
 		useMixedV:    shouldUseMixedPrecisionV[T](engine),
 		t:            0,
 	}
@@ -241,15 +248,36 @@ func (a *AdamW[T]) stepEngine(ctx context.Context, params []*graph.Parameter[T])
 	return nil
 }
 
-// stepMixedV implements Adam update with the second-moment accumulator
-// held in float64. The first moment, parameter values, and gradients
-// stay in T. Only CPU engines reach this path (see shouldUseMixedPrecisionV).
+// stepMixedV implements the Adam update with the second-moment accumulator
+// held in float64. The parameter values stay in T; the first moment is kept
+// host-side in T. Both CPU and GPU (GB10 CUDA) engines reach this path for
+// float32-and-below T (see shouldUseMixedPrecisionV).
 //
-// The critical improvement is that sqrt(v) + epsilon never collapses to
-// just epsilon due to float32 underflow on near-zero gradients, which in
-// the all-T path can yield update magnitudes of m/epsilon = m * 1e5 and
-// cause weights to drift rapidly toward the float32 overflow edge.
-func (a *AdamW[T]) stepMixedV(_ context.Context, params []*graph.Parameter[T]) error {
+// Numerics: sqrt(v) + epsilon never collapses to just epsilon due to float32
+// underflow on near-zero gradients, which in the all-T path can yield update
+// magnitudes of m/epsilon = m * 1e5 and cause weights to drift rapidly toward
+// the float32 overflow edge. This is the optimizer fix for the GPU "CrossAsset
+// cliff" (ADR 070).
+//
+// Host round-trip minimization (ADR 070, decision 2): GPUStorage.Data() returns
+// a host *copy* (D2H) and Set() performs an H2D copy, so naively reading and
+// writing every piece of optimizer state through the device storage every step
+// is a per-step host<->device sync. We keep the second moment (v64) and the
+// first moment (mMixed) as host-only Go slices that the engine never touches,
+// so they incur no transfer at all. Only the param value is genuinely shared
+// with the device: we read it (D2H), update it on host, and write it back
+// (H2D). The gradient is read once (D2H) and then zeroed *on device* via
+// engine.Fill, avoiding an H2D write-back of a zero buffer. Per parameter per
+// step this is 2 reads + 1 write + 1 device fill, down from the previous 3
+// reads + 3 writes.
+//
+// A true on-device f64 accumulator (ADR 070's preferred end state) is NOT
+// implemented here because the GPU engine's elementwise/scalar ops are gated on
+// isFloat32[T] and fall back to the CPU engine for any non-f32 T -- an f64
+// device tensor would execute every op on host anyway. Promoting the update
+// fully on-device requires native f64 CUDA kernels (Sqrt/Div/Add/Mul/...),
+// which is out of scope here and tracked as the ADR-070 follow-up.
+func (a *AdamW[T]) stepMixedV(ctx context.Context, params []*graph.Parameter[T]) error {
 	ops := a.engine.Ops()
 	one64 := 1.0
 	t64 := float64(a.t)
@@ -270,37 +298,32 @@ func (a *AdamW[T]) stepMixedV(_ context.Context, params []*graph.Parameter[T]) e
 			continue
 		}
 
-		if _, ok := a.m[param]; !ok {
-			mTensor, err := tensor.New[T](param.Value.Shape(), nil)
-			if err != nil {
-				return err
-			}
-			mData := mTensor.Data()
-			var zero T
-			for i := range mData {
-				mData[i] = zero
-			}
-			a.m[param] = mTensor
-
+		if _, ok := a.mMixed[param]; !ok {
 			total := 1
 			for _, d := range param.Value.Shape() {
 				total *= d
 			}
+			// Host-only first and second moment. These slices are never read
+			// or written by the engine, so on a GPU engine they cost zero
+			// host<->device transfers (cf. the device m tensor in stepEngine).
+			a.mMixed[param] = make([]T, total)
 			a.v64[param] = make([]float64, total)
 		}
 
-		m := a.m[param]
+		mData := a.mMixed[param]
 		v64 := a.v64[param]
-		paramData := param.Value.Data()
-		gradData := grad.Data()
-		mData := m.Data()
+		paramData := param.Value.Data() // D2H copy on GPU storage.
+		gradData := grad.Data()         // D2H copy on GPU storage.
 
 		if len(v64) != len(paramData) {
 			return fmt.Errorf("adamw: v64 size mismatch for parameter %q: %d vs %d",
 				param.Name, len(v64), len(paramData))
 		}
+		if len(mData) != len(paramData) {
+			return fmt.Errorf("adamw: mMixed size mismatch for parameter %q: %d vs %d",
+				param.Name, len(mData), len(paramData))
+		}
 
-		var zero T
 		for i := range paramData {
 			g := numericToFloat64(gradData[i])
 			mOld := numericToFloat64(mData[i])
@@ -315,18 +338,23 @@ func (a *AdamW[T]) stepMixedV(_ context.Context, params []*graph.Parameter[T]) e
 			pv := numericToFloat64(paramData[i])
 			pv = pv - update - lrWd*pv
 			paramData[i] = ops.FromFloat64(pv)
-
-			gradData[i] = zero
 		}
 
-		// Persist the host-side updates back to the parameter's storage. For
-		// CPU storage Data() returns the backing slice and this is a no-op
-		// reassignment; for GPU storage Data() returned a host copy, so the
-		// updated weights, first moment, and zeroed gradient must be copied
-		// back to the device (H2D) or the step would be silently discarded.
+		// Persist the updated weights to the parameter's storage. For CPU
+		// storage Data() returned the backing slice and this is a no-op
+		// reassignment; for GPU storage Data() returned a host copy, so the new
+		// weights must be copied back to the device (H2D) or the step would be
+		// silently discarded. The first/second moments live host-only in
+		// mMixed/v64 and need no write-back.
 		param.Value.GetStorage().Set(paramData)
-		m.GetStorage().Set(mData)
-		grad.GetStorage().Set(gradData)
+
+		// Zero the gradient on-device rather than via an H2D write of a zero
+		// buffer. On CPU this is a cheap loop; on GPU it is a single Fill
+		// kernel and avoids one host->device transfer per parameter per step.
+		var zero T
+		if err := a.engine.Fill(ctx, grad, zero); err != nil {
+			param.ClearGradient()
+		}
 	}
 
 	return nil
