@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"sync"
+	"sync/atomic"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -19,15 +19,15 @@ import (
 // (Mul/Tanh/...) over-amplifies on the GPU f32 path and drives the CrossAsset
 // activation blowup (Wolf docs/plan-gpu-f32-residual). Diagnostic only.
 var (
-	traceGelu     = os.Getenv("ZERFOO_TRACE_GELU") != ""
-	traceGeluOnce sync.Once
+	traceGelu      = os.Getenv("ZERFOO_TRACE_GELU") != ""
+	traceGeluCount int64 // atomic: number of over-amplifying calls already dumped
 )
 
-func geluTraceMag[T tensor.Float](label string, t *tensor.TensorNumeric[T]) {
+func geluTraceMag[T tensor.Float](label string, t *tensor.TensorNumeric[T]) float64 {
 	if t == nil {
 		fmt.Fprintf(os.Stderr, "[GELU-TRACE] %-16s nil\n", label)
 
-		return
+		return 0
 	}
 	var maxAbs float64
 	var bad int
@@ -43,6 +43,8 @@ func geluTraceMag[T tensor.Float](label string, t *tensor.TensorNumeric[T]) {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "[GELU-TRACE] %-16s max_abs=%.5g bad=%d\n", label, maxAbs, bad)
+
+	return maxAbs
 }
 
 // Gelu represents a standard Gelu activation layer.
@@ -141,16 +143,49 @@ func (g *Gelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 	}
 
 	if traceGelu {
-		traceGeluOnce.Do(func() {
+		// Cheap pre-check: only the input and output max drive the decision to
+		// dump, and the full per-intermediate dump only runs when this call
+		// over-amplifies (output_max >> input_max) -- i.e. the broken call we
+		// want to pin. Capped at 6 dumps to bound log volume.
+		xMax := tensorMaxAbs(x)
+		outMax := tensorMaxAbs(output)
+		overAmplifies := outMax > 100 && outMax > 10*xMax
+		if (atomic.LoadInt64(&traceGeluCount) == 0 || overAmplifies) &&
+			atomic.AddInt64(&traceGeluCount, 1) <= 6 {
+			tag := "baseline"
+			if overAmplifies {
+				tag = "OVER-AMP"
+			}
+			fmt.Fprintf(os.Stderr, "[GELU-TRACE] --- call (%s) x_max=%.5g out_max=%.5g ---\n", tag, xMax, outMax)
 			geluTraceMag("x", x)
 			geluTraceMag("x3", x3)
 			geluTraceMag("term3(tanh_in)", term3)
 			geluTraceMag("tanh(term3)", tanhResult)
+			geluTraceMag("term5(x*(1+tanh))", term5)
 			geluTraceMag("output", output)
-		})
+		}
 	}
 
 	return output, nil
+}
+
+// tensorMaxAbs returns the max finite |value| in t (0 for nil/empty).
+func tensorMaxAbs[T tensor.Float](t *tensor.TensorNumeric[T]) float64 {
+	if t == nil {
+		return 0
+	}
+	var m float64
+	for _, v := range t.Data() {
+		f := float64(v)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			continue
+		}
+		if a := math.Abs(f); a > m {
+			m = a
+		}
+	}
+
+	return m
 }
 
 // Backward performs the backward pass using only engine primitives.
