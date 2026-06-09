@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"sync"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -11,6 +13,37 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
 )
+
+// ZERFOO_TRACE_GELU dumps the max|.| and NaN/Inf count of each GELU forward
+// intermediate on the first GELU.Forward call. Used to pin which primitive
+// (Mul/Tanh/...) over-amplifies on the GPU f32 path and drives the CrossAsset
+// activation blowup (Wolf docs/plan-gpu-f32-residual). Diagnostic only.
+var (
+	traceGelu     = os.Getenv("ZERFOO_TRACE_GELU") != ""
+	traceGeluOnce sync.Once
+)
+
+func geluTraceMag[T tensor.Float](label string, t *tensor.TensorNumeric[T]) {
+	if t == nil {
+		fmt.Fprintf(os.Stderr, "[GELU-TRACE] %-16s nil\n", label)
+
+		return
+	}
+	var maxAbs float64
+	var bad int
+	for _, v := range t.Data() {
+		f := float64(v)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			bad++
+
+			continue
+		}
+		if a := math.Abs(f); a > maxAbs {
+			maxAbs = a
+		}
+	}
+	fmt.Fprintf(os.Stderr, "[GELU-TRACE] %-16s max_abs=%.5g bad=%d\n", label, maxAbs, bad)
+}
 
 // Gelu represents a standard Gelu activation layer.
 // Implements: 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
@@ -105,6 +138,16 @@ func (g *Gelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 	output, err := g.engine.MulScalar(ctx, term5, ops.FromFloat64(0.5))
 	if err != nil {
 		return nil, err
+	}
+
+	if traceGelu {
+		traceGeluOnce.Do(func() {
+			geluTraceMag("x", x)
+			geluTraceMag("x3", x3)
+			geluTraceMag("term3(tanh_in)", term3)
+			geluTraceMag("tanh(term3)", tanhResult)
+			geluTraceMag("output", output)
+		})
 	}
 
 	return output, nil
