@@ -418,9 +418,6 @@ func (ln *LayerNormalization[T]) backwardMixedCPU(dOut *tensor.TensorNumeric[T],
 
 	inputData := input.Data()
 	dOutData := dOut.Data()
-	meanData := ln.mean.Data()
-	varData := ln.variance.Data()
-	normedData := ln.normedInput.Data()
 	gammaData := ln.gamma.Value.Data()
 
 	dInputTensor, err := tensor.New[T](ln.inputShape, nil)
@@ -434,10 +431,30 @@ func (ln *LayerNormalization[T]) backwardMixedCPU(dOut *tensor.TensorNumeric[T],
 	nFeatF := float64(nFeat)
 
 	for p := 0; p < positions; p++ {
-		mu := lnNumericToFloat64(meanData[p])
-		sigma := math.Sqrt(lnNumericToFloat64(varData[p]) + epsilon)
-		sigma3 := sigma * sigma * sigma
 		base := p * nFeat
+
+		// Recompute mean and variance from the (reliable) forward input in
+		// float64 rather than trusting the cached ln.mean / ln.variance /
+		// ln.normedInput tensors. On the GPU arena those cached tensors can be
+		// overwritten by downstream forward ops before Backward runs -- the
+		// cached variance comes back negative, making sigma = sqrt(var+eps) NaN
+		// (the residual GPU f32 "CrossAsset cliff"; CPU's GC-kept tensors were
+		// immune, masking it). Recomputing here is self-contained and exact.
+		var mu float64
+		for i := 0; i < nFeat; i++ {
+			mu += lnNumericToFloat64(inputData[base+i])
+		}
+		mu /= nFeatF
+
+		var variance float64
+		for i := 0; i < nFeat; i++ {
+			d := lnNumericToFloat64(inputData[base+i]) - mu
+			variance += d * d
+		}
+		variance /= nFeatF
+
+		sigma := math.Sqrt(variance + epsilon)
+		sigma3 := sigma * sigma * sigma
 
 		var sumDNorm, sumDNormXMu float64
 		for i := 0; i < nFeat; i++ {
@@ -453,7 +470,7 @@ func (ln *LayerNormalization[T]) backwardMixedCPU(dOut *tensor.TensorNumeric[T],
 			gi := lnNumericToFloat64(gammaData[i])
 			dOutI := lnNumericToFloat64(dOutData[base+i])
 			xMinusMu := lnNumericToFloat64(inputData[base+i]) - mu
-			normed := lnNumericToFloat64(normedData[base+i])
+			normed := xMinusMu / sigma
 
 			dNorm := dOutI * gi
 			term1 := dNorm / sigma
