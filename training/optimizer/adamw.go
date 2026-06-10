@@ -348,13 +348,22 @@ func (a *AdamW[T]) stepMixedV(ctx context.Context, params []*graph.Parameter[T])
 		// mMixed/v64 and need no write-back.
 		param.Value.GetStorage().Set(paramData)
 
-		// Zero the gradient on-device rather than via an H2D write of a zero
-		// buffer. On CPU this is a cheap loop; on GPU it is a single Fill
-		// kernel and avoids one host->device transfer per parameter per step.
+		// Zero the gradient IN PLACE, preserving its storage buffer. Do NOT use
+		// engine.Fill here: on the GPU engine Fill reallocates the tensor's
+		// storage from the arena pool (gpuFill -> pool.Alloc + SetStorage), which
+		// moves param.Gradient INTO the arena. Callers that accumulate gradients
+		// across a batch and reset the arena per sample (e.g. Wolf crossasset)
+		// rely on the gradient living in a persistent, NON-arena buffer; an arena
+		// reset would then reclaim that buffer mid-accumulation and corrupt the
+		// next step's gradient -- a GPU-only, timing-sensitive NaN. Writing zeros
+		// back through the existing storage keeps the same buffer (a same-size
+		// Set is an in-place memcpy / H2D, not a realloc). gradData is the host
+		// copy already read above, so this reuses it.
 		var zero T
-		if err := a.engine.Fill(ctx, grad, zero); err != nil {
-			param.ClearGradient()
+		for i := range gradData {
+			gradData[i] = zero
 		}
+		grad.GetStorage().Set(gradData)
 	}
 
 	return nil
