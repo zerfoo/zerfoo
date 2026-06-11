@@ -200,7 +200,7 @@ func TestBaseActivation_BackwardErrors(t *testing.T) {
 		input := makeTensor(t, []int{2}, []float32{1, 2})
 		_, _ = base.Forward(ctx, input)
 		grad := makeTensor(t, []int{2}, []float32{1, 1})
-		_, err := base.Backward(ctx, types.FullBackprop, grad)
+		_, err := base.Backward(ctx, types.FullBackprop, grad, input)
 		if err == nil {
 			t.Error("expected error from UnaryOp")
 		}
@@ -214,7 +214,7 @@ func TestBaseActivation_BackwardErrors(t *testing.T) {
 		input := makeTensor(t, []int{2}, []float32{1, 2})
 		_, _ = base.Forward(ctx, input)
 		grad := makeTensor(t, []int{2}, []float32{1, 1})
-		_, err := base.Backward(ctx, types.FullBackprop, grad)
+		_, err := base.Backward(ctx, types.FullBackprop, grad, input)
 		if err == nil {
 			t.Error("expected error from Mul")
 		}
@@ -248,7 +248,7 @@ func TestGelu(t *testing.T) {
 		input := makeTensor(t, []int{4}, []float32{-1, 0, 0.5, 1})
 		_, _ = gelu.Forward(ctx, input)
 		grad := makeTensor(t, []int{4}, []float32{1, 1, 1, 1})
-		grads, err := gelu.Backward(ctx, types.FullBackprop, grad)
+		grads, err := gelu.Backward(ctx, types.FullBackprop, grad, input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -419,7 +419,7 @@ func TestLeakyReLU_BackwardErrors(t *testing.T) {
 		input := makeTensor(t, []int{2}, []float32{1, -1})
 		_, _ = lr.Forward(ctx, input)
 		grad := makeTensor(t, []int{2}, []float32{1, 1})
-		_, err := lr.Backward(ctx, types.FullBackprop, grad)
+		_, err := lr.Backward(ctx, types.FullBackprop, grad, input)
 		if err == nil {
 			t.Error("expected error")
 		}
@@ -431,7 +431,7 @@ func TestLeakyReLU_BackwardErrors(t *testing.T) {
 		input := makeTensor(t, []int{2}, []float32{1, -1})
 		_, _ = lr.Forward(ctx, input)
 		grad := makeTensor(t, []int{2}, []float32{1, 1})
-		_, err := lr.Backward(ctx, types.FullBackprop, grad)
+		_, err := lr.Backward(ctx, types.FullBackprop, grad, input)
 		if err == nil {
 			t.Error("expected error")
 		}

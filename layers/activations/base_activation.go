@@ -12,11 +12,14 @@ import (
 )
 
 // BaseActivation provides common functionality for unary activation functions.
+//
+// Backward recomputes the derivative from the live `inputs ...` it receives
+// (ztensor ADR 006 recompute pattern) instead of a struct-field input cache,
+// so an arena buffer reuse between Forward and Backward cannot corrupt it.
 type BaseActivation[T tensor.Numeric] struct {
 	graph.NoParameters[T]
 	engine      compute.Engine[T]
 	ops         numeric.Arithmetic[T]
-	lastInput   *tensor.TensorNumeric[T]
 	outputShape []int
 	opType      string
 	forwardOp   func(T) T
@@ -84,10 +87,9 @@ func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 		return nil, fmt.Errorf("BaseActivation: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
 
-	b.lastInput = inputs[0]
-	b.outputShape = b.lastInput.Shape()
+	b.outputShape = inputs[0].Shape()
 
-	output, err := b.engine.UnaryOp(ctx, b.lastInput, b.forwardOp)
+	output, err := b.engine.UnaryOp(ctx, inputs[0], b.forwardOp)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +97,15 @@ func (b *BaseActivation[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 	return output, nil
 }
 
-// Backward performs the backward pass of the activation function.
-func (b *BaseActivation[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	derivative, err := b.engine.UnaryOp(ctx, b.lastInput, b.backwardOp)
+// Backward performs the backward pass of the activation function. The
+// derivative is recomputed from the live input the graph passes in, not
+// from a cached forward tensor (ztensor ADR 006).
+func (b *BaseActivation[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("BaseActivation: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
+	}
+
+	derivative, err := b.engine.UnaryOp(ctx, inputs[0], b.backwardOp)
 	if err != nil {
 		return nil, err
 	}

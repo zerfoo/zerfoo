@@ -64,7 +64,7 @@ func TestGeluBackward(t *testing.T) {
 				t.Fatalf("create grad: %v", err)
 			}
 
-			grads, err := gelu.Backward(ctx, types.FullBackprop, onesGrad)
+			grads, err := gelu.Backward(ctx, types.FullBackprop, onesGrad, input)
 			if err != nil {
 				t.Fatalf("Backward: %v", err)
 			}
@@ -112,7 +112,7 @@ func TestGeluBackwardBatch(t *testing.T) {
 		onesGrad.Data()[i] = 1.0
 	}
 
-	grads, err := gelu.Backward(ctx, types.FullBackprop, onesGrad)
+	grads, err := gelu.Backward(ctx, types.FullBackprop, onesGrad, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestGeluBackwardWithOutputGradient(t *testing.T) {
 		t.Fatalf("create outGrad: %v", err)
 	}
 
-	grads, err := gelu.Backward(ctx, types.FullBackprop, outGrad)
+	grads, err := gelu.Backward(ctx, types.FullBackprop, outGrad, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestGeluBackwardWithOutputGradient(t *testing.T) {
 	input2, _ := tensor.New[float32]([]int{1, 2}, []float32{1.0, -1.0})
 	_, _ = gelu2.Forward(ctx, input2)
 	unitGrad, _ := tensor.New[float32]([]int{1, 2}, []float32{1.0, 1.0})
-	unitGrads, _ := gelu2.Backward(ctx, types.FullBackprop, unitGrad)
+	unitGrads, _ := gelu2.Backward(ctx, types.FullBackprop, unitGrad, input2)
 
 	// grads[0] should equal unitGrads[0] * outGrad element-wise
 	tol := float32(1e-5)
@@ -271,7 +271,7 @@ func TestGeluBackwardEngineErrors(t *testing.T) {
 				t.Skipf("Forward failed (expected for some error injections): %v", err)
 			}
 			grad := makeTensor(t, out.Shape(), []float32{1, 1})
-			_, err = gelu.Backward(ctx, types.FullBackprop, grad)
+			_, err = gelu.Backward(ctx, types.FullBackprop, grad, input)
 			if err == nil {
 				t.Error("expected error")
 			}
