@@ -19,11 +19,20 @@ type SwiGLU[T tensor.Numeric] struct {
 	ops     numeric.Arithmetic[T]
 	sigmoid *Sigmoid[T] // SwiGLU uses composed Sigmoid internally
 
-	// Cached tensors for backward pass
-	lastInput   *tensor.TensorNumeric[T]
+	// Cached tensors for backward pass. gate and siluX1 are registered
+	// with the save-for-backward contract (ztensor ADR 006) every Forward
+	// so arena-backed storage stays pinned until Backward consumes them.
 	gate        *tensor.TensorNumeric[T] // sigmoid(x1), the gate activation
 	siluX1      *tensor.TensorNumeric[T] // x1 * sigmoid(x1), cached for backward
 	outputShape []int
+	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
+}
+
+// SetSaver implements graph.SaverAware, fanning the Saver out to the
+// composed Sigmoid so its cached output participates in the contract too.
+func (s *SwiGLU[T]) SetSaver(sv graph.Saver[T]) {
+	s.saver = sv
+	s.sigmoid.SetSaver(sv)
 }
 
 // OpType returns the operation type.
@@ -76,9 +85,8 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	}
 
 	input := inputs[0]
-	s.lastInput = input // Cache input for backward
 
-	inputShape := s.lastInput.Shape()
+	inputShape := input.Shape()
 	if len(inputShape) < 1 {
 		return nil, errors.New("SwiGLU input must have at least one dimension")
 	}
@@ -93,7 +101,7 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 	s.outputShape[len(s.outputShape)-1] = lastDim / 2
 
 	// Split input into x1 and x2 along the last dimension
-	splitTensors, err := s.engine.Split(ctx, s.lastInput, 2, len(inputShape)-1)
+	splitTensors, err := s.engine.Split(ctx, input, 2, len(inputShape)-1)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +124,9 @@ func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric
 		return nil, err
 	}
 	s.siluX1 = siluX1 // Cache for backward
+	if s.saver != nil {
+		s.saver.SaveForBackward(gate, siluX1)
+	}
 
 	// Compute output = silu(x1) * x2
 	output, err := s.engine.Mul(ctx, siluX1, x2, nil)
@@ -132,12 +143,14 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut 
 		return nil, fmt.Errorf("invalid input count: %w", graph.ErrInvalidInputCount)
 	}
 	// dOut shape: (..., feature_dim)
-	// s.lastInput shape: (..., 2 * feature_dim)
-
-	inputShape := s.lastInput.Shape()
+	// inputs[0] shape: (..., 2 * feature_dim)
+	//
+	// The original input is re-split from the live inputs the graph passes
+	// in, not from a cached forward tensor (ztensor ADR 006).
+	inputShape := inputs[0].Shape()
 
 	// Re-split original input into x1 and x2
-	splitTensors, err := s.engine.Split(ctx, s.lastInput, 2, len(inputShape)-1)
+	splitTensors, err := s.engine.Split(ctx, inputs[0], 2, len(inputShape)-1)
 	if err != nil {
 		return nil, err
 	}
@@ -203,3 +216,6 @@ func (s *SwiGLU[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut 
 
 // Statically assert that the type implements the graph.Node interface.
 var _ graph.Node[float32] = (*SwiGLU[float32])(nil)
+
+// Statically assert that SwiGLU participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*SwiGLU[float32])(nil)

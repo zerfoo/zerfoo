@@ -16,7 +16,6 @@ type LeakyReLU[T tensor.Numeric] struct {
 	graph.NoParameters[T]
 	engine      compute.Engine[T]
 	ops         numeric.Arithmetic[T]
-	lastInput   *tensor.TensorNumeric[T]
 	outputShape []int
 	alpha       float64
 }
@@ -60,10 +59,9 @@ func (l *LeakyReLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 		return nil, fmt.Errorf("LeakyReLU: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
 
-	l.lastInput = inputs[0]
-	l.outputShape = l.lastInput.Shape()
+	l.outputShape = inputs[0].Shape()
 
-	output, err := l.engine.UnaryOp(ctx, l.lastInput, func(val T) T { return l.ops.LeakyReLU(val, l.alpha) })
+	output, err := l.engine.UnaryOp(ctx, inputs[0], func(val T) T { return l.ops.LeakyReLU(val, l.alpha) })
 	if err != nil {
 		return nil, err
 	}
@@ -71,9 +69,15 @@ func (l *LeakyReLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNume
 	return output, nil
 }
 
-// Backward computes the gradients for the LeakyReLU activation.
-func (l *LeakyReLU[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	dleakyrelu, err := l.engine.UnaryOp(ctx, l.lastInput, func(val T) T { return l.ops.LeakyReLUGrad(val, l.alpha) })
+// Backward computes the gradients for the LeakyReLU activation. The
+// derivative is recomputed from the live input the graph passes in, not
+// from a cached forward tensor (ztensor ADR 006 recompute pattern).
+func (l *LeakyReLU[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("LeakyReLU: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
+	}
+
+	dleakyrelu, err := l.engine.UnaryOp(ctx, inputs[0], func(val T) T { return l.ops.LeakyReLUGrad(val, l.alpha) })
 	if err != nil {
 		return nil, err
 	}

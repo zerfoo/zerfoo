@@ -219,7 +219,7 @@ func TestErf_Backward(t *testing.T) {
 	_, _ = erfLayer.Forward(ctx, input)
 
 	grad, _ := tensor.New[float32]([]int{3}, []float32{1, 1, 1})
-	grads, err := erfLayer.Backward(ctx, types.FullBackprop, grad)
+	grads, err := erfLayer.Backward(ctx, types.FullBackprop, grad, input)
 	if err != nil {
 		t.Fatalf("Erf.Backward failed: %v", err)
 	}

@@ -21,6 +21,15 @@ type Softmax[T tensor.Float] struct {
 	axis        int
 	outputShape []int
 	output      *tensor.TensorNumeric[T] // cached softmax output for backward
+	saver       graph.Saver[T]           // wired by graph Builder (graph.SaverAware); nil outside a Graph
+}
+
+// SetSaver implements graph.SaverAware. The cached softmax output is
+// expensive to recompute, so it is registered with the graph's
+// save-for-backward contract every Forward: arena-backed storage stays
+// pinned until this node's Backward has consumed it (ztensor ADR 006).
+func (s *Softmax[T]) SetSaver(sv graph.Saver[T]) {
+	s.saver = sv
 }
 
 // NewSoftmax creates a new Softmax activation layer.
@@ -39,6 +48,10 @@ func (s *Softmax[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	}
 	s.outputShape = out.Shape()
 	s.output = out
+	if s.saver != nil {
+		s.saver.SaveForBackward(out)
+	}
+
 	return out, nil
 }
 
@@ -134,3 +147,6 @@ func BuildSoftmax[T tensor.Float](
 
 // Statically assert that Softmax implements graph.Node.
 var _ graph.Node[float32] = (*Softmax[float32])(nil)
+
+// Statically assert that Softmax participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*Softmax[float32])(nil)

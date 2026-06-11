@@ -17,9 +17,16 @@ import (
 type Sigmoid[T tensor.Numeric] struct {
 	engine      compute.Engine[T]
 	ops         numeric.Arithmetic[T]
-	lastInput   *tensor.TensorNumeric[T]
 	lastOutput  *tensor.TensorNumeric[T]
 	outputShape []int
+	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
+}
+
+// SetSaver implements graph.SaverAware. The graph hands the layer a Saver
+// bound to its node identity; the cached sigmoid output is registered with
+// it every Forward so arena-backed storage stays pinned until Backward.
+func (s *Sigmoid[T]) SetSaver(sv graph.Saver[T]) {
+	s.saver = sv
 }
 
 // NewSigmoid creates a new Sigmoid activation function.
@@ -47,7 +54,6 @@ func (s *Sigmoid[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 		return nil, fmt.Errorf("Sigmoid: %w, expected 1, got %d", graph.ErrInvalidInputCount, len(inputs))
 	}
 
-	s.lastInput = inputs[0]
 	s.outputShape = inputs[0].Shape()
 
 	// sigmoid(x) = exp(x) / (1 + exp(x))
@@ -65,6 +71,10 @@ func (s *Sigmoid[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	}
 
 	s.lastOutput = result
+	if s.saver != nil {
+		s.saver.SaveForBackward(result)
+	}
+
 	return result, nil
 }
 
@@ -92,3 +102,6 @@ func (s *Sigmoid[T]) Backward(ctx context.Context, _ types.BackwardMode, outputG
 
 // Statically assert that the type implements the graph.Node interface.
 var _ graph.Node[float32] = (*Sigmoid[float32])(nil)
+
+// Statically assert that the type participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*Sigmoid[float32])(nil)

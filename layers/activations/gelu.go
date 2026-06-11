@@ -18,9 +18,9 @@ import (
 // ExecutionPlan instruction tape.
 type Gelu[T tensor.Float] struct {
 	graph.NoParameters[T]
-	engine    compute.Engine[T]
-	ops       numeric.Arithmetic[T]
-	lastInput *tensor.TensorNumeric[T]
+	engine      compute.Engine[T]
+	ops         numeric.Arithmetic[T]
+	outputShape []int
 }
 
 // NewGelu creates a new standard Gelu activation layer.
@@ -36,10 +36,7 @@ func (g *Gelu[T]) Attributes() map[string]interface{} { return nil }
 
 // OutputShape returns the output shape of the activation.
 func (g *Gelu[T]) OutputShape() []int {
-	if g.lastInput != nil {
-		return g.lastInput.Shape()
-	}
-	return nil
+	return g.outputShape
 }
 
 // Forward performs the forward pass using only engine primitives.
@@ -50,7 +47,7 @@ func (g *Gelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 	}
 
 	x := inputs[0]
-	g.lastInput = x
+	g.outputShape = x.Shape()
 	ops := g.ops
 
 	// x^2
@@ -114,8 +111,14 @@ func (g *Gelu[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 // d/dx[0.5 * x * (1 + tanh(u))] where u = sqrt(2/pi) * (x + 0.044715 * x^3)
 // = 0.5 * (1 + tanh(u)) + 0.5 * x * sech^2(u) * du/dx
 // du/dx = sqrt(2/pi) * (1 + 3 * 0.044715 * x^2)
-func (g *Gelu[T]) Backward(ctx context.Context, _ types.BackwardMode, outputGradient *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
-	x := g.lastInput
+//
+// The derivative is recomputed from the live input the graph passes in,
+// not from a cached forward tensor (ztensor ADR 006 recompute pattern).
+func (g *Gelu[T]) Backward(ctx context.Context, _ types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("Gelu: expected 1 input, got %d", len(inputs))
+	}
+	x := inputs[0]
 	ops := g.ops
 
 	// x^2
