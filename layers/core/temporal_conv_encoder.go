@@ -32,11 +32,22 @@ type TemporalConvEncoder[T tensor.Numeric] struct {
 	linear         *Linear[T]
 	hiddenChannels int
 	outputDim      int
-	// Cached for backward
+	// Cached for backward. Conv outputs and the pooled tensor are
+	// expensive to recompute, so they are registered with the
+	// save-for-backward contract (ztensor ADR 006) every Forward.
 	lastConv1Out *tensor.TensorNumeric[T]
 	lastConv2Out *tensor.TensorNumeric[T]
 	lastPooled   *tensor.TensorNumeric[T]
+	saver        graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
 }
+
+// SetSaver implements graph.SaverAware (ztensor ADR 006).
+func (t *TemporalConvEncoder[T]) SetSaver(sv graph.Saver[T]) {
+	t.saver = sv
+}
+
+// Statically assert that the type participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*TemporalConvEncoder[float32])(nil)
 
 // NewTemporalConvEncoder creates a new TemporalConvEncoder.
 func NewTemporalConvEncoder[T tensor.Numeric](
@@ -127,6 +138,9 @@ func (te *TemporalConvEncoder[T]) Forward(ctx context.Context, inputs ...*tensor
 		return nil, fmt.Errorf("pool: %w", err)
 	}
 	te.lastPooled = pooled
+	if te.saver != nil {
+		te.saver.SaveForBackward(te.lastConv1Out, te.lastConv2Out, pooled)
+	}
 
 	// Linear projection
 	output, err := te.linear.Forward(ctx, pooled)

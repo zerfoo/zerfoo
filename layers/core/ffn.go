@@ -15,24 +15,40 @@ import (
 
 // FFN is a feed-forward network.
 type FFN[T tensor.Numeric] struct {
-	name         string
-	noBias       bool
-	useGELU      bool
-	w1           *Dense[T]
-	w2           *Dense[T]
-	w3           *Dense[T]
-	swiglu       *activations.SwiGLU[T]
-	inputTensor  *tensor.TensorNumeric[T]
+	name    string
+	noBias  bool
+	useGELU bool
+	w1      *Dense[T]
+	w2      *Dense[T]
+	w3      *Dense[T]
+	swiglu  *activations.SwiGLU[T]
+	// Cached tensors for backward pass. w1Output/w3Output/swiGLUOutput are
+	// expensive to recompute (matmuls), so they are registered with the
+	// save-for-backward contract (ztensor ADR 006) every Forward; the
+	// original input is read from the live `inputs ...` in Backward.
 	w1Output     *tensor.TensorNumeric[T]
 	w3Output     *tensor.TensorNumeric[T]
 	swiGLUOutput *tensor.TensorNumeric[T]
 	w2Output     *tensor.TensorNumeric[T]
+	saver        graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
 
 	// Merged gate+up weight for single-GEMV decode optimization.
 	mergedGateUp *tensor.TensorNumeric[T]
 	gateDim      int // gate output dim (intermediateSize)
 	upDim        int // up output dim (intermediateSize)
 }
+
+// SetSaver implements graph.SaverAware (ztensor ADR 006), fanning the
+// Saver into the composed SwiGLU when present.
+func (f *FFN[T]) SetSaver(sv graph.Saver[T]) {
+	f.saver = sv
+	if f.swiglu != nil {
+		f.swiglu.SetSaver(sv)
+	}
+}
+
+// Statically assert that FFN participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*FFN[float32])(nil)
 
 // FFNOpt is a functional option for configuring a FFN layer.
 type FFNOpt[T tensor.Numeric] func(*FFN[T])
@@ -162,7 +178,6 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	}
 
 	input := inputs[0]
-	f.inputTensor = input // Cache for backward pass
 
 	// Detect sequence length for decode optimization.
 	inputShape := input.Shape()
@@ -235,6 +250,9 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 		}
 	}
 	f.swiGLUOutput = activationOutput // Cache for backward pass
+	if f.saver != nil {
+		f.saver.SaveForBackward(f.w1Output, f.w3Output, activationOutput)
+	}
 
 	w2Output, err := f.w2.Forward(ctx, activationOutput)
 	if err != nil {
@@ -245,8 +263,13 @@ func (f *FFN[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]
 	return w2Output, nil
 }
 
-// Backward computes the backward pass of the FFN.
-func (f *FFN[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+// Backward computes the backward pass of the FFN. The original input is
+// read from the live `inputs ...` the graph passes in (ztensor ADR 006).
+func (f *FFN[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("FFN requires exactly one input, got %d", len(inputs))
+	}
+
 	// Backward through W2
 	dSwiGLUOutput, err := f.w2.Backward(ctx, mode, dOut, f.swiGLUOutput)
 	if err != nil {
@@ -285,13 +308,13 @@ func (f *FFN[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *te
 	dW3Output := splitGrads[1]
 
 	// Backward through W1
-	dInputW1, err := f.w1.Backward(ctx, mode, dW1Output, f.inputTensor)
+	dInputW1, err := f.w1.Backward(ctx, mode, dW1Output, inputs[0])
 	if err != nil {
 		return nil, fmt.Errorf("failed to backward through w1: %w", err)
 	}
 
 	// Backward through W3
-	dInputW3, err := f.w3.Backward(ctx, mode, dW3Output, f.inputTensor)
+	dInputW3, err := f.w3.Backward(ctx, mode, dW3Output, inputs[0])
 	if err != nil {
 		return nil, fmt.Errorf("failed to backward through w3: %w", err)
 	}

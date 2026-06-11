@@ -36,8 +36,6 @@ type PolynomialExpansion[T tensor.Numeric] struct {
 
 	// Precomputed indices for efficient polynomial term generation
 	termIndices [][]int // Each element contains the powers for each input feature
-	// Cached input for exact backward computation
-	lastInput *tensor.TensorNumeric[T]
 }
 
 // PolynomialExpansionOptions holds configuration options for PolynomialExpansion layer.
@@ -269,7 +267,6 @@ func (p *PolynomialExpansion[T]) Forward(ctx context.Context, inputs ...*tensor.
 
 	// Update output shape and cache input for exact backward.
 	p.outputShape = output.Shape()
-	p.lastInput = input
 
 	return output, nil
 }
@@ -290,19 +287,15 @@ func (p *PolynomialExpansion[T]) Backward(_ context.Context, mode types.Backward
 
 	outputGradData := outputGradient.Data()
 
-	// Determine input to use for exact derivative computation
-	var inputData []T
-
-	switch {
-	case p.lastInput != nil:
-		inputData = p.lastInput.Data()
-	case len(inputs) > 0 && inputs[0] != nil:
-		inputData = inputs[0].Data()
-	default:
-		return nil, errors.New("polynomial backward: missing cached input; pass input to Backward or run Forward first")
+	// Read the input from the live `inputs ...` the graph passes in
+	// (ztensor ADR 006 recompute pattern; the forward-time cache was
+	// removed because the arena can reuse it before Backward runs).
+	if len(inputs) == 0 || inputs[0] == nil {
+		return nil, errors.New("polynomial backward: missing input; pass the layer input to Backward")
 	}
+	inputData := inputs[0].Data()
 
-	// Compute exact derivatives using cached input
+	// Compute exact derivatives using the live input
 	for b := range batchSize {
 		for featureIdx := range p.inputSize {
 			gradient := p.ops.FromFloat32(0.0)
