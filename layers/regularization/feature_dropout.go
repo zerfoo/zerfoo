@@ -24,9 +24,18 @@ type FeatureDropout[T tensor.Float] struct {
 	rate     T
 	training bool
 
-	// Cache for backward pass.
+	// Cache for backward pass. The mask is registered with the
+	// save-for-backward contract (ztensor ADR 006) every training-mode
+	// Forward: it cannot be recomputed (it is random), so arena-backed
+	// storage must stay pinned until Backward consumes it.
 	mask        *tensor.TensorNumeric[T]
 	outputShape []int
+	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
+}
+
+// SetSaver implements graph.SaverAware.
+func (d *FeatureDropout[T]) SetSaver(sv graph.Saver[T]) {
+	d.saver = sv
 }
 
 // NewFeatureDropout creates a new FeatureDropout layer with the given drop rate.
@@ -124,6 +133,9 @@ func (d *FeatureDropout[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 		return nil, fmt.Errorf("FeatureDropout: failed to create mask tensor: %w", err)
 	}
 	d.mask = mask
+	if d.saver != nil {
+		d.saver.SaveForBackward(mask)
+	}
 
 	output, err := d.engine.Mul(ctx, input, mask, nil)
 	if err != nil {
@@ -156,3 +168,6 @@ func (d *FeatureDropout[T]) Backward(ctx context.Context, _ types.BackwardMode, 
 
 // Statically assert that the type implements the graph.Node interface.
 var _ graph.Node[float32] = (*FeatureDropout[float32])(nil)
+
+// Statically assert that the type participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*FeatureDropout[float32])(nil)
