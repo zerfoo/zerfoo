@@ -436,10 +436,12 @@ func TestRMSNormBackward(t *testing.T) {
 		errContains string
 	}{
 		{
-			name:        "backward before forward returns error not panic",
-			runForward:  false,
-			wantErr:     true,
-			errContains: "backward called before forward",
+			// Since the ADR 006 (T2.3) migration, Backward recomputes the
+			// RMS statistics from the live inputs it receives, so it no
+			// longer depends on Forward having cached anything.
+			name:       "backward before forward succeeds (stats recomputed from live input)",
+			runForward: false,
+			wantErr:    false,
 		},
 		{
 			name:       "forward then backward succeeds with non-nil gradients",
@@ -447,7 +449,7 @@ func TestRMSNormBackward(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "double backward succeeds (cached tensors reused)",
+			name:       "double backward succeeds (stats recomputed each call)",
 			runForward: true,
 			secondCall: true,
 			wantErr:    false,
