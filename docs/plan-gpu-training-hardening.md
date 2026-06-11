@@ -167,7 +167,7 @@ Acceptance: all three harnesses operational; each encodes at least one
 historically-fixed bug as a red/green regression fixture; gradcheck runs in CI,
 GPU harnesses run as Spark pods.
 
-- [ ] T1.1 gradcheck core + OpInfo registry (ztensor)
+- [x] T1.1 gradcheck core + OpInfo registry (ztensor)  2026 06 10  (DONE ztensor#129: 26 ops, wrong-Jacobian red-proof)
        Owner: TBD  Est: 1.5d  verifies: [UC-GH-001]  kind: agent  blocked-by: []
   - New ztensor package (testing/gradcheck or graph/gradcheck): for a
     graph.Node under test, compute analytic Backward and compare against
@@ -182,12 +182,12 @@ GPU harnesses run as Spark pods.
     fixture red; every ztensor graph node registered.
   - Decision rationale: docs/adr/091-gradcheck-pytorch-oracle-verification.md.
 
-- [ ] S1.1.1 Unit tests + lint for gradcheck core
+- [x] S1.1.1 Unit tests + lint for gradcheck core  2026 06 10  (DONE in #129)
        Owner: TBD  Est: 2h  verifies: [UC-GH-001]  kind: agent  blocked-by: [T1.1]
   - Table-driven tests for the checker itself (perturbation sizing, tolerance
     handling, multi-input ops). gofmt/go vet/build clean.
 
-- [ ] T1.2 GPU-vs-CPU parity harness with arena-stress schedules (ztensor)
+- [x] T1.2 GPU-vs-CPU parity harness with arena-stress schedules (ztensor)  2026 06 10  (DONE ztensor#133: schedules a/b, StressEngine CI variant, red-proof red; GB10 runs DGX-deferred)
        Owner: TBD  Est: 2d  verifies: [UC-GH-002]  kind: agent  blocked-by: [T1.1]
   - Harness that runs the same op set CPU-f32 vs GPU-f32, forward AND
     backward, comparing within per-op tolerances. Critically, it must run
@@ -201,10 +201,10 @@ GPU harnesses run as Spark pods.
   - Acceptance: Spark-pod run green on current code; cached-intermediate
     fixture red; results emitted as JSON for the devlog.
 
-- [ ] S1.2.1 Tests + lint for the parity harness
+- [x] S1.2.1 Tests + lint for the parity harness  2026 06 10  (DONE in #133)
        Owner: TBD  Est: 2h  verifies: [UC-GH-002]  kind: agent  blocked-by: [T1.2]
 
-- [ ] T1.3 PyTorch-oracle harness: exchange format + NGC runner (cross-repo)
+- [x] T1.3 PyTorch-oracle harness: exchange format + NGC runner (cross-repo)  2026 06 10  (DONE ztensor#131: bundle format, NGC runner, Spark pod, tanh red-proof; GB10 runs DGX-deferred)
        Owner: TBD  Est: 1.5d  verifies: [UC-GH-003]  kind: agent  blocked-by: []
   - Define a tensor exchange format (npz or raw+JSON manifest: op name,
     shapes, dtypes, seeds, inputs, upstream gradients). Go side dumps
@@ -216,10 +216,10 @@ GPU harnesses run as Spark pods.
   - Acceptance: oracle run on GB10 produces a per-op diff report; tanh fixture
     red against the unfixed kernel, green against the fixed one.
 
-- [ ] S1.3.1 Tests + lint for the exchange format (round-trip)
+- [x] S1.3.1 Tests + lint for the exchange format (round-trip)  2026 06 10  (DONE in #131)
        Owner: TBD  Est: 1h  verifies: [UC-GH-003]  kind: agent  blocked-by: [T1.3]
 
-- [ ] T1.4 Arena poison-on-reset debug mode (ztensor)
+- [x] T1.4 Arena poison-on-reset debug mode (ztensor)  2026 06 10  (DONE ztensor#130: ZTENSOR_ARENA_POISON, Reset/FreeArena hooks, capture-safe)
        Owner: TBD  Est: 4h  verifies: [UC-GH-002, UC-GH-004]  kind: agent  blocked-by: []
   - ZTENSOR_ARENA_POISON=1: ResetPool/MarkStepBoundary and intra-step reuse
     fill freed regions with NaN sentinels (f32 0x7FC00000 pattern) before
@@ -230,7 +230,7 @@ GPU harnesses run as Spark pods.
   - Acceptance: demo test red under poison / green without; documented in
     ztensor docs; referenced by ADR 006.
 
-- [ ] S1.4.1 Tests + lint for poison mode
+- [x] S1.4.1 Tests + lint for poison mode  2026 06 10  (DONE in #130)
        Owner: TBD  Est: 1h  verifies: [UC-GH-004]  kind: agent  blocked-by: [T1.4]
 
 - [ ] T1.6 Migrate zerfoo ad-hoc finite-difference tests to gradcheck
@@ -249,7 +249,7 @@ Acceptance: the contract is implemented per ztensor ADR 006, every Backward in
 both repos is migrated, and the Wolf-style per-sample-reset stress test passes
 under poison mode.
 
-- [ ] T2.1 SaveForBackward API + graph lifetime ownership (ztensor)
+- [x] T2.1 SaveForBackward API + graph lifetime ownership (ztensor)  2026 06 10  (DONE ztensor#132: per-node Saver via Builder, SaverAware)
        Owner: TBD  Est: 1.5d  verifies: [UC-GH-004]  kind: agent  blocked-by: []
   - Add the contract to the ztensor graph: nodes call SaveForBackward(t...)
     during Forward (via a context or a graph-provided saver); the graph
@@ -261,10 +261,10 @@ under poison mode.
     unpin lifecycle, including multi-consumer and error paths.
   - Decision rationale: ztensor docs/adr/006-save-for-backward-arena-pinning.md.
 
-- [ ] S2.1.1 Unit tests + lint for the contract lifecycle
+- [x] S2.1.1 Unit tests + lint for the contract lifecycle  2026 06 10  (DONE in #132)
        Owner: TBD  Est: 2h  verifies: [UC-GH-004]  kind: agent  blocked-by: [T2.1]
 
-- [ ] T2.2 Arena Pin/Unpin (refcounted) honored by ResetPool and reuse (ztensor)
+- [x] T2.2 Arena Pin/Unpin (refcounted) honored by ResetPool and reuse (ztensor)  2026 06 10  (DONE ztensor#132: raise-the-floor Reset, deferred frees, PinnedBytes)
        Owner: TBD  Est: 1d  verifies: [UC-GH-004]  kind: agent  blocked-by: []
   - ArenaPool gains Pin(ptr)/Unpin(ptr) refcounts; ResetPool, MarkStepBoundary,
     and free-list reuse skip pinned buffers; poison mode must not poison
@@ -273,10 +273,10 @@ under poison mode.
   - Acceptance: arena unit tests: pinned buffer survives ResetPool; unpinned
     buffer is reused/poisoned; refcount over/underflow guarded.
 
-- [ ] S2.2.1 Tests + lint for pin/unpin (incl. poison interplay)
+- [x] S2.2.1 Tests + lint for pin/unpin (incl. poison interplay)  2026 06 10  (DONE in #132)
        Owner: TBD  Est: 2h  verifies: [UC-GH-004]  kind: agent  blocked-by: [T2.2, T1.4]
 
-- [ ] T2.3 Field-based audit + migration of all Backward impls (zerfoo + ztensor)
+- [x] T2.3 Field-based audit + migration of all Backward impls (zerfoo + ztensor)  2026 06 10  (DONE zerfoo#848: 45 types audited, 26 migrated, 18 follow-up under #847; found+fixed incomplete #842 f64-path fix and PolynomialExpansion stale-cache bug)
        Owner: TBD  Est: 2d  verifies: [UC-GH-004]  kind: agent  blocked-by: [T2.1, T2.2]
   - Audit EVERY graph.Node / layer Backward in both repos for struct fields
     written in Forward and read in Backward (do not rely on comments; known
