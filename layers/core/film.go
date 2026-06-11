@@ -17,12 +17,15 @@ import (
 // It generates scale and bias vectors from the context tensor and applies them to the feature tensor.
 // Output = (feature * scale) + bias
 type FiLM[T tensor.Numeric] struct {
-	engine      compute.Engine[T]
-	scaleGen    *Linear[T]
-	biasGen     *Linear[T]
-	lastFeature *tensor.TensorNumeric[T]
+	engine   compute.Engine[T]
+	scaleGen *Linear[T]
+	biasGen  *Linear[T]
+	// lastScale is the scale generated from the context; recomputing it in
+	// Backward would re-run the scale generator, so it is registered with
+	// the save-for-backward contract (ztensor ADR 006). The feature tensor
+	// is read from the live `inputs ...` in Backward.
 	lastScale   *tensor.TensorNumeric[T]
-	lastBias    *tensor.TensorNumeric[T]
+	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
 	outputShape []int
 	contextDim  int
 	featureDim  int
@@ -72,7 +75,6 @@ func (f *FiLM[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 	}
 
 	feature, ctxInput := inputs[0], inputs[1]
-	f.lastFeature = feature
 
 	// Generate scale and bias from the context
 	scale, err := f.scaleGen.Forward(ctx, ctxInput)
@@ -80,12 +82,14 @@ func (f *FiLM[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T
 		return nil, fmt.Errorf("FiLM scale generation failed: %w", err)
 	}
 	f.lastScale = scale
+	if f.saver != nil {
+		f.saver.SaveForBackward(scale)
+	}
 
 	bias, err := f.biasGen.Forward(ctx, ctxInput)
 	if err != nil {
 		return nil, fmt.Errorf("FiLM bias generation failed: %w", err)
 	}
-	f.lastBias = bias
 
 	// Apply FiLM: (feature * scale) + bias
 	scaledFeature, err := f.engine.Mul(ctx, feature, scale)
@@ -120,7 +124,7 @@ func (f *FiLM[T]) Backward(ctx context.Context, mode types.BackwardMode, outputG
 	dScaledFeature := outputGradient
 
 	// Gradient for the scale is dScaledFeature * feature
-	dScale, err := f.engine.Mul(ctx, dScaledFeature, f.lastFeature)
+	dScale, err := f.engine.Mul(ctx, dScaledFeature, inputs[0])
 	if err != nil {
 		return nil, fmt.Errorf("FiLM dScale calculation failed: %w", err)
 	}
@@ -191,3 +195,11 @@ func BuildFiLM[T tensor.Numeric](
 
 // Statically assert with a concrete type to avoid using generic constraints in assertions.
 var _ graph.Node[float32] = (*FiLM[float32])(nil)
+
+// Statically assert that FiLM participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*FiLM[float32])(nil)
+
+// SetSaver implements graph.SaverAware (ztensor ADR 006).
+func (f *FiLM[T]) SetSaver(sv graph.Saver[T]) {
+	f.saver = sv
+}

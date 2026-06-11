@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
-	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
@@ -918,7 +918,7 @@ func TestFFN_NoBiasPath(t *testing.T) {
 		gradData[i] = 0.1
 	}
 	grad := makeTensor(t, out.Shape(), gradData)
-	_, err = f.Backward(ctx, types.FullBackprop, grad)
+	_, err = f.Backward(ctx, types.FullBackprop, grad, input)
 	if err != nil {
 		t.Fatalf("Backward: %v", err)
 	}

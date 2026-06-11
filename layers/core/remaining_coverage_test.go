@@ -75,7 +75,7 @@ func TestFFN_Full(t *testing.T) {
 		gradData[i] = 0.1
 	}
 	grad := makeTensor(t, gradShape, gradData)
-	grads, err := f.Backward(ctx, types.FullBackprop, grad)
+	grads, err := f.Backward(ctx, types.FullBackprop, grad, input)
 	if err != nil {
 		t.Fatalf("FFN Backward: %v", err)
 	}

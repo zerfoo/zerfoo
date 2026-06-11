@@ -31,11 +31,21 @@ type VariableSelection[T tensor.Numeric] struct {
 	b1          *graph.Parameter[T] // [hiddenDim]
 	w2          *graph.Parameter[T] // [hiddenDim, numFeatures]
 	b2          *graph.Parameter[T] // [numFeatures]
-	// Cached for backward
-	lastInput   *tensor.TensorNumeric[T]
+	// Cached for backward. The hidden activation and selection weights
+	// are expensive to recompute, so they are registered with the
+	// save-for-backward contract (ztensor ADR 006) every Forward.
 	lastHidden  *tensor.TensorNumeric[T]
 	lastWeights *tensor.TensorNumeric[T]
+	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
 }
+
+// SetSaver implements graph.SaverAware (ztensor ADR 006).
+func (v *VariableSelection[T]) SetSaver(sv graph.Saver[T]) {
+	v.saver = sv
+}
+
+// Statically assert that the type participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*VariableSelection[float32])(nil)
 
 // NewVariableSelection creates a new VariableSelection layer.
 func NewVariableSelection[T tensor.Numeric](
@@ -181,9 +191,11 @@ func (v *VariableSelection[T]) Forward(ctx context.Context, inputs ...*tensor.Te
 	}
 
 	// Cache for backward
-	v.lastInput = input
 	v.lastHidden = geluHidden
 	v.lastWeights = weights
+	if v.saver != nil {
+		v.saver.SaveForBackward(geluHidden, weights)
+	}
 
 	return output, nil
 }

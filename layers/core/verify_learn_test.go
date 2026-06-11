@@ -207,8 +207,8 @@ func buildTestCases() []layerTestCase {
 					return ffn.Forward(ctx, in)
 				}
 				backward := func(ctx context.Context, outputGrad *tensor.TensorNumeric[float32], in *tensor.TensorNumeric[float32]) error {
-					// FFN backward ignores inputs arg (uses cached state from forward).
-					_, err := ffn.Backward(ctx, types.FullBackprop, outputGrad)
+					// FFN backward reads the live input (ztensor ADR 006).
+					_, err := ffn.Backward(ctx, types.FullBackprop, outputGrad, in)
 					return err
 				}
 
