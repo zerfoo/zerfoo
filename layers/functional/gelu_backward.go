@@ -17,16 +17,13 @@ import (
 // Returns: dInput (same shape as input)
 //
 // Thin wrapper that delegates to the canonical activations.Gelu Node's
-// Backward (T124.2.2). The node's Backward consumes the lastInput cached
-// during Forward, so we run Forward(input) first to seed it, then call
-// Backward(dOutput).
+// Backward (T124.2.2). Since the ADR 006 (T2.3) migration the node's
+// Backward recomputes everything from the live input it receives, so no
+// forward-seeding of a cache is needed (or possible).
 func GELUBackward[T tensor.Float](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T],
 	dOutput, input *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	node := activations.NewGelu(engine, ops)
-	if _, err := node.Forward(ctx, input); err != nil {
-		return nil, fmt.Errorf("GELUBackward: forward seed: %w", err)
-	}
-	grads, err := node.Backward(ctx, types.FullBackprop, dOutput)
+	grads, err := node.Backward(ctx, types.FullBackprop, dOutput, input)
 	if err != nil {
 		return nil, err
 	}
