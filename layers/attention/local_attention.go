@@ -144,3 +144,12 @@ func (la *LocalAttention[T]) OpType() string {
 
 // Statically assert that the type implements the graph.Node interface.
 var _ graph.Node[float32] = (*LocalAttention[float32])(nil)
+
+// Statically assert that LocalAttention participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*LocalAttention[float32])(nil)
+
+// SetSaver implements graph.SaverAware, fanning the Saver into the wrapped
+// GroupedQueryAttention (ztensor ADR 006).
+func (la *LocalAttention[T]) SetSaver(sv graph.Saver[T]) {
+	la.gqa.SetSaver(sv)
+}

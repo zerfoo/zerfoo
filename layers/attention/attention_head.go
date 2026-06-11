@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
-	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
 )
@@ -21,6 +21,13 @@ type AttentionHead[T tensor.Numeric] struct {
 	kProj  *core.Dense[T]
 	vProj  *core.Dense[T]
 	sdpa   *ScaledDotProductAttention[T]
+}
+
+// SetSaver implements graph.SaverAware, fanning the graph-provided Saver
+// into the composed SDPA so its cached q/k/v/attention-weights tensors are
+// pinned until this node's Backward returns (ztensor ADR 006).
+func (ah *AttentionHead[T]) SetSaver(sv graph.Saver[T]) {
+	ah.sdpa.SetSaver(sv)
 }
 
 // AttentionHeadOptions holds configuration options for AttentionHead.
@@ -282,3 +289,6 @@ func (ah *AttentionHead[T]) Attributes() map[string]interface{} {
 
 // Statically assert that the type implements the graph.Node interface.
 var _ graph.Node[float32] = (*AttentionHead[float32])(nil)
+
+// Statically assert that AttentionHead participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*AttentionHead[float32])(nil)
