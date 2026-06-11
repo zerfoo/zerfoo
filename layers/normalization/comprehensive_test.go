@@ -501,9 +501,15 @@ func TestSimplifiedLayerNormalization_Backward_NilCaches(t *testing.T) {
 	sln, _ := NewSimplifiedLayerNormalization[float32](eng, numeric.Float32Ops{}, gain, 1e-6)
 	input := makeTensor(t, []int{2, 4}, make([]float32, 8))
 	grad := makeTensor(t, []int{2, 4}, make([]float32, 8))
-	_, err := sln.Backward(context.Background(), types.FullBackprop, grad, input)
-	if err == nil {
-		t.Error("expected error for nil cached tensors")
+	// Since the ADR 006 (T2.3) migration, Backward recomputes the RMS
+	// statistics from the live inputs, so it succeeds without a prior
+	// Forward (there is no forward-time cache to be nil).
+	grads, err := sln.Backward(context.Background(), types.FullBackprop, grad, input)
+	if err != nil {
+		t.Errorf("backward should recompute stats from live input, got error: %v", err)
+	}
+	if len(grads) != 1 || grads[0] == nil {
+		t.Error("expected one non-nil input gradient")
 	}
 }
 

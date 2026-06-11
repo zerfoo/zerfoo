@@ -125,3 +125,50 @@ func rmsNormalize[T tensor.Numeric](
 		normalized: normalized,
 	}, nil
 }
+
+// rmsRecomputeStats recomputes the RMSNorm backward statistics from the
+// live input (ztensor ADR 006 recompute pattern):
+//
+//	rsqrt      = 1 / sqrt(mean(x^2, axis=-1, keepdims=true) + epsilon)
+//	normalized = x * rsqrt
+//
+// Backward passes call this with the live `inputs ...` tensor instead of
+// reading stats cached during Forward: on the GPU arena a cached tensor can
+// be overwritten by downstream forward ops before Backward runs (the
+// zerfoo#842 LayerNorm-variance bug class). The recompute is cheap -- one
+// elementwise multiply, a reduction, and an rsqrt.
+func rmsRecomputeStats[T tensor.Numeric](
+	ctx context.Context,
+	engine compute.Engine[T],
+	input *tensor.TensorNumeric[T],
+	epsilon T,
+) (rsqrt, normalized *tensor.TensorNumeric[T], err error) {
+	squared, err := engine.Mul(ctx, input, input)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	lastDim := len(input.Shape()) - 1
+
+	meanSq, err := engine.ReduceMean(ctx, squared, lastDim, true)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	meanSqPlusEps, err := engine.AddScalar(ctx, meanSq, epsilon)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rsqrt, err = engine.Rsqrt(ctx, meanSqPlusEps)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	normalized, err = engine.Mul(ctx, input, rsqrt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return rsqrt, normalized, nil
+}

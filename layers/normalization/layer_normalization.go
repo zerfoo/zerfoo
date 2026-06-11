@@ -34,11 +34,6 @@ type LayerNormalization[T tensor.Numeric] struct {
 	gamma *graph.Parameter[T] // Scale parameter
 	beta  *graph.Parameter[T] // Shift parameter
 
-	// Cached tensors for backward pass
-	inputShape  []int
-	mean        *tensor.TensorNumeric[T]
-	variance    *tensor.TensorNumeric[T]
-	normedInput *tensor.TensorNumeric[T] // (input - mean) / sqrt(variance + epsilon)
 	outputShape []int
 
 	useMixedBackward bool // Run Backward per-element in float64 on CPU.
@@ -168,7 +163,6 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	}
 
 	input := inputs[0]
-	ln.inputShape = input.Shape() // Cache input shape for backward
 	ln.outputShape = input.Shape()
 
 	// Calculate mean along the last dimension
@@ -184,8 +178,6 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if err != nil {
 		return nil, err
 	}
-
-	ln.mean = mean // Cache for backward
 
 	// Calculate variance
 	// (input - mean)
@@ -211,8 +203,6 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 		return nil, err
 	}
 
-	ln.variance = variance // Cache for backward
-
 	// sqrt(variance + epsilon)
 	variancePlusEpsilon, err := ln.engine.AddScalar(ctx, variance, ln.epsilon, nil) // Assuming AddScalar is available
 	if err != nil {
@@ -229,8 +219,6 @@ func (ln *LayerNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.
 	if err != nil {
 		return nil, err
 	}
-
-	ln.normedInput = normedInput // Cache for backward
 
 	// Scale and shift: normedInput * gamma + beta
 	scaled, err := ln.engine.Mul(ctx, normedInput, ln.gamma.Value, nil)
@@ -256,15 +244,72 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 		return ln.backwardMixedCPU(dOut, inputs[0])
 	}
 
+	// Recompute mean, variance, and the normalized input from the live
+	// input the graph passes in, rather than reading tensors cached during
+	// Forward. On the GPU arena those cached tensors can be overwritten by
+	// downstream forward ops before Backward runs (zerfoo#842: the cached
+	// variance came back negative, making sqrt(var+eps) NaN). This mirrors
+	// the float64 recompute already done in backwardMixedCPU and is the
+	// ztensor ADR 006 recompute pattern.
+	input := inputs[0]
+	inputShape := input.Shape()
+	lastAxis := len(inputShape) - 1
+	featureSize := ln.engine.Ops().FromFloat64(float64(inputShape[lastAxis]))
+
+	sum, err := ln.engine.ReduceSum(ctx, input, lastAxis, true, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	mean, err := ln.engine.DivScalar(ctx, sum, featureSize, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	inputMinusMean, err := ln.engine.Sub(ctx, input, mean, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	squaredDiff, err := ln.engine.Mul(ctx, inputMinusMean, inputMinusMean, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	sumSquaredDiff, err := ln.engine.ReduceSum(ctx, squaredDiff, lastAxis, true, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	variance, err := ln.engine.DivScalar(ctx, sumSquaredDiff, featureSize, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	variancePlusEpsilon, err := ln.engine.AddScalar(ctx, variance, ln.epsilon, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	stdDev, err := ln.engine.Sqrt(ctx, variancePlusEpsilon, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	normedInput, err := ln.engine.Div(ctx, inputMinusMean, stdDev, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	// Gradients for gamma and beta
 	// dL/dgamma = sum(dOut * normedInput) along the normalization axis
-	dOutMulNormedInput, err := ln.engine.Mul(ctx, dOut, ln.normedInput, nil)
+	dOutMulNormedInput, err := ln.engine.Mul(ctx, dOut, normedInput, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	dGamma := dOutMulNormedInput
-	for i := 0; i < len(ln.inputShape)-1; i++ {
+	for i := 0; i < len(inputShape)-1; i++ {
 		dGamma, err = ln.engine.ReduceSum(ctx, dGamma, 0, false, nil)
 		if err != nil {
 			return nil, err
@@ -277,7 +322,7 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 
 	// dL/dbeta = sum(dOut) along the batch dimensions (all non-feature dims)
 	dBeta := dOut
-	for i := 0; i < len(ln.inputShape)-1; i++ {
+	for i := 0; i < len(inputShape)-1; i++ {
 		dBeta, err = ln.engine.ReduceSum(ctx, dBeta, 0, false, nil)
 		if err != nil {
 			return nil, err
@@ -291,27 +336,10 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 	// Gradient for input (dL/dx)
 	// This derivation follows the standard backpropagation for Layer Normalization.
 	// N is the size of the feature dimension (last dimension of inputShape)
-	N := ln.engine.Ops().FromFloat64(float64(ln.inputShape[len(ln.inputShape)-1]))
+	N := featureSize
 
 	// dL/d_normed_input = dOut * gamma
 	dLdNormedInput, err := ln.engine.Mul(ctx, dOut, ln.gamma.Value, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// input - mean
-	inputMinusMean, err := ln.engine.Sub(ctx, inputs[0], ln.mean, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// stdDev = sqrt(variance + epsilon)
-	variancePlusEpsilon, err := ln.engine.AddScalar(ctx, ln.variance, ln.epsilon, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	stdDev, err := ln.engine.Sqrt(ctx, variancePlusEpsilon, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -322,13 +350,13 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 		return nil, err
 	}
 
-	dLdVarianceTerm, err := ln.engine.ReduceSum(ctx, mulResult, len(ln.inputShape)-1, true, nil)
+	dLdVarianceTerm, err := ln.engine.ReduceSum(ctx, mulResult, lastAxis, true, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	// dL/d_mean_term = sum(dL/d_normed_input) along the feature dimension
-	dLdMeanTerm, err := ln.engine.ReduceSum(ctx, dLdNormedInput, len(ln.inputShape)-1, true, nil)
+	dLdMeanTerm, err := ln.engine.ReduceSum(ctx, dLdNormedInput, lastAxis, true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -405,12 +433,13 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 //     linearly in float32; float64 caps accumulated error below 1e-12.
 func (ln *LayerNormalization[T]) backwardMixedCPU(dOut *tensor.TensorNumeric[T], input *tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	ops := ln.engine.Ops()
-	nFeat := ln.inputShape[len(ln.inputShape)-1]
+	inputShape := input.Shape()
+	nFeat := inputShape[len(inputShape)-1]
 	if nFeat <= 0 {
 		return nil, fmt.Errorf("LayerNormalization: invalid feature dim %d", nFeat)
 	}
 	total := 1
-	for _, d := range ln.inputShape {
+	for _, d := range inputShape {
 		total *= d
 	}
 	positions := total / nFeat
@@ -420,7 +449,7 @@ func (ln *LayerNormalization[T]) backwardMixedCPU(dOut *tensor.TensorNumeric[T],
 	dOutData := dOut.Data()
 	gammaData := ln.gamma.Value.Data()
 
-	dInputTensor, err := tensor.New[T](ln.inputShape, nil)
+	dInputTensor, err := tensor.New[T](inputShape, nil)
 	if err != nil {
 		return nil, err
 	}

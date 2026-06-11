@@ -33,11 +33,21 @@ type BatchNormalization[T tensor.Numeric] struct {
 	scale *graph.Parameter[T]
 	bias  *graph.Parameter[T]
 
-	// Cache for backward pass (populated by Forward).
+	// Cache for backward pass (populated by Forward). Backward only
+	// receives X (not scale/mean/var), so these cannot be recomputed from
+	// its live inputs; they are registered with the save-for-backward
+	// contract (ztensor ADR 006) every Forward so arena-backed storage
+	// stays pinned until Backward consumes them.
 	normalized *tensor.TensorNumeric[T] // (X - mean) / sqrt(var + eps)
 	std        *tensor.TensorNumeric[T] // sqrt(var + eps), broadcast shape [1,C,1,...]
 	scaleBC    *tensor.TensorNumeric[T] // scale reshaped to [1,C,1,...] for broadcasting
 	inputShape []int                    // shape of X from the last Forward call
+	saver      graph.Saver[T]           // wired by graph Builder (graph.SaverAware); nil outside a Graph
+}
+
+// SetSaver implements graph.SaverAware.
+func (b *BatchNormalization[T]) SetSaver(sv graph.Saver[T]) {
+	b.saver = sv
 }
 
 // NewBatchNormalization creates an inference-only BatchNormalization layer.
@@ -146,6 +156,9 @@ func (b *BatchNormalization[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	b.normalized = normalized
 	b.std = std
 	b.scaleBC = scaleBC
+	if b.saver != nil {
+		b.saver.SaveForBackward(normalized, std, scaleBC)
+	}
 	b.inputShape = xShape
 	b.outputShape = out.Shape()
 	return out, nil
@@ -296,3 +309,6 @@ func BuildBatchNormalization[T tensor.Numeric](
 
 // Statically assert that BatchNormalization implements graph.Node.
 var _ graph.Node[float32] = (*BatchNormalization[float32])(nil)
+
+// Statically assert that BatchNormalization participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*BatchNormalization[float32])(nil)

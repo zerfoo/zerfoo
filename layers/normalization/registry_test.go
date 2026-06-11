@@ -517,12 +517,17 @@ func TestSimplifiedLayerNormalization_Backward_NoCacheError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Call Backward without Forward (no cached tensors)
+	// Since the ADR 006 (T2.3) migration, Backward recomputes the RMS
+	// statistics from the live inputs it receives, so calling it without a
+	// prior Forward succeeds (no forward-time cache to depend on).
 	grad, _ := tensor.New[float32]([]int{1, 4}, []float32{1, 1, 1, 1})
 	input, _ := tensor.New[float32]([]int{1, 4}, []float32{1, 2, 3, 4})
-	_, err = sln.Backward(context.Background(), 0, grad, input)
-	if err == nil {
-		t.Error("expected error for backward without forward")
+	grads, err := sln.Backward(context.Background(), 0, grad, input)
+	if err != nil {
+		t.Errorf("backward without forward should recompute from live input, got error: %v", err)
+	}
+	if len(grads) != 1 || grads[0] == nil {
+		t.Error("expected one non-nil input gradient")
 	}
 }
 

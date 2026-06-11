@@ -3,7 +3,6 @@ package normalization
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -15,13 +14,11 @@ import (
 
 // SimplifiedLayerNormalization implements a simplified version of layer normalization.
 type SimplifiedLayerNormalization[T tensor.Numeric] struct {
-	engine          compute.Engine[T]
-	ops             numeric.Arithmetic[T]
-	gain            *graph.Parameter[T]
-	epsilon         T
-	inputShape      []int
-	invStdDev       *tensor.TensorNumeric[T]
-	normalizedInput *tensor.TensorNumeric[T]
+	engine     compute.Engine[T]
+	ops        numeric.Arithmetic[T]
+	gain       *graph.Parameter[T]
+	epsilon    T
+	inputShape []int
 }
 
 // NewSimplifiedLayerNormalization creates a new SimplifiedLayerNormalization layer.
@@ -58,9 +55,6 @@ func (sln *SimplifiedLayerNormalization[T]) Forward(ctx context.Context, inputs 
 		return nil, err
 	}
 
-	sln.invStdDev = res.rsqrt           // Cache for backward pass
-	sln.normalizedInput = res.normalized // Cache for backward pass
-
 	return res.output, nil
 }
 
@@ -72,13 +66,15 @@ func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, mode t
 
 	input := inputs[0]
 
-	// Ensure forward caches are present
-	if sln.invStdDev == nil || sln.normalizedInput == nil {
-		return nil, errors.New("backward called before forward: missing cached tensors")
+	// Recompute the RMS statistics from the live input instead of reading
+	// tensors cached during Forward (ztensor ADR 006; zerfoo#842 bug class).
+	invStdDev, normalizedInput, err := rmsRecomputeStats(ctx, sln.engine, input, sln.epsilon)
+	if err != nil {
+		return nil, err
 	}
 
 	// dGain = sum(dOut * normalized) reduced to gain shape
-	dGainFull, err := sln.engine.Mul(ctx, outputGradient, sln.normalizedInput)
+	dGainFull, err := sln.engine.Mul(ctx, outputGradient, normalizedInput)
 	if err != nil {
 		return nil, err
 	}
@@ -107,18 +103,18 @@ func (sln *SimplifiedLayerNormalization[T]) Backward(ctx context.Context, mode t
 	}
 
 	// term1 = dNormalized * invStdDev
-	term1, err := sln.engine.Mul(ctx, dNormalized, sln.invStdDev)
+	term1, err := sln.engine.Mul(ctx, dNormalized, invStdDev)
 	if err != nil {
 		return nil, err
 	}
 
 	// rmsCubed = invStdDev^3
-	rmsSq, err := sln.engine.Mul(ctx, sln.invStdDev, sln.invStdDev)
+	rmsSq, err := sln.engine.Mul(ctx, invStdDev, invStdDev)
 	if err != nil {
 		return nil, err
 	}
 
-	rmsCubed, err := sln.engine.Mul(ctx, rmsSq, sln.invStdDev)
+	rmsCubed, err := sln.engine.Mul(ctx, rmsSq, invStdDev)
 	if err != nil {
 		return nil, err
 	}

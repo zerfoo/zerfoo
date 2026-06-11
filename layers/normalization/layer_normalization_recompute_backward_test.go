@@ -11,92 +11,110 @@ import (
 	"github.com/zerfoo/ztensor/types"
 )
 
-// TestLayerNorm_MixedBackward_RecomputesStatsFromInput is the regression test
-// for the residual GPU f32 "CrossAsset cliff" (Wolf docs/plan-gpu-f32-residual,
-// S-GR.4.1). The mixed-precision (f64) backward must recompute mean/variance
-// from the forward input, NOT trust the cached ln.mean/ln.variance tensors:
-// on the GPU arena those caches get overwritten by downstream forward ops
-// before Backward runs, so the cached variance comes back negative and
-// sigma = sqrt(var+eps) becomes NaN.
+// These are the regression tests for the GPU f32 "CrossAsset cliff"
+// (zerfoo#842) and its ADR 006 (T2.3) follow-up. LayerNorm Backward must
+// recompute mean/variance/normedInput from the live input the graph passes
+// in, NOT from tensors cached during Forward: on the GPU arena those caches
+// get overwritten by downstream forward ops before Backward runs, so the
+// cached variance comes back negative and sigma = sqrt(var+eps) is NaN.
 //
-// We simulate that corruption by clobbering the cached variance with garbage
-// (including a negative value) after Forward, then assert the backward still
-// produces finite gradients that match an uncorrupted reference.
-func TestLayerNorm_MixedBackward_RecomputesStatsFromInput(t *testing.T) {
-	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+// Since T2.3 the layer no longer has stat caches at all, so the test
+// simulates the arena hazard directly: it overwrites the INPUT buffer in
+// place between Forward and Backward (exactly what arena reuse does to any
+// cached tensor) and asserts the gradients match a reference computed from
+// scratch on the new values. A backward reading any stale forward-time
+// state would disagree.
+
+func layerNormLiveInputCase[T tensor.Numeric](
+	t *testing.T,
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	wantMixed bool,
+) {
+	t.Helper()
 	ctx := context.Background()
 	const nFeat = 4
 
-	ln, err := NewLayerNormalization[float32](engine, nFeat)
+	ln, err := NewLayerNormalization[T](engine, nFeat)
 	if err != nil {
 		t.Fatalf("NewLayerNormalization: %v", err)
 	}
-	if !ln.useMixedBackward {
-		t.Fatal("expected useMixedBackward=true for float32 on CPU engine")
+	if ln.useMixedBackward != wantMixed {
+		t.Fatalf("useMixedBackward = %v, want %v", ln.useMixedBackward, wantMixed)
 	}
 
-	inputData := []float32{0.5, -1.2, 3.4, 40.0, 2.0, 2.0, 2.0, 2.1}
-	input, err := tensor.New[float32]([]int{2, nFeat}, inputData)
-	if err != nil {
-		t.Fatalf("tensor.New input: %v", err)
-	}
-	dOutData := []float32{0.1, -0.2, 0.3, -0.4, 0.05, 0.06, -0.07, 0.08}
-	dOut, err := tensor.New[float32]([]int{2, nFeat}, dOutData)
-	if err != nil {
-		t.Fatalf("tensor.New dOut: %v", err)
-	}
-
-	// Reference gradients from a clean forward+backward (uncorrupted cache).
-	if _, err := ln.Forward(ctx, input); err != nil {
-		t.Fatalf("Forward (reference): %v", err)
-	}
-	refGrads, err := ln.Backward(ctx, types.FullBackprop, dOut, input)
-	if err != nil {
-		t.Fatalf("Backward (reference): %v", err)
-	}
-	refData := append([]float32(nil), refGrads[0].Data()...)
-	for i, v := range refData {
-		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-			t.Fatalf("reference gradient non-finite at %d: %v", i, v)
+	mk := func(vals []float64) *tensor.TensorNumeric[T] {
+		data := make([]T, len(vals))
+		for i, v := range vals {
+			data[i] = ops.FromFloat64(v)
 		}
+		tt, err := tensor.New[T]([]int{2, nFeat}, data)
+		if err != nil {
+			t.Fatalf("tensor.New: %v", err)
+		}
+		return tt
 	}
 
-	// Now corrupt the cached stats the way the GPU arena does: overwrite the
-	// cached variance with garbage that includes a negative value (which would
-	// make sigma = sqrt(var+eps) NaN if the backward trusted the cache).
+	original := []float64{0.5, -1.2, 3.4, 40.0, 2.0, 2.0, 2.0, 2.1}
+	perturbed := []float64{-3.0, 7.5, 0.25, -11.0, 1.0, 0.5, -0.5, 9.0}
+	input := mk(original)
+	dOut := mk([]float64{0.1, -0.2, 0.3, -0.4, 0.05, 0.06, -0.07, 0.08})
+
 	if _, err := ln.Forward(ctx, input); err != nil {
-		t.Fatalf("Forward (corrupt case): %v", err)
+		t.Fatalf("Forward: %v", err)
 	}
-	varData := ln.variance.Data()
-	for i := range varData {
-		varData[i] = -7.5 // impossible for a real variance; sqrt(<0) = NaN
-	}
-	meanData := ln.mean.Data()
-	for i := range meanData {
-		meanData[i] = 999.0 // garbage mean
-	}
-	normedData := ln.normedInput.Data()
-	for i := range normedData {
-		normedData[i] = float32(math.NaN())
-	}
+
+	// Simulate arena reuse: overwrite the input buffer in place between
+	// Forward and Backward.
+	newData := mk(perturbed).Data()
+	copy(input.Data(), newData)
 
 	gotGrads, err := ln.Backward(ctx, types.FullBackprop, dOut, input)
 	if err != nil {
-		t.Fatalf("Backward (corrupt case): %v", err)
+		t.Fatalf("Backward: %v", err)
 	}
 	got := gotGrads[0].Data()
 
-	// The backward must ignore the corrupted cache and recompute from input:
-	// gradients stay finite and match the reference.
+	// Reference: a fresh layer that only ever saw the perturbed values.
+	ref, err := NewLayerNormalization[T](engine, nFeat)
+	if err != nil {
+		t.Fatalf("NewLayerNormalization (ref): %v", err)
+	}
+	refInput := mk(perturbed)
+	if _, err := ref.Forward(ctx, refInput); err != nil {
+		t.Fatalf("Forward (ref): %v", err)
+	}
+	refGrads, err := ref.Backward(ctx, types.FullBackprop, dOut, refInput)
+	if err != nil {
+		t.Fatalf("Backward (ref): %v", err)
+	}
+	refData := refGrads[0].Data()
+
 	const tol = 1e-5
 	for i := range got {
-		if math.IsNaN(float64(got[i])) || math.IsInf(float64(got[i]), 0) {
-			t.Fatalf("gradient %d non-finite despite corrupted cache: %v "+
-				"(backward did not recompute stats from input)", i, got[i])
+		g := lnNumericToFloat64(got[i])
+		w := lnNumericToFloat64(refData[i])
+		if math.IsNaN(g) || math.IsInf(g, 0) {
+			t.Fatalf("gradient %d non-finite: %v (backward read stale forward state)", i, g)
 		}
-		if d := math.Abs(float64(got[i] - refData[i])); d > tol {
+		if d := math.Abs(g - w); d > tol {
 			t.Fatalf("gradient %d = %v, want %v (diff %g > tol): backward used "+
-				"the corrupted cache instead of recomputing", i, got[i], refData[i], d)
+				"stale forward-time state instead of the live input", i, g, w, d)
 		}
 	}
+}
+
+// TestLayerNorm_MixedBackward_ReadsLiveInput covers the float32 mixed-precision
+// path (zerfoo#842 recompute fix).
+func TestLayerNorm_MixedBackward_ReadsLiveInput(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](&numeric.Float32Ops{})
+	layerNormLiveInputCase[float32](t, engine, engine.Ops(), true)
+}
+
+// TestLayerNorm_GenericBackward_ReadsLiveInput covers the generic engine-op
+// path (float64), migrated to live-input recompute by T2.3: before the
+// migration this path still read ln.mean/ln.variance/ln.normedInput caches.
+func TestLayerNorm_GenericBackward_ReadsLiveInput(t *testing.T) {
+	engine := compute.NewCPUEngine[float64](&numeric.Float64Ops{})
+	layerNormLiveInputCase[float64](t, engine, engine.Ops(), false)
 }

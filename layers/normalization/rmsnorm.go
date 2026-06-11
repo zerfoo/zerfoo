@@ -16,11 +16,8 @@ type RMSNorm[T tensor.Numeric] struct {
 	engine  compute.Engine[T]
 	ops     numeric.Arithmetic[T]
 	epsilon T
-	gain *graph.Parameter[T] // Learnable gain parameter
+	gain    *graph.Parameter[T] // Learnable gain parameter
 
-	// Cache for backward pass
-	inputTensor *tensor.TensorNumeric[T]
-	rms         *tensor.TensorNumeric[T]
 	outputShape []int
 }
 
@@ -50,7 +47,6 @@ func WithRMSNormEpsilon[T tensor.Numeric](epsilon T) RMSNormOption[T] {
 		opts.Epsilon = epsilon
 	}
 }
-
 
 // NewRMSNorm creates a new RMSNorm layer.
 func NewRMSNorm[T tensor.Numeric](name string, engine compute.Engine[T], ops numeric.Arithmetic[T], modelDim int, options ...RMSNormOption[T]) (*RMSNorm[T], error) {
@@ -113,15 +109,12 @@ func (r *RMSNorm[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 	}
 
 	input := inputs[0]
-	r.inputTensor = input // Cache for backward pass
 	r.outputShape = input.Shape()
 
 	res, err := rmsNormalize(ctx, r.engine, input, r.gain.Value, r.epsilon)
 	if err != nil {
 		return nil, err
 	}
-
-	r.rms = res.rsqrt // Cache for backward pass
 
 	return res.output, nil
 }
@@ -132,14 +125,11 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut
 		return nil, fmt.Errorf("RMSNorm: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
 	}
 
-	if r.rms == nil || r.inputTensor == nil {
-		return nil, fmt.Errorf("RMSNorm: backward called before forward: missing cached tensors")
-	}
+	// Recompute the RMS statistics from the live input instead of reading
+	// tensors cached during Forward (ztensor ADR 006; zerfoo#842 bug class).
+	input := inputs[0]
 
-	input := r.inputTensor
-
-	// Gradient of the gain parameter
-	normalized, err := r.engine.Mul(ctx, input, r.rms, nil)
+	rms, normalized, err := rmsRecomputeStats(ctx, r.engine, input, r.epsilon)
 	if err != nil {
 		return nil, err
 	}
@@ -179,17 +169,17 @@ func (r *RMSNorm[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut
 		return nil, err
 	}
 
-	term1, err := r.engine.Mul(ctx, dNormalized, r.rms, nil)
+	term1, err := r.engine.Mul(ctx, dNormalized, rms, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	rmsCubed, err := r.engine.Mul(ctx, r.rms, r.rms, nil)
+	rmsCubed, err := r.engine.Mul(ctx, rms, rms, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	rmsCubed, err = r.engine.Mul(ctx, rmsCubed, r.rms, nil)
+	rmsCubed, err = r.engine.Mul(ctx, rmsCubed, rms, nil)
 	if err != nil {
 		return nil, err
 	}
