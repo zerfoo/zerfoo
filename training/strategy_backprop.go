@@ -4,6 +4,7 @@ package training
 import (
 	"context"
 
+	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
@@ -11,11 +12,30 @@ import (
 
 // DefaultBackpropStrategy performs standard backpropagation through the loss
 // and model graph.
-type DefaultBackpropStrategy[T tensor.Numeric] struct{}
+//
+// The strategy maintains persistent (non-arena) gradient accumulators per
+// parameter (issue #850): after each Backward, any arena-backed
+// Parameter.Gradient is accumulated into a parameter-owned persistent buffer
+// and Parameter.Gradient is repointed at it, so per-sample engine ResetPool
+// calls (the Wolf crossasset pattern) cannot corrupt accumulated gradients.
+// The accumulators live as long as the strategy: reuse one strategy instance
+// across all samples and batches of a training run.
+type DefaultBackpropStrategy[T tensor.Numeric] struct {
+	grads gradAccumulator[T]
+}
 
 // NewDefaultBackpropStrategy constructs a DefaultBackpropStrategy.
 func NewDefaultBackpropStrategy[T tensor.Numeric]() *DefaultBackpropStrategy[T] {
 	return &DefaultBackpropStrategy[T]{}
+}
+
+// SetEngine configures an optional compute engine used to perform the
+// persistent gradient accumulation as an in-place engine.Add with
+// dst=accumulator (device-side, no host round-trip). Without an engine a
+// host read-modify-writeback fallback is used, which is correct but slower
+// for device gradients.
+func (s *DefaultBackpropStrategy[T]) SetEngine(e compute.Engine[T]) {
+	s.grads.setEngine(e)
 }
 
 // ComputeGradients runs forward pass, computes loss, runs backward passes,
@@ -26,7 +46,7 @@ func (s *DefaultBackpropStrategy[T]) ComputeGradients(
 	loss graph.Node[T],
 	batch Batch[T],
 ) (T, error) {
-	return computeGradientsCommon[T](ctx, g, loss, batch, types.FullBackprop)
+	return computeGradientsCommon[T](ctx, g, loss, batch, types.FullBackprop, &s.grads)
 }
 
 // Statically assert that the type implements the GradientStrategy interface.
