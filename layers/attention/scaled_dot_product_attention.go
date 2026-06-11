@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
 )
@@ -32,11 +33,26 @@ type ScaledDotProductAttention[T tensor.Numeric] struct {
 	numKVHeads    int     // Number of KV heads (for flash decode GQA dispatch)
 	causal        bool    // if true, apply causal masking to attention scores
 
-	// Cached tensors for backward pass
+	// Cached tensors for backward pass. SDPA is not itself a graph.Node
+	// (its Forward takes q/k/v/mask and its Backward is called by the
+	// owning attention node with nil inputs), so q/k/v and the attention
+	// weights are SAVE-class intermediates: they are registered with the
+	// save-for-backward contract (ztensor ADR 006) via the Saver the
+	// owning node fans in, pinning arena-backed storage until the owning
+	// node's Backward has consumed them.
 	q                *tensor.TensorNumeric[T]
 	k                *tensor.TensorNumeric[T]
 	v                *tensor.TensorNumeric[T]
 	attentionWeights *tensor.TensorNumeric[T]
+	saver            graph.Saver[T] // fanned in by the owning attention node; nil outside a Graph
+}
+
+// SetSaver implements graph.SaverAware. Owning nodes (AttentionHead,
+// GroupedQueryAttention, ...) fan their Saver into SDPA so its cached
+// tensors are attributed to the owning node and released after its
+// Backward returns.
+func (sdpa *ScaledDotProductAttention[T]) SetSaver(sv graph.Saver[T]) {
+	sdpa.saver = sv
 }
 
 // SetCausal enables or disables causal (lower-triangular) masking.
@@ -98,10 +114,14 @@ func NewBidirectionalSDPA[T tensor.Numeric](engine compute.Engine[T], headDim in
 // Q, K, V are expected to be 3D tensors (batch_size, seq_len, head_dim).
 // mask is an optional 4D tensor (batch_size, num_heads, seq_len_q, seq_len_k).
 func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, mask *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	// Cache inputs for backward pass
+	// Cache inputs for backward pass. q/k/v are upstream intermediates of
+	// the owning node (projections), so they must be pinned too.
 	sdpa.q = q
 	sdpa.k = k
 	sdpa.v = v
+	if sdpa.saver != nil {
+		sdpa.saver.SaveForBackward(q, k, v)
+	}
 
 	// Try split-KV flash decode for single-query autoregressive decode.
 	// This path handles the seqLen_Q==1 case that tryFlashForward rejects.
@@ -264,6 +284,9 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	}
 
 	sdpa.attentionWeights = attentionWeights // Cache for backward pass
+	if sdpa.saver != nil {
+		sdpa.saver.SaveForBackward(attentionWeights)
+	}
 
 	// 5. MatMul attention weights and V
 	// (batch, seq_len_q, seq_len_k) x (batch, seq_len_k, head_dim) -> (batch, seq_len_q, head_dim)

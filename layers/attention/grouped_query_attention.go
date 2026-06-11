@@ -86,10 +86,11 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	kProj           *tensor.TensorNumeric[T] // Projected K
 	vProj           *tensor.TensorNumeric[T] // Projected V
 	attnOutput      *tensor.TensorNumeric[T] // Output from scaledDotProductAttention (heads format)
-	attnOutputFinal *tensor.TensorNumeric[T] // Final reshaped output passed to wo
+	attnOutputFinal *tensor.TensorNumeric[T] // Final reshaped output passed to wo; registered via SaveForBackward
 	qHeadsRoPE      *tensor.TensorNumeric[T] // Q after RoPE
 	kHeadsRoPE      *tensor.TensorNumeric[T] // K after RoPE
 	outputShape     []int
+	saver           graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
 
 	// K/V output ports (task-T95.1.2). Captured during Forward after the
 	// layer-local K/V projection + optional per-head norms + post-projection
@@ -101,7 +102,6 @@ type GroupedQueryAttention[T tensor.Numeric] struct {
 	// task-T95.1.1 / T95.2.1). Nil until the first successful Forward.
 	kOut *tensor.TensorNumeric[T]
 	vOut *tensor.TensorNumeric[T]
-
 }
 
 // OpType returns the operation type.
@@ -895,8 +895,8 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 										flashDecodeUsed = true
 									}
 								} else {
-								_ = oGPU.Free()
-							}
+									_ = oGPU.Free()
+								}
 							}
 						}
 					}
@@ -1066,6 +1066,9 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		return nil, err
 	}
 	gqa.attnOutputFinal = attnOutputFinal // Cache for wo backward
+	if gqa.saver != nil {
+		gqa.saver.SaveForBackward(attnOutputFinal)
+	}
 
 	// 6. Final linear projection
 	output, err := gqa.wo.Forward(ctx, attnOutputFinal)
@@ -1372,6 +1375,17 @@ func BuildCausalSlidingWindowMask[T tensor.Numeric](seqLen, windowSize int) *ten
 
 // Statically assert that the type implements the graph.Node interface.
 var _ graph.Node[float32] = (*GroupedQueryAttention[float32])(nil)
+
+// Statically assert that GQA participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*GroupedQueryAttention[float32])(nil)
+
+// SetSaver implements graph.SaverAware, fanning the Saver into the composed
+// SDPA so its cached q/k/v/attention-weights tensors are pinned until this
+// node's Backward returns (ztensor ADR 006).
+func (gqa *GroupedQueryAttention[T]) SetSaver(sv graph.Saver[T]) {
+	gqa.saver = sv
+	gqa.scaledDotProductAttention.SetSaver(sv)
+}
 
 // gqaKVPort is a lightweight graph.Node[T] adapter that exposes a cached
 // tensor produced during the owning layer's Forward pass as a readable port.

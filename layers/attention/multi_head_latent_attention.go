@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zerfoo/ztensor/compute"
-	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
@@ -42,11 +42,12 @@ type MultiHeadLatentAttention[T tensor.Numeric] struct {
 
 	// Cached tensors for backward pass
 	cachedInput   *tensor.TensorNumeric[T] // original input
-	cachedCKV     *tensor.TensorNumeric[T] // compressed KV latent
+	cachedCKV     *tensor.TensorNumeric[T] // compressed KV latent; registered via SaveForBackward
 	cachedQProj   *tensor.TensorNumeric[T] // Q after wQ projection (before reshape)
-	cachedAttnOut *tensor.TensorNumeric[T] // attention output before wO
+	cachedAttnOut *tensor.TensorNumeric[T] // attention output before wO; registered via SaveForBackward
 
 	outputShape []int
+	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
 }
 
 // NewMultiHeadLatentAttention creates a new MLA layer.
@@ -108,6 +109,9 @@ func (m *MultiHeadLatentAttention[T]) Forward(ctx context.Context, inputs ...*te
 		return nil, fmt.Errorf("kv down-projection: %w", err)
 	}
 	m.cachedCKV = cKV
+	if m.saver != nil {
+		m.saver.SaveForBackward(cKV)
+	}
 
 	// 3. Up-project keys: [batch, seqLen, kvLoraDim] -> [batch, seqLen, numHeads*headDim]
 	kProj, err := m.wUK.Forward(ctx, cKV)
@@ -189,6 +193,9 @@ func (m *MultiHeadLatentAttention[T]) Forward(ctx context.Context, inputs ...*te
 
 	// Cache attention output for backward.
 	m.cachedAttnOut = attnOut
+	if m.saver != nil {
+		m.saver.SaveForBackward(attnOut)
+	}
 
 	// 11. Output projection: [batch, seqLen, numHeads*headDim] -> [batch, seqLen, hidden]
 	output, err := m.wO.Forward(ctx, attnOut)
@@ -485,3 +492,16 @@ func (m *MultiHeadLatentAttention[T]) Attributes() map[string]any {
 
 // Compile-time interface check.
 var _ graph.Node[float32] = (*MultiHeadLatentAttention[float32])(nil)
+
+// Statically assert that MLA participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*MultiHeadLatentAttention[float32])(nil)
+
+// SetSaver implements graph.SaverAware (ztensor ADR 006): the compressed KV
+// latent and pre-wO attention output are consumed by Backward and expensive
+// to recompute, so they are registered with the save-for-backward contract.
+func (m *MultiHeadLatentAttention[T]) SetSaver(sv graph.Saver[T]) {
+	m.saver = sv
+	if m.sdpa != nil {
+		m.sdpa.SetSaver(sv)
+	}
+}

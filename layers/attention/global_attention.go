@@ -176,3 +176,12 @@ func BuildGlobalAttention[T tensor.Numeric](
 
 // Statically assert that the type implements the graph.Node interface.
 var _ graph.Node[float32] = (*GlobalAttention[float32])(nil)
+
+// Statically assert that GlobalAttention participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*GlobalAttention[float32])(nil)
+
+// SetSaver implements graph.SaverAware, fanning the Saver into the wrapped
+// GroupedQueryAttention (ztensor ADR 006).
+func (ga *GlobalAttention[T]) SetSaver(sv graph.Saver[T]) {
+	ga.gqa.SetSaver(sv)
+}
