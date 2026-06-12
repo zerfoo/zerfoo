@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.1](https://github.com/zerfoo/zerfoo/compare/v1.49.0...v1.49.1) (2026-06-12)
+
+
+### Bug Fixes
+
+* **attention:** FusedSDPA implements graph.SaverAware ([#864](https://github.com/zerfoo/zerfoo/issues/864)) ([a2ed09f](https://github.com/zerfoo/zerfoo/commit/a2ed09fe86576bcf5e35e95c37e39fd2d8b26a90))
+* **attention:** launch flash forward on the engine stream, not a private stream ([2ae7964](https://github.com/zerfoo/zerfoo/commit/2ae79640440a304af7e13417d3aea5976f037f4a))
+* **attention:** SDPA Forward invalidates the cached attention weights before fused dispatch ([f46691e](https://github.com/zerfoo/zerfoo/commit/f46691ec169edc6c443a58b7cfda4294f28b086b))
+
+
+### Performance
+
+* **attention:** skip flash forward below one query tile (short sequences) ([e821f69](https://github.com/zerfoo/zerfoo/commit/e821f6930902045b89101205cec5947e8c1661b6))
+
 ## [1.49.0](https://github.com/zerfoo/zerfoo/compare/v1.48.0...v1.49.0) (2026-06-12)
 
 
