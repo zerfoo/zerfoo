@@ -48,6 +48,18 @@ func tryFlashForward[T tensor.Numeric](
 		return nil, nil
 	}
 
+	// Short sequences: the kernel launches one BLOCK_SIZE-thread block per
+	// (batch*head, query_tile); below one full tile of queries that leaves
+	// the device nearly idle (e.g. a [4, 12, 64] attention runs 4 blocks of
+	// 64 threads) and the per-call output allocation dominates. Measured on
+	// GB10 (Wolf CrossAsset, seq_len=12): flash is ~5% SLOWER per epoch than
+	// the engine's batched-GEMM + fused-scaled-softmax fallback. Bail out and
+	// let that path handle short sequences; flash wins on long-sequence
+	// prefill where the S matrix is large.
+	if q.Shape()[1] < 32 {
+		return nil, nil
+	}
+
 	// The flash prefill kernel assumes Q and K/V share the same sequence
 	// length (it uses a single seq_len for all pointer arithmetic). During
 	// autoregressive decode with KV cache, Q has seqLen=1 while K/V have
