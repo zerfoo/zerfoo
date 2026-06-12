@@ -736,7 +736,7 @@ func (c *ComplexSSMState[T]) Backward(ctx context.Context, mode types.BackwardMo
 
 	// 3. Backward through conv1d
 	dXPreConv, dConvW := c.conv1dBackward(batch, seqLen, dXConv)
-	c.convWeight.Gradient, err = c.engine.Add(ctx, c.convWeight.Gradient, dConvW)
+	c.convWeight.Gradient, err = c.engine.Add(ctx, c.convWeight.Gradient, dConvW, c.convWeight.Gradient)
 	if err != nil {
 		return nil, err
 	}
