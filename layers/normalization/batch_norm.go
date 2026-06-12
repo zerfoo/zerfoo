@@ -221,7 +221,7 @@ func (b *BatchNormalization[T]) Backward(ctx context.Context, _ types.BackwardMo
 		if b.scale.Gradient == nil {
 			b.scale.Gradient = dScale
 		} else {
-			b.scale.Gradient, err = b.engine.Add(ctx, b.scale.Gradient, dScale)
+			b.scale.Gradient, err = b.engine.Add(ctx, b.scale.Gradient, dScale, b.scale.Gradient)
 			if err != nil {
 				return nil, fmt.Errorf("BatchNormalization backward: accumulate scale gradient: %w", err)
 			}
@@ -249,7 +249,7 @@ func (b *BatchNormalization[T]) Backward(ctx context.Context, _ types.BackwardMo
 		if b.bias.Gradient == nil {
 			b.bias.Gradient = dBias
 		} else {
-			b.bias.Gradient, err = b.engine.Add(ctx, b.bias.Gradient, dBias)
+			b.bias.Gradient, err = b.engine.Add(ctx, b.bias.Gradient, dBias, b.bias.Gradient)
 			if err != nil {
 				return nil, fmt.Errorf("BatchNormalization backward: accumulate bias gradient: %w", err)
 			}
