@@ -305,3 +305,41 @@ func fusedSDPAAssertCloseF64(t *testing.T, what string, want, got *tensor.Tensor
 		}
 	}
 }
+
+// TestFusedSDPA_SaverAware verifies FusedSDPA implements graph.SaverAware and
+// fans the Saver into the inner SDPA so its cached Q/K/V and attention
+// weights are save-for-backward pinned (zerfoo#864). Without this, the inner
+// SDPA's cached forward tensors are unpinned arena intermediates on GPU
+// engines -- the zerfoo#842 corruption class.
+func TestFusedSDPA_SaverAware(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	node := NewFusedSDPA[float32](engine, 4, WithFusedSDPABidirectional[float32]())
+
+	// Compile-time + runtime interface check.
+	sa, ok := any(node).(graph.SaverAware[float32])
+	if !ok {
+		t.Fatal("FusedSDPA does not implement graph.SaverAware")
+	}
+
+	rec := &recordingSaver[float32]{}
+	sa.SetSaver(rec)
+
+	q, _ := tensor.New[float32]([]int{1, 2, 4}, make([]float32, 8))
+	k, _ := tensor.New[float32]([]int{1, 2, 4}, make([]float32, 8))
+	v, _ := tensor.New[float32]([]int{1, 2, 4}, make([]float32, 8))
+	if _, err := node.Forward(context.Background(), q, k, v); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	// Inner SDPA must have registered q, k, v (and the attention weights on
+	// the discrete CPU path) with the saver.
+	if rec.saved < 3 {
+		t.Fatalf("SaveForBackward registered %d tensors, want >= 3 (q, k, v)", rec.saved)
+	}
+}
+
+// recordingSaver counts SaveForBackward registrations.
+type recordingSaver[T tensor.Numeric] struct{ saved int }
+
+func (r *recordingSaver[T]) SaveForBackward(ts ...*tensor.TensorNumeric[T]) {
+	r.saved += len(ts)
+}

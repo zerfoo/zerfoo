@@ -82,6 +82,14 @@ func NewFusedSDPAFrom[T tensor.Numeric](sdpa *ScaledDotProductAttention[T]) *Fus
 	return &FusedSDPA[T]{inner: sdpa}
 }
 
+// SetSaver implements graph.SaverAware by fanning the graph's Saver into the
+// inner SDPA. The inner SDPA caches Q/K/V and the attention weights in
+// Forward and consumes them in Backward (which is called with nil inputs),
+// so they are SAVE-class intermediates: without this wiring they would be
+// unpinned arena intermediates on GPU engines, and downstream forward ops
+// could overwrite them before Backward runs (zerfoo#864, the #842 class).
+func (n *FusedSDPA[T]) SetSaver(s graph.Saver[T]) { n.inner.SetSaver(s) }
+
 // OpType implements graph.Node.
 func (n *FusedSDPA[T]) OpType() string { return "FusedSDPA" }
 
