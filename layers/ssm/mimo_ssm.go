@@ -680,7 +680,7 @@ func (m *MIMOMambaBlock[T]) Backward(ctx context.Context, mode types.BackwardMod
 	// 3. Backward through conv1d
 	dXPreConv, dConvW := m.conv1dBackward(batch, seqLen, dXConv)
 	if m.convWeight.Gradient != nil {
-		m.convWeight.Gradient, err = m.engine.Add(ctx, m.convWeight.Gradient, dConvW)
+		m.convWeight.Gradient, err = m.engine.Add(ctx, m.convWeight.Gradient, dConvW, m.convWeight.Gradient)
 		if err != nil {
 			return nil, err
 		}

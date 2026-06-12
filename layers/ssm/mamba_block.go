@@ -675,7 +675,7 @@ func (m *MambaBlock[T]) Backward(ctx context.Context, mode types.BackwardMode, o
 	dXPreConv, dConvW := m.conv1dBackward(batch, seqLen, dXConv)
 
 	// Accumulate conv weight gradient
-	m.convWeight.Gradient, err = m.engine.Add(ctx, m.convWeight.Gradient, dConvW)
+	m.convWeight.Gradient, err = m.engine.Add(ctx, m.convWeight.Gradient, dConvW, m.convWeight.Gradient)
 	if err != nil {
 		return nil, err
 	}
@@ -697,7 +697,7 @@ func (m *MambaBlock[T]) Backward(ctx context.Context, mode types.BackwardMode, o
 	if m.convBias.Gradient == nil {
 		m.convBias.Gradient = dConvBias
 	} else {
-		m.convBias.Gradient, err = m.engine.Add(ctx, m.convBias.Gradient, dConvBias)
+		m.convBias.Gradient, err = m.engine.Add(ctx, m.convBias.Gradient, dConvBias, m.convBias.Gradient)
 		if err != nil {
 			return nil, err
 		}
