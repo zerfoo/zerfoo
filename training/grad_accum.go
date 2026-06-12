@@ -107,7 +107,7 @@ func (a *gradAccumulator[T]) capture(ctx context.Context, g *graph.Graph[T]) err
 			a.accums[p] = accum
 		}
 
-		if err := a.addInto(ctx, accum, grad, p.Name); err != nil {
+		if err := a.addInto(ctx, a.engineFor(g, accum, grad), accum, grad, p.Name); err != nil {
 			return err
 		}
 
@@ -115,6 +115,36 @@ func (a *gradAccumulator[T]) capture(ctx context.Context, g *graph.Graph[T]) err
 	}
 
 	return nil
+}
+
+// engineFor selects the engine used to accumulate grad into accum.
+//
+// An explicitly configured engine (SetEngine) always wins. Otherwise, for
+// fully device-resident f32 accumulation -- both tensors backed by
+// *tensor.GPUStorage, the only case where the host fallback's
+// read-modify-writeback round-trips device memory through the host -- the
+// graph's own engine is used, so the add runs as an in-place device kernel
+// on the same stream as the graph's kernels (Bug 11: the host round-trip is
+// both slow and, before the ztensor host-access ordering fix, racy on
+// coherent unified-memory platforms). Non-f32 and non-device cases return
+// nil and take the host fallback: GPU engines only run native kernels for
+// float32 and their CPU fallback does not honor the in-place dst contract
+// for device-backed tensors.
+func (a *gradAccumulator[T]) engineFor(g *graph.Graph[T], accum, grad *tensor.TensorNumeric[T]) compute.Engine[T] {
+	if a.engine != nil {
+		return a.engine
+	}
+	var zero T
+	if _, isF32 := any(zero).(float32); !isF32 {
+		return nil
+	}
+	if _, ok := accum.GetStorage().(*tensor.GPUStorage[T]); !ok {
+		return nil
+	}
+	if _, ok := grad.GetStorage().(*tensor.GPUStorage[T]); !ok {
+		return nil
+	}
+	return g.Engine()
 }
 
 // storagesIdentical reports whether two tensors share the same storage
@@ -167,15 +197,17 @@ func newPersistentGradTensor[T tensor.Numeric](grad *tensor.TensorNumeric[T]) (*
 }
 
 // addInto performs accum += grad without ever swapping accum's storage.
-func (a *gradAccumulator[T]) addInto(ctx context.Context, accum, grad *tensor.TensorNumeric[T], name string) error {
+// eng, when non-nil (see engineFor), performs the add as an in-place device
+// kernel; otherwise the host read-modify-writeback fallback is used.
+func (a *gradAccumulator[T]) addInto(ctx context.Context, eng compute.Engine[T], accum, grad *tensor.TensorNumeric[T], name string) error {
 	if accum.GetStorage().Len() != grad.GetStorage().Len() {
 		return fmt.Errorf("training: gradient accumulator for %q has %d elements but gradient has %d",
 			name, accum.GetStorage().Len(), grad.GetStorage().Len())
 	}
 
-	if a.engine != nil {
+	if eng != nil {
 		before := accum.GetStorage()
-		res, err := a.engine.Add(ctx, accum, grad, accum)
+		res, err := eng.Add(ctx, accum, grad, accum)
 		if err != nil {
 			return fmt.Errorf("training: accumulating gradient for %q: %w", name, err)
 		}
