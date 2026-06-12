@@ -1063,6 +1063,38 @@ go test -count=1 -v \
 go test -run Parity -v ./compute/
 ```
 
+### 7.5 Per-Op Verification Gates (ADR-091)
+
+Every new op — a `graph.Node` implementation or a new engine method — must pass
+three complementary harnesses before merge. The harnesses live in ztensor
+`testing/` (gradcheck, oracle) and the parity runner; ADR-091 defines the
+policy. A new op is not done until all three gates are green.
+
+1. **gradcheck (math correctness).** Register the op in the OpInfo registry:
+   constructor, representative shapes, input domains, tolerances. The harness
+   checks the node's analytic `Backward` against float64 central differences on
+   the CPU engine. Runs in ordinary CI; catches wrong Jacobians as named tests.
+2. **Engine parity under arena stress (implementation correctness).** The same
+   op sequence runs CPU-f32 vs GPU-f32, forward AND backward, in interleaved
+   schedules (A.fwd, B.fwd, ..., A.bwd) with a small arena to force buffer
+   reuse. Catches kernel bugs and the cached-intermediate lifetime-corruption
+   class that single-op tests cannot see (pairs with ztensor's
+   `ZTENSOR_ARENA_POISON` mode and the ADR 006 save-for-backward contract).
+   GPU runs execute as Spark pods on the GPU host (CI has no GPU) and
+   serialize on the single device.
+3. **PyTorch oracle (convention correctness).** The op's forward+backward case
+   bundle is dumped through the registry and replayed in torch inside the
+   pinned NGC container; both directions are diffed within per-op tolerances
+   (`|ztensor − torch| ≤ atol + rtol·|torch|`; NaN always fails). Catches
+   numerics-convention divergence (fast-math, reduction ordering, eps
+   placement) that both Go engines could share.
+
+The OpInfo registry's `NewRegistryNode[T]` is the single source of truth for
+constructor arguments, so registering an op once enrolls it in gradcheck and
+the oracle with identical configurations. Each harness encodes at least one
+historically-fixed bug as a red-proof regression fixture proving it would have
+caught that bug class.
+
 ---
 
 ## 8. Build and CI
@@ -1640,6 +1672,28 @@ before forward and ReduceScatter after backward.
 - `cmd/train-distributed/` -- CLI: `zerfoo train-distributed --ranks 4 --model path --dataset jsonl`
 
 See [ADR-050](adr/050-distributed-training-fsdp.md).
+
+### 21.4 Gradient Accumulation Policy
+
+Gradient accumulation across samples/micro-batches stays on the device that
+produced the gradients, ordered on the graph's own stream. When no accumulation
+engine is configured explicitly (`SetEngine`), the accumulator derives the
+graph's compute engine via `Graph.Engine()` (ztensor) and performs in-place
+dst-form adds (`Add(ctx, acc, grad, acc)`), so device-resident f32 gradients
+accumulate as in-place kernels on the same stream as the graph's kernels --
+no per-sample device-to-host round-trip. Host-backed, non-f32, and engine-less
+graphs keep the host fallback.
+
+Two upstream ztensor contracts make both paths safe:
+
+- **dst-form storage identity**: an op given a `dst` writes into `dst`'s
+  existing storage and never re-homes it onto a pool allocation, so a
+  persistent accumulator is never silently converted into an arena tensor that
+  a per-step reset recycles behind the live reference.
+- **host-access synchronization**: any host read/write of device memory (the
+  fallback path's `Data()`/`TrySet`) is stream-ordered via per-device
+  registered sync hooks (`tensor.RegisterHostAccessSync`), so a host read can
+  never observe bytes from before a still-asynchronous kernel write.
 
 ---
 

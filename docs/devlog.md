@@ -2,6 +2,42 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-06-11: GPU training hardening close-out -- device-resident gradient accumulation (#855) validated end-to-end on GB10 f32
+
+**Type:** finding
+**Tags:** gpu-training-hardening, t5.1, t5.3, gradient-accumulation, stream-sync, arena, gb10, #855, #857
+
+**Problem:** GB10 f32 training of the hardest consumer workload still produced
+a deterministic gradient NaN around batch 3-4 after every kernel-level fix in
+the hardening plan: forward clean, per-sample gradients finite, corruption
+entering between the last accumulation and the optimizer guard.
+
+**Root cause -- two stacked ztensor contract gaps, not numerics:**
+
+1. **Unordered host access** (ztensor#137): the gradAccumulator host fallback
+   round-tripped every device gradient through the host (`Data()` D2H, add,
+   `TrySet` H2D) per sample; on GB10 cache-coherent unified memory the host
+   read raced the still-async kernel writing the gradient. Fixed upstream via
+   per-device host-access sync hooks. zerfoo#855 (a69ea550) additionally takes
+   the round-trip off the hot path: with no engine configured, the accumulator
+   derives the graph's own engine (`Graph.Engine()`, new ztensor API) for
+   fully device-resident in-place f32 accumulation on the graph's stream.
+2. **Stale GC-finalizer frees after arena Reset** (ztensor#138): the training
+   loop's first big GC freed thousands of dead pre-Reset storages whose stale
+   FreeArena calls poisoned/double-issued free-list memory owned by live
+   tensors. Fixed upstream with arena reset-epochs (`FreeAtEpoch` drops
+   cross-epoch frees). zerfoo#857 (97af57df) bumps to the fixed ztensor.
+
+**Measured outcome (GB10, f32, both fixes):** two consecutive clean end-to-end
+training runs -- zero NaN, epoch loss 0.778373, accuracy within 0.05pp of the
+CPU baseline, ~390 samples/s. Plan T5.1 acceptance met (two clean runs inside
+the 1pp gate). T5.3 documentation shipped with this entry: design.md gains
+7.5 Per-Op Verification Gates (gradcheck / parity-under-arena-stress /
+PyTorch-oracle -- the gates every new op must pass, ADR-091) and 21.4 Gradient
+Accumulation Policy; ztensor design.md gains the host-access synchronization
+contract, reset-epoch free semantics, pinning, and the dst-form accumulation
+policy (ztensor#139).
+
 ## 2026-04-21: T99.2.2.8 -- H21 reference diff (HF vs zerfoo PLE; structural candidate identified: Q4_K -> Q4_0 re-quantization in gather tables)
 
 **Type:** investigation
