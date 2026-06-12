@@ -9,134 +9,12 @@ import (
 	"github.com/zerfoo/ztensor/tensor"
 )
 
-func TestITransformer_BackwardBatchEngine_GradientCheck(t *testing.T) {
-	engine, ops := newTestEngine()
-	config := ITransformerConfig{
-		Channels:  2,
-		InputLen:  4,
-		OutputLen: 2,
-		DModel:    4,
-		DFF:       8,
-		NHeads:    2,
-		NLayers:   1,
-	}
-
-	m, err := NewITransformer(config, engine, ops)
-	if err != nil {
-		t.Fatalf("NewITransformer: %v", err)
-	}
-
-	ctx := context.Background()
-	batch := 3
-	channels := config.Channels
-	inputLen := config.InputLen
-	outputLen := config.OutputLen
-
-	rng := rand.New(rand.NewPCG(99, 0))
-
-	// Build input and target tensors.
-	inFlat := make([]float32, batch*channels*inputLen)
-	for i := range inFlat {
-		inFlat[i] = float32(rng.NormFloat64() * 0.5)
-	}
-	tgtFlat := make([]float32, batch*channels*outputLen)
-	for i := range tgtFlat {
-		tgtFlat[i] = float32(rng.NormFloat64() * 0.5)
-	}
-
-	inT, err := tensor.New[float32]([]int{batch, channels, inputLen}, inFlat)
-	if err != nil {
-		t.Fatalf("tensor.New input: %v", err)
-	}
-	tgtT, err := tensor.New[float32]([]int{batch, channels, outputLen}, tgtFlat)
-	if err != nil {
-		t.Fatalf("tensor.New target: %v", err)
-	}
-
-	// Compute analytical gradients via batched backward.
-	analyticalGrads, _, err := m.backwardBatchEngine(ctx, inT, tgtT)
-	if err != nil {
-		t.Fatalf("backwardBatchEngine: %v", err)
-	}
-
-	// Helper to compute forward-only batch MSE loss.
-	batchMSE := func() float64 {
-		inD := inT.Data()
-		tgtD := tgtT.Data()
-		loss := 0.0
-		for b := 0; b < batch; b++ {
-			sampleInput := make([][]float64, channels)
-			for c := 0; c < channels; c++ {
-				sampleInput[c] = make([]float64, inputLen)
-				off := b*channels*inputLen + c*inputLen
-				for i := 0; i < inputLen; i++ {
-					sampleInput[c][i] = float64(inD[off+i])
-				}
-			}
-			pred := m.forward(sampleInput)
-			for c := 0; c < channels; c++ {
-				for o := 0; o < outputLen; o++ {
-					tgtIdx := b*channels*outputLen + c*outputLen + o
-					diff := pred[c][o] - float64(tgtD[tgtIdx])
-					loss += diff * diff
-				}
-			}
-		}
-		return loss / float64(batch*channels*outputLen)
-	}
-
-	// Numerical gradient check via central finite differences.
-	params := m.FlatParams()
-	nParams := len(params)
-	if len(analyticalGrads) != nParams {
-		t.Fatalf("grad length mismatch: analytical=%d, params=%d", len(analyticalGrads), nParams)
-	}
-
-	eps := 1e-5
-	maxRelErr := 0.0
-	failCount := 0
-
-	// Check all parameters for this small model.
-	for pi := 0; pi < nParams; pi++ {
-		orig := *params[pi]
-
-		*params[pi] = orig + eps
-		lossPlus := batchMSE()
-
-		*params[pi] = orig - eps
-		lossMinus := batchMSE()
-
-		*params[pi] = orig
-
-		numerical := (lossPlus - lossMinus) / (2.0 * eps)
-		analytical := analyticalGrads[pi]
-
-		denom := math.Max(math.Abs(numerical), math.Abs(analytical))
-		// Skip near-zero gradients where relative error is meaningless.
-		if math.Abs(analytical) < 1e-12 && math.Abs(numerical) < 1e-6 {
-			continue
-		}
-		if denom < 1e-10 {
-			continue
-		}
-		relErr := math.Abs(analytical-numerical) / denom
-		if relErr > maxRelErr {
-			maxRelErr = relErr
-		}
-		if relErr > 1e-3 {
-			failCount++
-			if failCount <= 5 {
-				t.Errorf("param[%d]: analytical=%.8e, numerical=%.8e, relErr=%.4e",
-					pi, analytical, numerical, relErr)
-			}
-		}
-	}
-
-	if failCount > 0 {
-		t.Errorf("%d/%d parameters exceed 0.1%% relative error", failCount, nParams)
-	}
-	t.Logf("gradient check: %d params, maxRelErr=%.4e, failures=%d", nParams, maxRelErr, failCount)
-}
+// The bespoke finite-difference gradient check that used to live here
+// (TestITransformer_BackwardBatchEngine_GradientCheck) was migrated to
+// ztensor's shared gradcheck harness; see TestTimeseriesBackward_Gradcheck in
+// gradcheck_test.go (plan T1.6). gradcheck verifies the float64 CPU backward,
+// and TestITransformer_BackwardBatchEngine_ParityWithCPU below pins the
+// engine-batched backward to that CPU path.
 
 func TestITransformer_BackwardBatchEngine_ParityWithCPU(t *testing.T) {
 	engine, ops := newTestEngine()
@@ -354,40 +232,40 @@ func TestITransformer_BackwardBatchEngine_InputValidation(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name    string
-		inShape []int
+		name     string
+		inShape  []int
 		tgtShape []int
-		wantErr string
+		wantErr  string
 	}{
 		{
-			name:    "2D input",
-			inShape: []int{2, 4},
+			name:     "2D input",
+			inShape:  []int{2, 4},
 			tgtShape: []int{1, 2, 2},
-			wantErr: "3D input",
+			wantErr:  "3D input",
 		},
 		{
-			name:    "wrong channels",
-			inShape: []int{1, 3, 4},
+			name:     "wrong channels",
+			inShape:  []int{1, 3, 4},
 			tgtShape: []int{1, 2, 2},
-			wantErr: "expected 2 channels",
+			wantErr:  "expected 2 channels",
 		},
 		{
-			name:    "wrong inputLen",
-			inShape: []int{1, 2, 5},
+			name:     "wrong inputLen",
+			inShape:  []int{1, 2, 5},
 			tgtShape: []int{1, 2, 2},
-			wantErr: "expected inputLen 4",
+			wantErr:  "expected inputLen 4",
 		},
 		{
-			name:    "2D target",
-			inShape: []int{1, 2, 4},
+			name:     "2D target",
+			inShape:  []int{1, 2, 4},
 			tgtShape: []int{2, 2},
-			wantErr: "3D target",
+			wantErr:  "3D target",
 		},
 		{
-			name:    "target shape mismatch",
-			inShape: []int{1, 2, 4},
+			name:     "target shape mismatch",
+			inShape:  []int{1, 2, 4},
 			tgtShape: []int{2, 2, 2},
-			wantErr: "target shape",
+			wantErr:  "target shape",
 		},
 	}
 

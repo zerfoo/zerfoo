@@ -2,7 +2,6 @@ package timeseries
 
 import (
 	"math"
-	"math/rand/v2"
 	"testing"
 )
 
@@ -402,98 +401,6 @@ func TestITransformer_PredictWindowed_Empty(t *testing.T) {
 	}
 }
 
-func TestITransformer_GradientCheck(t *testing.T) {
-	config := ITransformerConfig{
-		Channels:  2,
-		InputLen:  4,
-		OutputLen: 2,
-		DModel:    4,
-		DFF:       8,
-		NHeads:    2,
-		NLayers:   1,
-	}
-
-	m, err := NewITransformer(config, nil, nil)
-	if err != nil {
-		t.Fatalf("NewITransformer: %v", err)
-	}
-
-	// Create a small batch of data.
-	nSamples := 3
-	windows := make([][][]float64, nSamples)
-	labels := make([]float64, nSamples*config.Channels*config.OutputLen)
-	for s := 0; s < nSamples; s++ {
-		windows[s] = make([][]float64, config.Channels)
-		for c := 0; c < config.Channels; c++ {
-			windows[s][c] = make([]float64, config.InputLen)
-			for i := 0; i < config.InputLen; i++ {
-				windows[s][c][i] = rand.NormFloat64() * 0.5
-			}
-		}
-		for i := 0; i < config.Channels*config.OutputLen; i++ {
-			labels[s*config.Channels*config.OutputLen+i] = rand.NormFloat64() * 0.5
-		}
-	}
-
-	// Compute analytical gradients.
-	scale := 1.0 / float64(nSamples*config.Channels*config.OutputLen)
-	accGrads := newITransformerGrads(config)
-	for s := 0; s < nSamples; s++ {
-		pred, cache := m.forwardWithCache(windows[s])
-		dOutput := make([][]float64, config.Channels)
-		for c := 0; c < config.Channels; c++ {
-			dOutput[c] = make([]float64, config.OutputLen)
-			for o := 0; o < config.OutputLen; o++ {
-				labelIdx := s*config.Channels*config.OutputLen + c*config.OutputLen + o
-				diff := pred[c][o] - labels[labelIdx]
-				dOutput[c][o] = 2.0 * diff * scale
-			}
-		}
-		m.backward(dOutput, cache, &accGrads)
-	}
-	analyticalGrads := accGrads.collectGrads(config)
-
-	// Pick 10 random parameters and verify with central finite differences.
-	params := m.FlatParams()
-	nParams := len(params)
-	if len(analyticalGrads) != nParams {
-		t.Fatalf("grad length mismatch: analytical=%d, params=%d", len(analyticalGrads), nParams)
-	}
-
-	eps := 1e-5
-	nChecks := 10
-	maxRelErr := 0.0
-	for check := 0; check < nChecks; check++ {
-		p := rand.IntN(nParams)
-		orig := *params[p]
-
-		// f(x + eps)
-		*params[p] = orig + eps
-		lossPlus := m.batchLoss(windows, labels, nSamples)
-
-		// f(x - eps)
-		*params[p] = orig - eps
-		lossMinus := m.batchLoss(windows, labels, nSamples)
-
-		*params[p] = orig
-
-		numerical := (lossPlus - lossMinus) / (2.0 * eps)
-		analytical := analyticalGrads[p]
-
-		// Relative error with denominator guard.
-		denom := math.Max(math.Abs(numerical), math.Abs(analytical))
-		if denom < 1e-10 {
-			// Both are near zero — skip.
-			continue
-		}
-		relErr := math.Abs(analytical-numerical) / denom
-		if relErr > maxRelErr {
-			maxRelErr = relErr
-		}
-		if relErr > 1e-3 {
-			t.Errorf("param %d: analytical=%.8e, numerical=%.8e, relErr=%.4e",
-				p, analytical, numerical, relErr)
-		}
-	}
-	t.Logf("gradient check: max relative error = %.4e over %d parameters", maxRelErr, nChecks)
-}
+// The bespoke finite-difference spot check that used to live here
+// (TestITransformer_GradientCheck) was migrated to ztensor's shared gradcheck
+// harness; see TestTimeseriesBackward_Gradcheck in gradcheck_test.go (plan T1.6).
