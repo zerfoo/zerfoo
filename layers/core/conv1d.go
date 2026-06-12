@@ -232,7 +232,7 @@ func (c *Conv1D[T]) Backward(ctx context.Context, mode types.BackwardMode, outpu
 	if err != nil {
 		return nil, err
 	}
-	c.weight.Gradient, err = c.engine.Add(ctx, c.weight.Gradient, dwTensor)
+	c.weight.Gradient, err = c.engine.Add(ctx, c.weight.Gradient, dwTensor, c.weight.Gradient)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +251,7 @@ func (c *Conv1D[T]) Backward(ctx context.Context, mode types.BackwardMode, outpu
 		if err != nil {
 			return nil, err
 		}
-		c.bias.Gradient, err = c.engine.Add(ctx, c.bias.Gradient, dbTensor)
+		c.bias.Gradient, err = c.engine.Add(ctx, c.bias.Gradient, dbTensor, c.bias.Gradient)
 		if err != nil {
 			return nil, err
 		}

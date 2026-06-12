@@ -133,7 +133,7 @@ func (l *Linear[T]) Backward(ctx context.Context, mode types.BackwardMode, outpu
 	if err != nil {
 		return nil, err
 	}
-	l.weights.Gradient, err = l.engine.Add(ctx, l.weights.Gradient, dw)
+	l.weights.Gradient, err = l.engine.Add(ctx, l.weights.Gradient, dw, l.weights.Gradient)
 	if err != nil {
 		return nil, err
 	}
