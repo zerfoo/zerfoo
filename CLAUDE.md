@@ -6,6 +6,15 @@ See `../CLAUDE.md` for the full ecosystem vision and project map (covers 7 repos
 
 Be the best-in-class ML inference framework in Go — competitive with C++ runtimes (llama.cpp, vLLM) in throughput, superior in developer experience and embeddability. GGUF is the sole model format.
 
+## Zerfoo stays general-purpose
+
+Zerfoo is a general-purpose ML framework. Wolf (feza-ai/wolf) is its most demanding consumer and its hardest stress test — but Wolf is a **workload, not the spec**. Rules:
+
+- **Fix at the contract level, not the consumer level.** When a consumer workload exposes a bug, the fix is a general framework guarantee (e.g. the SaveForBackward lifetime contract, the dst-form "ops write into dst's storage" contract, persistent gradient accumulators), never a special case for that consumer's call pattern.
+- **No consumer-specific logic in this repo.** Model-, strategy-, or pipeline-specific code (e.g. Wolf's QK-norm nodes, divergence guards, feature pipelines) lives in the consumer's repo. Upstream only mechanisms that any ML workload could use.
+- **Acceptance must not be single-consumer.** "Wolf passes" is necessary but not sufficient for framework-level changes; validation should include at least one non-Wolf path (e.g. a timeseries/patchtst training smoke). Known single-consumer deferrals must be tracked as issues (e.g. the capture-mode hole in ztensor's dst-copy path, the #847 follow-up layer migrations), not silently dropped because Wolf doesn't exercise them.
+- **Quality gates are universal.** Every op — used by Wolf or not — must pass gradcheck/OpInfo, the GPU/CPU parity harness, and (for CUDA kernels) the PyTorch-oracle gate before merge. Prefer neutral naming for tests and fixtures (a hazard pattern is "accumulate-across-resets", not a consumer's name).
+
 ## Hardware
 
 DGX Spark GPU host is at `192.168.86.250` (NVIDIA GB10, aarch64, unified memory).
