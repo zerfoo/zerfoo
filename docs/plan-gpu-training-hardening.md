@@ -386,7 +386,7 @@ Acceptance: the prize -- Wolf trains clean on GB10 f32 -- plus shipped tags.
   - Acceptance: two clean runs; Wolf devlog entry with numbers; Wolf ADR 072
     amended with the resolution.
 
-- [ ] T5.2 Release ztensor + zerfoo; bump Wolf
+- [x] T5.2 Release ztensor + zerfoo; bump Wolf  2026 06 11  (DONE: ztensor v1.11.0 (release PR #126; includes #134/#137/#138) and zerfoo v1.49.0 (release PR #804; includes #851/#852/#855/#857 + ztensor bump PR #858) shipped in dependency order; zerfoo#858 also fixed release-please to read the repo config -- the inline release-type ignored the v1.49.0 pin and proposed an unresolvable 4.0.0. Wolf bumped to both released tags in wolf#201 with the speed-parity plan T14.x marked unblocked (two clean GB10 folds, acc 0.6760, ~390 samples/s).)
        Owner: TBD  Est: 4h  verifies: [UC-GH-007]  kind: agent  blocked-by: [T5.1]
   - Ship release-please tags in dependency order (ztensor, then zerfoo); Wolf
     go.mod bump PR; Wolf speed-parity plan T14.x status updated to unblocked.
@@ -453,7 +453,7 @@ T5.1) serialize on the single GPU -- never fan those out.
 
 ### Wave 5: Validation + ship (1 agent, GPU-serial)
 - [x] T5.1 Wolf GB10 f32 clean fold x2  2026 06 11  (DONE verify9/verify9b, image 0066d970, acc 0.6760)
-- [ ] T5.2 Releases + Wolf bump
+- [x] T5.2 Releases + Wolf bump  2026 06 11  (DONE ztensor v1.11.0, zerfoo v1.49.0, wolf#201)
 - [x] T5.3 Documentation  2026 06 11  (DONE ztensor#139, zerfoo#859, wolf#200)
 
 ---
