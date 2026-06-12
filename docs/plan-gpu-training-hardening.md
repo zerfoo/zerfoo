@@ -287,7 +287,7 @@ under poison mode.
   - Acceptance: audit table complete; both repos' suites green; parity harness
     (T1.2) under ZTENSOR_ARENA_POISON=1 green across the registry.
 
-- [ ] S2.3.1 Poison-mode full-suite run on GB10 (Spark, serial)
+- [x] S2.3.1 Poison-mode full-suite run on GB10 (Spark, serial)  2026 06 11  (DONE ztensor#140: Spark pod ztensor-parity-4b4d759c, ZTENSOR_ARENA_POISON=1, 64MiB arena -- parity schedules 26/26 + 26/26 green, GPU red-proof red, Wolf-pattern training loop finite + CPU-parity; ztensor devlog 2026-06-11)
        Owner: TBD  Est: 2h  verifies: [UC-GH-004]  kind: agent  blocked-by: [T2.3]
   - The proof: parity harness + a small training loop with per-sample
     ResetPool (the Wolf gr-12 pattern: accumulate gradients across a batch,
