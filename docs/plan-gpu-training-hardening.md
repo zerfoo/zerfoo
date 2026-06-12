@@ -293,7 +293,7 @@ under poison mode.
     ResetPool (the Wolf gr-12 pattern: accumulate gradients across a batch,
     reset arena every sample) runs clean under poison.
 
-- [ ] T2.4 Wolf-pattern integration stress test in ztensor
+- [x] T2.4 Wolf-pattern integration stress test in ztensor  2026 06 12  (DONE ztensor#141: attention graph Q@K^T->softmax->@V + residual/RMS-norm on SaveForBackward, reset-between-fwd-bwd + per-sample ResetPool, persistent Parameters; StressCI green, GB10 pod ztensor-parity-853a7fa1 green under poison, red-proof verified)
        Owner: TBD  Est: 4h  verifies: [UC-GH-004, UC-GH-007]  kind: agent  blocked-by: [T2.1, T2.2]
   - A ztensor integration test reproducing the exact hazard schedule that bit
     Wolf: multi-sample gradient accumulation into persistent Parameters with
