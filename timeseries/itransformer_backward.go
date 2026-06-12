@@ -4,9 +4,9 @@ import (
 	"context"
 	"math"
 
+	"github.com/zerfoo/zerfoo/layers/functional"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
-	"github.com/zerfoo/zerfoo/layers/functional"
 )
 
 // iTransformerCache stores intermediate activations needed for backward pass.
@@ -43,9 +43,9 @@ type iTransformerLayerCache struct {
 	ln1Std []float64   // [channels] per-channel std
 
 	// FFN sub-layer.
-	fc1Out    [][]float64 // [channels][dFF] before activation
-	geluOut   [][]float64 // [channels][dFF] after GELU
-	fc2Out    [][]float64 // [channels][dModel] after fc2
+	fc1Out  [][]float64 // [channels][dFF] before activation
+	geluOut [][]float64 // [channels][dFF] after GELU
+	fc2Out  [][]float64 // [channels][dModel] after fc2
 
 	// Post-FFN residual + LN2.
 	preLN2 [][]float64 // [channels][dModel] residual sum before LN2
@@ -648,22 +648,6 @@ func (g *iTransformerGrads) collectGrads(cfg ITransformerConfig) []float64 {
 	grads = append(grads, g.dProjB...)
 
 	return grads
-}
-
-// batchLoss computes the MSE loss for a batch.
-func (m *ITransformer) batchLoss(windows [][][]float64, labels []float64, bs int) float64 {
-	loss := 0.0
-	for s := 0; s < bs; s++ {
-		pred := m.forward(windows[s])
-		for c := 0; c < m.config.Channels; c++ {
-			for o := 0; o < m.config.OutputLen; o++ {
-				labelIdx := s*m.config.Channels*m.config.OutputLen + c*m.config.OutputLen + o
-				diff := pred[c][o] - labels[labelIdx]
-				loss += diff * diff
-			}
-		}
-	}
-	return loss / float64(bs*m.config.Channels*m.config.OutputLen)
 }
 
 // copyMatrix creates a deep copy of a 2D float64 slice.
