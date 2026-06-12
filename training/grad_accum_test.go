@@ -377,7 +377,7 @@ func TestEngineAdd_PreservesAccumulatorStorageIdentity(t *testing.T) {
 
 	// Same property through the hook's addInto.
 	acc := &gradAccumulator[float32]{engine: engine}
-	if err := acc.addInto(ctx, accum, grad, "p"); err != nil {
+	if err := acc.addInto(ctx, acc.engine, accum, grad, "p"); err != nil {
 		t.Fatalf("addInto: %v", err)
 	}
 	if accum.GetStorage() != before {
