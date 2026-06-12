@@ -233,7 +233,7 @@ GPU harnesses run as Spark pods.
 - [x] S1.4.1 Tests + lint for poison mode  2026 06 10  (DONE in #130)
        Owner: TBD  Est: 1h  verifies: [UC-GH-004]  kind: agent  blocked-by: [T1.4]
 
-- [ ] T1.6 Migrate zerfoo ad-hoc finite-difference tests to gradcheck
+- [x] T1.6 Migrate zerfoo ad-hoc finite-difference tests to gradcheck  2026 06 11  (DONE #856: 6 OpInfo entries via flatParamNode adapter; bespoke timeseries FD checkers retired)
        Owner: TBD  Est: 4h  verifies: [UC-GH-001]  kind: agent  blocked-by: [T1.1]
   - Register the timeseries ops (timemixer, patchtst, itransformer backward
     tests) in the OpInfo registry; replace bespoke checkers with gradcheck
