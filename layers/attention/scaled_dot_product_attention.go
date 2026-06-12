@@ -120,6 +120,17 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	sdpa.q = q
 	sdpa.k = k
 	sdpa.v = v
+	// Invalidate the cached attention weights from any PREVIOUS step. The
+	// fused paths below (flash decode / flash forward) return early without
+	// setting attentionWeights; Backward treats a non-nil cache as
+	// authoritative and would otherwise consume the previous step's tensor --
+	// arena-backed, unpinned, and typically reclaimed by a per-step pool
+	// Reset -- yielding deterministically wrong gradients from the second
+	// step of a training loop onward (Backward itself re-populates this
+	// cache when it recomputes after a fused forward, which is what arms the
+	// staleness). Always clearing here makes Backward recompute from the
+	// freshly pinned q/k of THIS forward.
+	sdpa.attentionWeights = nil
 	if sdpa.saver != nil {
 		sdpa.saver.SaveForBackward(q, k, v)
 	}
