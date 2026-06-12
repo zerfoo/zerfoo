@@ -3,6 +3,8 @@
 package attention
 
 import (
+	"unsafe"
+
 	"github.com/zerfoo/ztensor/device"
 	"github.com/zerfoo/zerfoo/internal/cuda"
 	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
@@ -17,10 +19,23 @@ import (
 // Q, K, V must be 3D tensors with shape [batch*heads, seq_len, head_dim].
 // The kernel treats each element of the first dimension as an independent
 // (batch, head) pair (i.e., batch=batch*heads, heads=1).
+//
+// engStream is the producing engine's CUDA stream (compute.StreamProvider),
+// or nil when the caller has no engine stream. When non-nil the kernel is
+// launched on that stream WITHOUT a host synchronize: Q/K/V were enqueued by
+// engine ops on the same stream, so the launch is stream-ordered after their
+// producers, and downstream engine ops (or the engine's host-access sync
+// hooks, ztensor#137) order the output. When nil, the legacy behavior is
+// kept: a temporary stream is created and host-synchronized before return.
+// Launching on a private temporary stream while the inputs are still being
+// produced on the engine stream is a cross-stream race -- the kernel can read
+// in-flight Q/K/V (observed as a silently-wrong training trajectory in Wolf's
+// CrossAsset GB10 run, fold-0 acc 0.7042 -> 0.4948 at identical seed).
 func tryFlashForward[T tensor.Numeric](
 	q, k, v *tensor.TensorNumeric[T],
 	headDim int,
 	causal bool,
+	engStream unsafe.Pointer,
 ) (*tensor.TensorNumeric[T], error) {
 	if !cuda.Available() {
 		return nil, nil
@@ -77,6 +92,23 @@ func tryFlashForward[T tensor.Numeric](
 		return nil, err
 	}
 
+	// Engine-stream path: launch stream-ordered after the Q/K/V producers.
+	// No host synchronize -- consumers on the same stream are ordered, and
+	// host access goes through the engine's host-access sync hooks.
+	if engStream != nil {
+		if err := kernels.FlashAttentionForward(
+			qGPU.Ptr(), kGPU.Ptr(), vGPU.Ptr(), oGPU.Ptr(),
+			batchHeads, 1, seqLen, headDim, causal, engStream,
+		); err != nil {
+			oGPU.Free() //nolint:errcheck
+			return nil, err
+		}
+		return tensor.NewWithStorage(shape, oGPU)
+	}
+
+	// Legacy path (no engine stream known): temporary stream + host sync.
+	// Only safe when the caller guarantees Q/K/V are not in-flight on
+	// another stream (e.g. standalone use with synchronous uploads).
 	stream, err := cuda.CreateStream()
 	if err != nil {
 		oGPU.Free() //nolint:errcheck

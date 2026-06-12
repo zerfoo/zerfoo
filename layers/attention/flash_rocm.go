@@ -3,6 +3,8 @@
 package attention
 
 import (
+	"unsafe"
+
 	"github.com/zerfoo/ztensor/device"
 	"github.com/zerfoo/zerfoo/internal/hip"
 	"github.com/zerfoo/zerfoo/internal/hip/kernels"
@@ -16,10 +18,17 @@ import (
 // Q, K, V must be 3D tensors with shape [batch*heads, seq_len, head_dim].
 // The kernel treats each element of the first dimension as an independent
 // (batch, head) pair (i.e., batch=batch*heads, heads=1).
+//
+// engStream is the producing engine's stream (compute.StreamProvider), or
+// nil. When non-nil the kernel launches on it without a host synchronize so
+// the launch is ordered after the Q/K/V producers (see the CUDA variant in
+// flash.go for the cross-stream race this prevents). When nil, the legacy
+// temporary-stream + host-sync behavior is kept.
 func tryFlashForward[T tensor.Numeric](
 	q, k, v *tensor.TensorNumeric[T],
 	headDim int,
 	causal bool,
+	engStream unsafe.Pointer,
 ) (*tensor.TensorNumeric[T], error) {
 	// Flash attention supports head_dim up to 128.
 	if headDim > 128 {
@@ -62,6 +71,18 @@ func tryFlashForward[T tensor.Numeric](
 	oGPU, err := tensor.NewGPUStorage[T](n, qGPU.DeviceID())
 	if err != nil {
 		return nil, err
+	}
+
+	// Engine-stream path: launch stream-ordered after the Q/K/V producers.
+	if engStream != nil {
+		if err := kernels.FlashAttentionForward(
+			qGPU.Ptr(), kGPU.Ptr(), vGPU.Ptr(), oGPU.Ptr(),
+			batchHeads, 1, seqLen, headDim, causal, engStream,
+		); err != nil {
+			oGPU.Free() //nolint:errcheck
+			return nil, err
+		}
+		return tensor.NewWithStorage(shape, oGPU)
 	}
 
 	stream, err := hip.CreateStream()

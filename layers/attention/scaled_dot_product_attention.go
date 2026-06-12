@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"unsafe"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -133,8 +134,20 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 
 	// Try fused flash attention when no arbitrary mask is provided.
 	// Flash attention handles causal masking internally via the causal flag.
+	// Resolve the engine's GPU stream (compute.StreamProvider) so the kernel
+	// launch is stream-ordered after the engine ops that produced Q/K/V --
+	// launching on a private stream races with in-flight producers and was
+	// observed to silently corrupt training (Wolf CrossAsset GB10).
 	if mask == nil {
-		if result, err := tryFlashForward(q, k, v, int(sdpa.headDim), sdpa.causal); result != nil || err != nil {
+		var engStream unsafe.Pointer
+		realEng := compute.Engine[T](sdpa.engine)
+		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
+			realEng = proxy.Real()
+		}
+		if sp, ok := realEng.(compute.StreamProvider); ok {
+			engStream = sp.Stream()
+		}
+		if result, err := tryFlashForward(q, k, v, int(sdpa.headDim), sdpa.causal, engStream); result != nil || err != nil {
 			return result, err
 		}
 	}
