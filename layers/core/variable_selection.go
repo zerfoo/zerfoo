@@ -277,7 +277,7 @@ func (v *VariableSelection[T]) Backward(ctx context.Context, mode types.Backward
 	if err != nil {
 		return nil, err
 	}
-	v.w2.Gradient, err = v.engine.Add(ctx, v.w2.Gradient, dW2)
+	v.w2.Gradient, err = v.engine.Add(ctx, v.w2.Gradient, dW2, v.w2.Gradient)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +287,7 @@ func (v *VariableSelection[T]) Backward(ctx context.Context, mode types.Backward
 	if err != nil {
 		return nil, err
 	}
-	v.b2.Gradient, err = v.engine.Add(ctx, v.b2.Gradient, db2)
+	v.b2.Gradient, err = v.engine.Add(ctx, v.b2.Gradient, db2, v.b2.Gradient)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +316,7 @@ func (v *VariableSelection[T]) Backward(ctx context.Context, mode types.Backward
 	if err != nil {
 		return nil, err
 	}
-	v.w1.Gradient, err = v.engine.Add(ctx, v.w1.Gradient, dW1)
+	v.w1.Gradient, err = v.engine.Add(ctx, v.w1.Gradient, dW1, v.w1.Gradient)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +326,7 @@ func (v *VariableSelection[T]) Backward(ctx context.Context, mode types.Backward
 	if err != nil {
 		return nil, err
 	}
-	v.b1.Gradient, err = v.engine.Add(ctx, v.b1.Gradient, db1)
+	v.b1.Gradient, err = v.engine.Add(ctx, v.b1.Gradient, db1, v.b1.Gradient)
 	if err != nil {
 		return nil, err
 	}
