@@ -185,7 +185,7 @@ func (pe *PatchEmbed[T]) Backward(ctx context.Context, mode types.BackwardMode, 
 	if err != nil {
 		return nil, err
 	}
-	pe.proj.Gradient, err = pe.engine.Add(ctx, pe.proj.Gradient, dw)
+	pe.proj.Gradient, err = pe.engine.Add(ctx, pe.proj.Gradient, dw, pe.proj.Gradient)
 	if err != nil {
 		return nil, err
 	}
