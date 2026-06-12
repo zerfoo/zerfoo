@@ -455,3 +455,93 @@ func TestFlashAttentionPuregoParityCausal(t *testing.T) {
 		t.Errorf("total mismatches (causal): %d / %d", mismatches, n)
 	}
 }
+
+// TestFlashAttentionPuregoParityWolfShape verifies the prefill kernel at the
+// shape Wolf CrossAsset attention uses through FusedSDPA: 4 (batch*heads)
+// independent slices, a short 12-token sequence, head_dim=64, non-causal.
+// Short sequences (seq_len << BLOCK_SIZE) leave most threads of the single
+// query tile idle and exercise the q_count/k_count edge handling.
+func TestFlashAttentionPuregoParityWolfShape(t *testing.T) {
+	if !cuda.Available() {
+		t.Skip("CUDA not available (no GPU)")
+	}
+
+	batch, heads, seqLen, headDim := 4, 1, 12, 64
+	n := batch * heads * seqLen * headDim
+
+	Q := make([]float32, n)
+	K := make([]float32, n)
+	V := make([]float32, n)
+	for i := range Q {
+		Q[i] = float32(i%13-6) * 0.07
+		K[i] = float32(i%9-4) * 0.06
+		V[i] = float32(i%7-3) * 0.09
+	}
+
+	expected := naiveAttention(Q, K, V, batch, heads, seqLen, headDim, false)
+
+	byteSize := n * 4
+	devQ, err := cuda.Malloc(byteSize)
+	if err != nil {
+		t.Fatalf("Malloc Q: %v", err)
+	}
+	defer func() { _ = cuda.Free(devQ) }()
+	devK, err := cuda.Malloc(byteSize)
+	if err != nil {
+		t.Fatalf("Malloc K: %v", err)
+	}
+	defer func() { _ = cuda.Free(devK) }()
+	devV, err := cuda.Malloc(byteSize)
+	if err != nil {
+		t.Fatalf("Malloc V: %v", err)
+	}
+	defer func() { _ = cuda.Free(devV) }()
+	devO, err := cuda.Malloc(byteSize)
+	if err != nil {
+		t.Fatalf("Malloc O: %v", err)
+	}
+	defer func() { _ = cuda.Free(devO) }()
+
+	if err := cuda.Memcpy(devQ, unsafe.Pointer(&Q[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
+		t.Fatalf("Memcpy Q: %v", err)
+	}
+	if err := cuda.Memcpy(devK, unsafe.Pointer(&K[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
+		t.Fatalf("Memcpy K: %v", err)
+	}
+	if err := cuda.Memcpy(devV, unsafe.Pointer(&V[0]), byteSize, cuda.MemcpyHostToDevice); err != nil {
+		t.Fatalf("Memcpy V: %v", err)
+	}
+
+	stream, err := cuda.CreateStream()
+	if err != nil {
+		t.Fatalf("CreateStream: %v", err)
+	}
+	defer func() { _ = stream.Destroy() }()
+
+	if err := FlashAttentionForward(devQ, devK, devV, devO, batch, heads, seqLen, headDim, false, stream.Ptr()); err != nil {
+		t.Fatalf("FlashAttentionForward: %v", err)
+	}
+	if err := stream.Synchronize(); err != nil {
+		t.Fatalf("Synchronize: %v", err)
+	}
+
+	result := make([]float32, n)
+	if err := cuda.Memcpy(unsafe.Pointer(&result[0]), devO, byteSize, cuda.MemcpyDeviceToHost); err != nil {
+		t.Fatalf("Memcpy D2H: %v", err)
+	}
+
+	tol := 1e-4
+	mismatches := 0
+	for i := range result {
+		diff := math.Abs(float64(result[i] - expected[i]))
+		if diff > tol {
+			if mismatches < 5 {
+				t.Errorf("output[%d] = %f, want %f (diff %e)", i, result[i], expected[i], diff)
+			}
+			mismatches++
+		}
+	}
+	if mismatches > 0 {
+		t.Errorf("total mismatches: %d / %d", mismatches, n)
+	}
+}
