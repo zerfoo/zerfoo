@@ -309,7 +309,7 @@ under poison mode.
 Acceptance: kernels build without global --use_fast_math, reductions accumulate
 fp32 fixed-order, every kernel passes the oracle gate, perf delta recorded.
 
-- [ ] T3.1 Remove global --use_fast_math; selective per-kernel intrinsics only
+- [x] T3.1 Remove global --use_fast_math; selective per-kernel intrinsics only  2026 06 12  (DONE ztensor#143 (linear re-roll of #142): --use_fast_math dropped from NVCC_FLAGS; only __expf re-enabled, in kernel_softmax post max-subtraction (oracle-proven: fwd max_rel 1.4e-7 vs tol 1e-4); tanh clamp #125 retained; sm_121 rebuild deployed to the shared DGX kernels dir (fast-math .so kept as .bak-fastmath-v1.11.0); perf delta within ±2% run-to-run noise (engine path bandwidth-bound), parity wall-clock 0.720s->0.691s; ztensor devlog 2026-06-12)
        Owner: TBD  Est: 1d  verifies: [UC-GH-005]  kind: agent  blocked-by: [T1.3]
   - Drop --use_fast_math from NVCC_FLAGS (internal/cuda/kernels/Makefile:7).
     Re-enable specific fast intrinsics per kernel ONLY where the oracle gate
@@ -320,7 +320,7 @@ fp32 fixed-order, every kernel passes the oracle gate, perf delta recorded.
   - Acceptance: oracle green for all kernels; perf delta documented; the tanh
     saturation clamp (ztensor#125) retained as defense-in-depth.
 
-- [ ] S3.1.1 Oracle gate run + devlog entry for the fast-math change
+- [x] S3.1.1 Oracle gate run + devlog entry for the fast-math change  2026 06 12  (DONE first live GPU-engine oracle run: oracle-gen -engine gpu (new in ztensor#143) recorded 25 bundles against the rebuilt kernels, torch 2.11.0a0+nv26.02 judged on GB10 -- 25 passed / 0 failed / 0 errored (pods ztensor-t31-gate-new-393d8eb + ztensor-t31-oracle-393d8eb, report at /home/ndungu/t31/393d8eb); parity sanity green incl. #140/#141 training-loop gates (VALIDATION_OK_new2); devlog entry in ztensor 2026-06-12)
        Owner: TBD  Est: 2h  verifies: [UC-GH-005]  kind: agent  blocked-by: [T3.1]
 
 - [ ] T3.2 Reduction-accumulation audit: fp32 fixed-order trees
