@@ -422,7 +422,7 @@ func (v *VSN[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGr
 		if err != nil {
 			return nil, err
 		}
-		v.varProj[i].Gradient, err = v.engine.Add(ctx, v.varProj[i].Gradient, dw)
+		v.varProj[i].Gradient, err = v.engine.Add(ctx, v.varProj[i].Gradient, dw, v.varProj[i].Gradient)
 		if err != nil {
 			return nil, err
 		}
