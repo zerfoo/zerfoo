@@ -5,6 +5,109 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.0](https://github.com/zerfoo/zerfoo/compare/v1.48.0...v1.49.0) (2026-06-12)
+
+
+### Features
+
+* **activations:** live-input recompute + SaveForBackward for cached intermediates (ADR 006, T2.3) ([29112a9](https://github.com/zerfoo/zerfoo/commit/29112a9e6adb0cab75b89bfcfd076e14410f78c8))
+* **attention:** add fused SDPA graph.Node (forward+backward, numerical-equivalence test) ([bfcd7a3](https://github.com/zerfoo/zerfoo/commit/bfcd7a30fe512a27451b1b6437aff23385e06c2f))
+* **attention:** add K=V shared projection support to GQA for Gemma 4 ([d60d3a3](https://github.com/zerfoo/zerfoo/commit/d60d3a3bb180250ff2135014e519bececf081093))
+* **attention:** add WithExternalKV option to GroupedQueryAttention ([77b8e66](https://github.com/zerfoo/zerfoo/commit/77b8e6660f704b302d7f8c019e657e2cbc1e4816)), closes [#455](https://github.com/zerfoo/zerfoo/issues/455)
+* **attention:** expose K/V output ports on GroupedQueryAttention ([031103b](https://github.com/zerfoo/zerfoo/commit/031103bdb8ad515f28fcb23e1b7a10d935a54663)), closes [#456](https://github.com/zerfoo/zerfoo/issues/456)
+* **attention:** register backward-consumed caches via SaveForBackward (ADR 006, T2.3) ([3209841](https://github.com/zerfoo/zerfoo/commit/3209841e2383d301be14bdc2624e2d84d73ee569))
+* **ci:** top-level package allowlist lint (T124.1.3) ([9c04293](https://github.com/zerfoo/zerfoo/commit/9c04293e055e869be9d2e8a9825d00286a99184d))
+* **cmd/gemma4_e2e:** add generate mode + defer E97.2 (Ollama parity) ([618a64b](https://github.com/zerfoo/zerfoo/commit/618a64be6344cea05765d4a2e3b0eb04f648d7de))
+* **core:** live-input recompute + SaveForBackward for FFN/FiLM/TCE/VSN/Polynomial (ADR 006, T2.3) ([c7ae6db](https://github.com/zerfoo/zerfoo/commit/c7ae6db37a9920be54f8440ab5622e1e383db2c7))
+* **gemma4_e2e:** add -mmap flag to enable T99.2.2 discriminating tests ([ea65e1c](https://github.com/zerfoo/zerfoo/commit/ea65e1c2b65c15bbc6310ab29f2cceb35f6ce089))
+* **gemma4_e2e:** emit decode tok/s in generate mode (T92.5.3) ([4bdfb57](https://github.com/zerfoo/zerfoo/commit/4bdfb570a0f4ae5dcfbff3de7404591c2fd21a5c))
+* **gemma4_e2e:** T99.2.2.2 -- add ple-embed-diff mode for H17 diagnostic ([b14c307](https://github.com/zerfoo/zerfoo/commit/b14c307589c27c5ac4726da9ba53c47cc5d22e36))
+* **gemma4:** first end-to-end GPU forward on DGX (E96 complete) ([e73f3f9](https://github.com/zerfoo/zerfoo/commit/e73f3f9ac80c2ea52db419433cc9db604676b934))
+* **gguf:** add Gemma 4 edge tensor name mapping ([3932fb9](https://github.com/zerfoo/zerfoo/commit/3932fb9fcfbbae58a898ba60af55c6ae1642c740)), closes [#431](https://github.com/zerfoo/zerfoo/issues/431) [#432](https://github.com/zerfoo/zerfoo/issues/432) [#433](https://github.com/zerfoo/zerfoo/issues/433)
+* **gguf:** add Gemma 4 per-layer attention config fields ([9d108d3](https://github.com/zerfoo/zerfoo/commit/9d108d39d354d984e318d53e55cd3c8290703858))
+* **gguf:** route Gemma 4 sub-variants; add e2e integration test ([c6580c0](https://github.com/zerfoo/zerfoo/commit/c6580c07cf54bf86fb0dd0114a0c8d636877ee90))
+* **gguf:** T99.2.2.9 H21 -- keep native Q4_K/Q5_K/Q6_K for embedding tensors ([d84760b](https://github.com/zerfoo/zerfoo/commit/d84760b1e90ba3dee781715afacf2118031d8744))
+* **inference:** add Gemma 4 31B dense architecture builder ([a512a8c](https://github.com/zerfoo/zerfoo/commit/a512a8c0c72be77223dc9d40b90fcf8ef9e6d0da))
+* **inference:** add Gemma 4 edge variant builder with PLE and KV sharing ([4952889](https://github.com/zerfoo/zerfoo/commit/4952889748d4a2609735bfe09fefebb57e389386))
+* **inference:** add Gemma 4 MoE variant builder ([919565e](https://github.com/zerfoo/zerfoo/commit/919565e84e109aa0fd853c8a74b3e3dd3a880c6a))
+* **inference:** add kv_reuse_node for donor-&gt;shared-KV wiring (T95.2.1) ([87698a7](https://github.com/zerfoo/zerfoo/commit/87698a7cf560d9c69630bcd952948c6ad145b46e))
+* **inference:** add ResolveKVDonor pure function for Gemma 4 shared KV ([13fe4a0](https://github.com/zerfoo/zerfoo/commit/13fe4a0f414a1ddde2c60118d66ad9b852c517a5)), closes [#458](https://github.com/zerfoo/zerfoo/issues/458)
+* **inference:** register gemma4 architecture ([f4dbd85](https://github.com/zerfoo/zerfoo/commit/f4dbd852047a897072b7bd84eae95879be0b684b))
+* **inference:** register gemma4moe architecture ([028cad9](https://github.com/zerfoo/zerfoo/commit/028cad9d091beea2e61e837aea0236c4c9bf9157))
+* **inference:** rewrite arch_gemma4_edge.go for canonical PLE + shared-KV layout (T93.3.1) ([ba9bfa4](https://github.com/zerfoo/zerfoo/commit/ba9bfa42a5f509b5fbfa753c5d694c9c5498d004)), closes [#444](https://github.com/zerfoo/zerfoo/issues/444)
+* **inference:** T99.1.2 make gemma4e PLE combiner CUDA-graph capturable ([96c7540](https://github.com/zerfoo/zerfoo/commit/96c7540aa401b37db2c8ec721dc1e7aead68e3c8))
+* **inference:** T99.2.2.6 H20 -- RMSNorm tokenSlice under ZERFOO_GEMMA4_PLE_TOKEN_NORM ([b2e6c1d](https://github.com/zerfoo/zerfoo/commit/b2e6c1d98935f6234bb6b16c498223b9c7447925))
+* **inference:** T99.2.2.7 -- ZERFOO_GEMMA4_PLE_EMBED_Q8 re-quantizes PLE table ([7700621](https://github.com/zerfoo/zerfoo/commit/7700621aba21b997adbee66e90e8d23739520130))
+* **integration:** Gemma 4 E2B Spark harness (T93.4.1, T93.4.4-5) ([2b60c05](https://github.com/zerfoo/zerfoo/commit/2b60c05cadc2bfe8016ca1db3d558c5a6393eee2))
+* **layers:** add GELU FFN activation option for Gemma 4 ([709d7b3](https://github.com/zerfoo/zerfoo/commit/709d7b3a36dc2e9ab57d686935d5fde99a3afd1b))
+* **normalization:** recompute backward stats from live inputs; BatchNorm SaveForBackward (ADR 006, T2.3) ([eb36277](https://github.com/zerfoo/zerfoo/commit/eb362775ff3e28400f772048d6478d3f6f08fc42))
+* **regularization:** register dropout masks via SaveForBackward (ADR 006, T2.3) ([dfd1719](https://github.com/zerfoo/zerfoo/commit/dfd171931e02fedb539483145f71b2568dbbd4ea))
+* **scripts:** parameterize Spark manifest for Gemma 4 generate mode ([babbde5](https://github.com/zerfoo/zerfoo/commit/babbde5e3740520b66e1a80da822725b9c293e84))
+
+
+### Bug Fixes
+
+* **activations:** implement Softmax.Backward equivalent to functional.SoftmaxBackward ([7539627](https://github.com/zerfoo/zerfoo/commit/7539627aad6659a640ba9066d858f4e53e6f140f))
+* **adamw:** keep f64 second moment on GPU f32 (CrossAsset cliff) ([be78e5c](https://github.com/zerfoo/zerfoo/commit/be78e5caabcf6614c4f7237a0750115c797aeb47))
+* **adamw:** minimize per-step host round-trip for GPU f64 second moment (ADR 070) ([e941bd2](https://github.com/zerfoo/zerfoo/commit/e941bd256f8f19e3c9277ca9aea7f50b72a2dddf))
+* **adamw:** zero gradient in-place, not via engine.Fill (arena-realloc corruption) ([411983e](https://github.com/zerfoo/zerfoo/commit/411983eb02c0c66cff8cc45ef311d6f1c43fc312))
+* **attention:** reconcile T95.1.1 and T95.1.2 external-KV API ([a76a0aa](https://github.com/zerfoo/zerfoo/commit/a76a0aa0d066e582cad1ab168397e917f8b9f59d))
+* **ci:** release-please reads the repo config -- inline release-type ignored the v1.49.0 pin ([f958898](https://github.com/zerfoo/zerfoo/commit/f958898056266f6f1fd0c8925cf45a2ab4cac429))
+* **cmd/gemma4_e2e:** allow any arch in generate mode (E98.1.1) ([d4f8ec6](https://github.com/zerfoo/zerfoo/commit/d4f8ec6f8da75e91e8034a0aced971058281c320))
+* **core:** dst-form gradient accumulation in Linear/Conv1D/VariableSelection ([#850](https://github.com/zerfoo/zerfoo/issues/850) follow-up) ([af10434](https://github.com/zerfoo/zerfoo/commit/af10434d5961a938ad8bd72f2120213debe1b4e9))
+* **core:** handle transposed-B path in MatMul backward ([4275973](https://github.com/zerfoo/zerfoo/commit/4275973470dde1f608f3ee01c2b767151da48857))
+* **functional:** pass live input to Gelu.Backward instead of forward-seeding the cache (ADR 006, T2.3) ([9e0e5a7](https://github.com/zerfoo/zerfoo/commit/9e0e5a7f67ae3c1b3a127d4872134d02f8cf4f43))
+* **gguf:** correct Gemma 4 AttentionKEqV and SlidingWindowPattern defaults ([b1c24ee](https://github.com/zerfoo/zerfoo/commit/b1c24ee20d6a0930483d2ff39c808866cb28ee4e))
+* **gguf:** extract Gemma 4 metadata from canonical llama.cpp keys ([8213a7e](https://github.com/zerfoo/zerfoo/commit/8213a7e6bfedf2cea0547584f363b55ca92ceed1))
+* **inference:** resolve gemma4e layer_scalar at construct time, not in Forward ([6ad8bce](https://github.com/zerfoo/zerfoo/commit/6ad8bceb6717c8fde697094fdebe8b72668ed4ce))
+* **inference:** T99.2.2 H12 -- include ple_embed_tokens in Q4→Q8 upgrade ([0091079](https://github.com/zerfoo/zerfoo/commit/009107910dfe036df41e31ff81dd2c480772bcc8))
+* **inference:** T99.2.2 H13 -- preserve BFloat16 storage in transposeWeight2D ([6c8f609](https://github.com/zerfoo/zerfoo/commit/6c8f609e6be3d2f0082fa91dddc81aa9ba7338eb))
+* **layernorm:** recompute mean/variance from input in f64 backward ([d7c7fbf](https://github.com/zerfoo/zerfoo/commit/d7c7fbf061b906e1ce1ec5e1c504af54a276e691))
+* **layernorm:** run f32 backward in float64 on GPU too (fix GPU gradient overflow) ([3a24357](https://github.com/zerfoo/zerfoo/commit/3a24357032e7aae352ab4f2f3d2c3fb6d0e1445a))
+* **layers/normalization:** float64 backward for LayerNorm on CPU ([d3ef8b6](https://github.com/zerfoo/zerfoo/commit/d3ef8b617b344b6dd10e95a8b04c7687d8794738))
+* **normalization:** dst-form gradient accumulation in batch_norm ([fc80a00](https://github.com/zerfoo/zerfoo/commit/fc80a00eda870bc7cb6f7c789312631286117e1d))
+* **release:** reset version tags from v2/v3 to v1.47/v1.48 (resolves [#393](https://github.com/zerfoo/zerfoo/issues/393)) ([0b5991d](https://github.com/zerfoo/zerfoo/commit/0b5991d8a14339771cb694bfbf9b75b00f58a7f7))
+* **ssm:** dst-form in-place gradient accumulation (no-dst Add double-counts under the [#851](https://github.com/zerfoo/zerfoo/issues/851) hook) ([18bae8d](https://github.com/zerfoo/zerfoo/commit/18bae8dd0fb90f27e365df765c7ac8ecc70fab55))
+* **timeseries:** dst-form gradient accumulation in patch_embed/vsn ([376ed95](https://github.com/zerfoo/zerfoo/commit/376ed95935fcc683b06c4b3208ab1d7805f4a2a7))
+* **training/loss:** use fused log-softmax in CrossEntropyLoss.Forward ([e9da266](https://github.com/zerfoo/zerfoo/commit/e9da266dcb0b125b0ee291f724c1f489df5bce88))
+* **training/optimizer:** float64 second-moment accumulator for AdamW on CPU ([c0e51a5](https://github.com/zerfoo/zerfoo/commit/c0e51a58082698dcdfc909478fea4cb435790580))
+* **training:** device-side in-place gradient accumulation via the graph engine ([6b0d707](https://github.com/zerfoo/zerfoo/commit/6b0d707496e01fc6f2e998a059031ec0235ac54a))
+* **training:** persistent parameter-gradient accumulators -- arena tensors must not back Parameter.Gradient ([8bbc1b2](https://github.com/zerfoo/zerfoo/commit/8bbc1b2941561fcf2b498568cac602d35b140b8a))
+
+
+### Performance
+
+* **inference:** T99.2.1 gemma4e PLE decode refresh via 2 D2D, not 70 H2D ([f859640](https://github.com/zerfoo/zerfoo/commit/f859640f509094b0f8893900304735e699f0f8e0))
+
+
+### Refactoring
+
+* **activations:** make layers/functional thin wrappers over canonical Nodes (T124.2.2) ([c11f693](https://github.com/zerfoo/zerfoo/commit/c11f69367d81fd1854b216c63ca8a31fe87707e8))
+* **gguf:** use isEmbeddingShape helper in decodeQ8Tensor ([fc1bf12](https://github.com/zerfoo/zerfoo/commit/fc1bf12bf951534a68f143cc660b643661c44a0d))
+* **inference:** delegate PLE slice RMSNorm to layers/normalization (T93.3.1) ([0f79ec6](https://github.com/zerfoo/zerfoo/commit/0f79ec6a68bb6e4349fada371e4eb984e5e6ff44))
+* **layers:** replace inline activation copies with canonical Nodes (T124.2.3) ([121efcb](https://github.com/zerfoo/zerfoo/commit/121efcb311b870f4278494d36ba3d20191cdd68c))
+* **layout:** extract cloud/marketplace/compliance per ADR-090 (T124.7.2) ([501d664](https://github.com/zerfoo/zerfoo/commit/501d6642172e5df37113d5f9249e6e9b312321f3))
+* **layout:** move autoopt/ to internal/autoopt/ (T124.5.6) ([fb27f17](https://github.com/zerfoo/zerfoo/commit/fb27f174eb08a4a5ab2a6125384a0727b8bb3578))
+* **layout:** move causal/+features/+regime/ to inference/timeseries/ (T124.5.4) ([89dc29f](https://github.com/zerfoo/zerfoo/commit/89dc29fcafaa369b78b32c291415716236f4ca99))
+* **layout:** move federated/ to training/federated/ (T124.4.6) ([ce54a51](https://github.com/zerfoo/zerfoo/commit/ce54a513cd466cf3bbc7e11b31f690a78871f6fd))
+* **layout:** move gnn/ to layers/gnn/ (T124.5.1) ([f12d918](https://github.com/zerfoo/zerfoo/commit/f12d91844757581ef7e5f4ad21783611596cb6c3))
+* **layout:** move gp/ to training/gp/ (T124.4.3) ([f71fd8b](https://github.com/zerfoo/zerfoo/commit/f71fd8b89478b58e9057a1d0761a2c5e16ece3af))
+* **layout:** move health/ to serve/health/ (T124.3.1) ([712336e](https://github.com/zerfoo/zerfoo/commit/712336edb8e43ec94149b11c1ad3d0f29642c9b5))
+* **layout:** move meta/ to training/meta/ (T124.4.2) ([61728a5](https://github.com/zerfoo/zerfoo/commit/61728a5a06904a1d174996c982d641222cd87e22))
+* **layout:** move mobile/ to tests/mobile/ (T124.6.1) ([786fab7](https://github.com/zerfoo/zerfoo/commit/786fab7ca94cf140f9914f7855d9444c15c007bd))
+* **layout:** move modelcache/+modeldsl/+registry/ to model/ (T124.5.5) ([e06dc97](https://github.com/zerfoo/zerfoo/commit/e06dc97839227ffd94bde3a1a122dacaa31be59e))
+* **layout:** move monitor/+recover/ to training/mlops/ (T124.4.4) ([274aef6](https://github.com/zerfoo/zerfoo/commit/274aef6a9a9ec39bee7bf47a9b6bb2346ba25731))
+* **layout:** move provenance/ to training/provenance/ (T124.4.5) ([0c298b0](https://github.com/zerfoo/zerfoo/commit/0c298b0831e1257b530455731891cfb96096ec2d))
+* **layout:** move rl/ to training/rl/ (T124.4.1) ([2be24c9](https://github.com/zerfoo/zerfoo/commit/2be24c909d5e40bd442cd79c1f1895febc6e87be))
+* **layout:** move security/ to serve/security/ (T124.3.4) ([51ab5ef](https://github.com/zerfoo/zerfoo/commit/51ab5efe2a78534bcb5da19ee6df98dddd2e633c))
+* **layout:** move shutdown/ to serve/shutdown/ (T124.3.2) ([2d2c778](https://github.com/zerfoo/zerfoo/commit/2d2c778da61994c3301b013c945a17feb56a177d))
+* **layout:** move support/ to serve/support/ (T124.3.3) ([bb16bb4](https://github.com/zerfoo/zerfoo/commit/bb16bb46bf2416902a445fda63eec1af8584e561))
+* **layout:** move synth/ to layers/generative/synth/ (T124.5.2) ([8717d77](https://github.com/zerfoo/zerfoo/commit/8717d77baa262666f3ebe77ef31dc65955e76e87))
+* **layout:** rename shared/ to layers/shared_latent/ (T124.5.3) ([fac0ebb](https://github.com/zerfoo/zerfoo/commit/fac0ebba44dfa340e16bb514efcfb91664d0cf6b))
+* **layout:** rename testing/ to tests/testutil/ (T124.1.1) ([c997b09](https://github.com/zerfoo/zerfoo/commit/c997b09d02c1d270e2f80d70ee48daa052167365))
+* **layout:** resolve integration/ vs integrations/ namespacing (T124.1.2) ([3c3c4a7](https://github.com/zerfoo/zerfoo/commit/3c3c4a79f6a76a692eef563678168f20af2934e2))
+* **test:** extract parity helpers to tests/parity/testutil/ (T124.6.2) ([cbbf561](https://github.com/zerfoo/zerfoo/commit/cbbf561f8c53d4e046377ce51d701803049ec01c))
+
 ## [1.48.0](https://github.com/zerfoo/zerfoo/compare/v1.47.0...v1.48.0) (2026-04-13)
 
 
