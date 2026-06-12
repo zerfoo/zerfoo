@@ -374,7 +374,7 @@ fp32 fixed-order, every kernel passes the oracle gate, perf delta recorded.
 
 Acceptance: the prize -- Wolf trains clean on GB10 f32 -- plus shipped tags.
 
-- [ ] T5.1 Wolf CrossAsset GB10 f32 clean fold on the hardened stack
+- [x] T5.1 Wolf CrossAsset GB10 f32 clean fold on the hardened stack  2026 06 11  (DONE verify9 + verify9b on image 0066d970: two consecutive clean runs, zero NaN, epoch loss 0.778373, fold-0 acc 0.6760 vs CPU 0.6765 -- inside the 1pp gate; Bug 11 fixes ztensor#137/#138 + zerfoo#855/#857; Wolf devlog + ADR 072 resolution in wolf#200. NOTE: the formal blocked-by T3.1/T3.2/T3.3 kernel audit was overtaken by events -- the residual was allocator lifetime (host-access ordering + stale cross-epoch frees), not kernel numerics; T3.1/T3.2/T3.3 remain open as hardening.)
        Owner: TBD  Est: 1d  verifies: [UC-GH-007]  kind: agent  blocked-by: [T2.3, T3.1, T3.2, T3.3]
   - Bump a Wolf branch to the hardened ztensor/zerfoo, rebuild the image, run
     folds=2 epochs=1 seed=42 -precision=f32 -gpu (QK-norm on) on the GB10 via
@@ -393,7 +393,7 @@ Acceptance: the prize -- Wolf trains clean on GB10 f32 -- plus shipped tags.
   - Acceptance: tags exist; Wolf main builds against them; speed-parity plan
     progress log updated.
 
-- [ ] T5.3 Documentation: design.md updates + devlog entries (both repos)
+- [x] T5.3 Documentation: design.md updates + devlog entries (both repos)  2026 06 11  (DONE ztensor#139: design.md host-access sync contract + reset-epoch frees + pinning + dst-form accumulation policy, devlog entry; zerfoo#859: design.md 7.5 per-op verification gates (gradcheck/parity/oracle, ADR-091) + 21.4 gradient accumulation policy (Graph.Engine()), devlog entry; wolf#200: ADR 072 resolution + Bug 11 devlog)
        Owner: TBD  Est: 3h  verifies: [infrastructure]  kind: agent  blocked-by: [T5.1]
   - ztensor docs/design.md: arena pinning + poison mode + accumulation policy
     (general terms). zerfoo docs/design.md: verification-harness usage for new
@@ -452,9 +452,9 @@ T5.1) serialize on the single GPU -- never fan those out.
 - [ ] T4.1 Deterministic mode
 
 ### Wave 5: Validation + ship (1 agent, GPU-serial)
-- [ ] T5.1 Wolf GB10 f32 clean fold x2
+- [x] T5.1 Wolf GB10 f32 clean fold x2  2026 06 11  (DONE verify9/verify9b, image 0066d970, acc 0.6760)
 - [ ] T5.2 Releases + Wolf bump
-- [ ] T5.3 Documentation
+- [x] T5.3 Documentation  2026 06 11  (DONE ztensor#139, zerfoo#859, wolf#200)
 
 ---
 
