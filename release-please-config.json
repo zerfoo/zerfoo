@@ -2,9 +2,6 @@
   "packages": {
     ".": {
       "release-type": "go",
-      "release-as": "1.49.0",
-      "bootstrap-sha": "22205c8d0db8bb78d7d6ae6ca7d59af8e8eb42a0",
-      "last-release-sha": "22205c8d0db8bb78d7d6ae6ca7d59af8e8eb42a0",
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },
