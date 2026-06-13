@@ -37,11 +37,21 @@ type LayerNormalization[T tensor.Numeric] struct {
 	outputShape []int
 
 	useMixedBackward bool // Run Backward per-element in float64 on CPU.
+	// engineGradAssign: in the engine-ops backward, hand gamma/beta
+	// gradients to the trainer by ASSIGNING the fresh engine tensors
+	// (the Linear/Bias pattern, migrated to persistent buffers by the
+	// strategy's issue-#850 hook) instead of host AddGradient, which
+	// reads device tensors back per step and is illegal inside a
+	// CUDA-graph capture. Set by WithLayerNormEngineBackward.
+	engineGradAssign bool
 }
 
 // LayerNormalizationOptions holds configuration options for LayerNormalization layers.
 type LayerNormalizationOptions[T tensor.Numeric] struct {
 	Epsilon T // Small constant to avoid division by zero
+	// EngineBackward forces the engine-ops backward path; see
+	// WithLayerNormEngineBackward.
+	EngineBackward bool
 }
 
 // LayerNormalizationOption is a functional option for configuring LayerNormalization layers.
@@ -51,6 +61,31 @@ type LayerNormalizationOption[T tensor.Numeric] func(*LayerNormalizationOptions[
 func WithLayerNormEpsilon[T tensor.Numeric](epsilon T) LayerNormalizationOption[T] {
 	return func(opts *LayerNormalizationOptions[T]) {
 		opts.Epsilon = epsilon
+	}
+}
+
+// WithLayerNormEngineBackward forces Backward to run as engine ops in the
+// element type T, overriding the host float64 mixed-precision backward
+// that shouldUseMixedPrecisionBackward enables for low-precision types.
+//
+// The mixed-precision backward reads the input, upstream gradient, and
+// gamma back to the host every step -- D2H copies plus host math that are
+// illegal inside a CUDA-graph capture region (compute.GraphCapturer /
+// training.CaptureReplayRunner). Callers that capture training steps must
+// opt in to the engine path and supply their own overflow guards
+// (gradient clipping, divergence detection): the float64 backward exists
+// because float32 LayerNorm backward can overflow on early-training
+// gradient spikes (the CrossAsset f32 cliff).
+//
+// Gradient storage semantics also change: gamma/beta gradients are
+// ASSIGNED as fresh engine tensors each Backward (the Linear/Bias
+// pattern) instead of host-accumulated via Parameter.AddGradient.
+// Trainers built on DefaultBackpropStrategy accumulate them across steps
+// via the persistent-gradient hook (issue #850); bespoke trainers that
+// relied on AddGradient's in-place accumulation must not use this option.
+func WithLayerNormEngineBackward[T tensor.Numeric]() LayerNormalizationOption[T] {
+	return func(opts *LayerNormalizationOptions[T]) {
+		opts.EngineBackward = true
 	}
 }
 
@@ -100,7 +135,8 @@ func NewLayerNormalization[T tensor.Numeric](engine compute.Engine[T], featureDi
 		epsilon:          opts.Epsilon,
 		gamma:            gamma,
 		beta:             beta,
-		useMixedBackward: shouldUseMixedPrecisionBackward[T](engine),
+		useMixedBackward: shouldUseMixedPrecisionBackward[T](engine) && !opts.EngineBackward,
+		engineGradAssign: opts.EngineBackward,
 	}, nil
 }
 
@@ -316,10 +352,6 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 		}
 	}
 
-	if err := ln.gamma.AddGradient(dGamma); err != nil {
-		return nil, err
-	}
-
 	// dL/dbeta = sum(dOut) along the batch dimensions (all non-feature dims)
 	dBeta := dOut
 	for i := 0; i < len(inputShape)-1; i++ {
@@ -329,8 +361,24 @@ func (ln *LayerNormalization[T]) Backward(ctx context.Context, mode types.Backwa
 		}
 	}
 
-	if err := ln.beta.AddGradient(dBeta); err != nil {
-		return nil, err
+	if ln.engineGradAssign {
+		// Capture-safe storage: assign the fresh engine tensors and let
+		// the strategy's persistent-gradient hook (issue #850) accumulate
+		// them into stable device buffers, exactly like Linear/Bias.
+		// AddGradient below is a host element-wise loop -- a per-step D2H
+		// read of device gradients, illegal during CUDA-graph capture.
+		// NOTE: without the hook (plain per-step trainers), assignment
+		// semantics replace cross-step accumulation -- documented on
+		// WithLayerNormEngineBackward.
+		ln.gamma.Gradient = dGamma
+		ln.beta.Gradient = dBeta
+	} else {
+		if err := ln.gamma.AddGradient(dGamma); err != nil {
+			return nil, err
+		}
+		if err := ln.beta.AddGradient(dBeta); err != nil {
+			return nil, err
+		}
 	}
 
 	// Gradient for input (dL/dx)
