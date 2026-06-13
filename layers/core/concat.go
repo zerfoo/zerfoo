@@ -100,7 +100,7 @@ func (c *Concat[T]) Forward(_ context.Context, inputs ...*tensor.TensorNumeric[T
 }
 
 // Backward computes the gradients for the Concat layer.
-func (c *Concat[T]) Backward(_ context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (c *Concat[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if len(inputs) == 0 {
 		return nil, fmt.Errorf("Concat layer requires at least 1 input")
 	}
@@ -116,6 +116,31 @@ func (c *Concat[T]) Backward(_ context.Context, mode types.BackwardMode, outputG
 	axis := c.axis
 	if axis < 0 {
 		axis = len(shape) + axis
+	}
+
+	// Equal-split fast path: when every input has the same length along the
+	// concat axis, the backward is exactly engine.Split. On GPU engines this
+	// keeps the gradient on the device (the generic path below reads the
+	// whole output gradient back to the host and re-slices it there, which
+	// is both slow and illegal inside a CUDA-graph capture region; see
+	// training.CaptureReplayRunner).
+	if axis >= 0 && axis < len(shape) {
+		equal := true
+		first := inputs[0].Shape()
+		for _, in := range inputs {
+			inShape := in.Shape()
+			if len(inShape) != len(shape) || inShape[axis] != first[axis] {
+				equal = false
+				break
+			}
+		}
+		if equal && first[axis]*len(inputs) == shape[axis] {
+			grads, err := c.engine.Split(ctx, outputGradient, len(inputs), axis)
+			if err == nil && len(grads) == len(inputs) {
+				return grads, nil
+			}
+			// Fall through to the generic host path on any Split error.
+		}
 	}
 
 	// Compute block size (product of dims after axis) and outer (product before axis)
