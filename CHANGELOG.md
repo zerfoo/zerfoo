@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.0](https://github.com/zerfoo/zerfoo/compare/v1.49.1...v1.50.0) (2026-06-13)
+
+
+### Features
+
+* **normalization:** WithLayerNormEngineBackward opt-in for capture-safe LayerNorm backward ([796466d](https://github.com/zerfoo/zerfoo/commit/796466d0eeaa23ea0f850a2be9009e7a14703a5b))
+* **training:** CUDA-graph capture-replay runner + capture-safe CE loss + device Concat backward ([2e237d6](https://github.com/zerfoo/zerfoo/commit/2e237d637bcb65deca201f38c016c1bfbaba69ac))
+
 ## [1.49.1](https://github.com/zerfoo/zerfoo/compare/v1.49.0...v1.49.1) (2026-06-12)
 
 
