@@ -148,3 +148,65 @@ func TestConcat_BackwardAxis0(t *testing.T) {
 	testutils.AssertFloat32SliceApproxEqual(t, expG1, grads[0].Data(), 0, "grad1 data")
 	testutils.AssertFloat32SliceApproxEqual(t, expG2, grads[1].Data(), 0, "grad2 data")
 }
+
+// TestConcat_BackwardEqualSplit exercises the engine.Split fast path
+// (equal-length inputs along the concat axis), the route taken by GPU
+// engines to keep the gradient device-resident (CUDA-graph capture
+// compatibility). Values must match the generic host path exactly.
+func TestConcat_BackwardEqualSplit(t *testing.T) {
+	tests := []struct {
+		name     string
+		axis     int
+		inShape  []int
+		inputs   int
+		gOut     []float32
+		outShape []int
+		expected [][]float32
+	}{
+		{
+			name:     "axis0 wolf pattern [1,d] x3",
+			axis:     0,
+			inShape:  []int{1, 3},
+			inputs:   3,
+			outShape: []int{3, 3},
+			gOut:     []float32{10, 11, 12, 20, 21, 22, 30, 31, 32},
+			expected: [][]float32{{10, 11, 12}, {20, 21, 22}, {30, 31, 32}},
+		},
+		{
+			name:     "axis1 equal halves",
+			axis:     1,
+			inShape:  []int{2, 2},
+			inputs:   2,
+			outShape: []int{2, 4},
+			gOut:     []float32{1, 2, 3, 4, 5, 6, 7, 8},
+			expected: [][]float32{{1, 2, 5, 6}, {3, 4, 7, 8}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+			layer := NewConcat[float32](engine, tt.axis)
+
+			ins := make([]*tensor.TensorNumeric[float32], tt.inputs)
+			n := 1
+			for _, d := range tt.inShape {
+				n *= d
+			}
+			for i := range ins {
+				var err error
+				ins[i], err = tensor.New[float32](tt.inShape, make([]float32, n))
+				testutils.AssertNoError(t, err, "create input")
+			}
+			gOut, err := tensor.New[float32](tt.outShape, tt.gOut)
+			testutils.AssertNoError(t, err, "create gOut")
+
+			grads, err := layer.Backward(context.Background(), types.FullBackprop, gOut, ins...)
+			testutils.AssertNoError(t, err, "backward")
+			testutils.AssertEqual(t, tt.inputs, len(grads), "grads len")
+			for i, exp := range tt.expected {
+				testutils.AssertTrue(t, testutils.IntSliceEqual(tt.inShape, grads[i].Shape()), "grad shape")
+				testutils.AssertFloat32SliceApproxEqual(t, exp, grads[i].Data(), 0, "grad data")
+			}
+		})
+	}
+}

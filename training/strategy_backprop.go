@@ -49,5 +49,21 @@ func (s *DefaultBackpropStrategy[T]) ComputeGradients(
 	return computeGradientsCommon[T](ctx, g, loss, batch, types.FullBackprop, &s.grads)
 }
 
+// ComputeGradientsTensor is ComputeGradients without the final host
+// readback of the loss value: it returns the loss tensor produced by the
+// loss node. On GPU engines the readback is a D2H copy, which is illegal
+// inside a CUDA-graph capture region; CaptureReplayRunner records the step
+// through this variant and reads the loss only after the captured graph
+// has executed. Callers outside a capture region can read the value with
+// lossTensor.Data()[0].
+func (s *DefaultBackpropStrategy[T]) ComputeGradientsTensor(
+	ctx context.Context,
+	g *graph.Graph[T],
+	loss graph.Node[T],
+	batch Batch[T],
+) (*tensor.TensorNumeric[T], error) {
+	return computeGradientsTensorCommon[T](ctx, g, loss, batch, types.FullBackprop, &s.grads)
+}
+
 // Statically assert that the type implements the GradientStrategy interface.
 var _ GradientStrategy[float32] = (*DefaultBackpropStrategy[float32])(nil)
