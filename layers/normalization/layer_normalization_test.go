@@ -410,3 +410,95 @@ func TestLayerNormalization_BackwardMixedCPUResistsUnderflow(t *testing.T) {
 		}
 	}
 }
+
+// TestLayerNormalization_WithEngineBackwardOption: the T9.1 capture-safe
+// option must (a) disable the host mixed-precision backward, (b) store
+// gamma/beta gradients by assigning the fresh engine tensors (the
+// Linear/Bias pattern consumed by the strategy's persistent-gradient
+// hook), and (c) produce gradients matching the mixed path within
+// float32-vs-float64 rounding tolerance.
+func TestLayerNormalization_WithEngineBackwardOption(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	const featureDim = 8
+	const batch = 4
+	shape := []int{batch, featureDim}
+
+	lnMixed, err := NewLayerNormalization[float32](engine, featureDim)
+	if err != nil {
+		t.Fatalf("NewLayerNormalization(mixed) failed: %v", err)
+	}
+	lnOpt, err := NewLayerNormalization[float32](engine, featureDim, WithLayerNormEngineBackward[float32]())
+	if err != nil {
+		t.Fatalf("NewLayerNormalization(engine option) failed: %v", err)
+	}
+	if lnOpt.useMixedBackward {
+		t.Fatal("WithLayerNormEngineBackward must disable the mixed-precision backward")
+	}
+	if !lnOpt.engineGradAssign {
+		t.Fatal("WithLayerNormEngineBackward must enable gradient assignment")
+	}
+
+	inputData := make([]float32, batch*featureDim)
+	gradData := make([]float32, batch*featureDim)
+	for i := range inputData {
+		inputData[i] = float32(i+1) * 0.13
+		gradData[i] = float32(i%featureDim+1) * 0.017
+	}
+	newT := func(data []float32) *tensor.TensorNumeric[float32] {
+		tn, terr := tensor.New[float32](shape, append([]float32(nil), data...))
+		if terr != nil {
+			t.Fatalf("tensor.New: %v", terr)
+		}
+		return tn
+	}
+
+	inMixed, inOpt := newT(inputData), newT(inputData)
+	gMixed, gOpt := newT(gradData), newT(gradData)
+
+	if _, err := lnMixed.Forward(ctx, inMixed); err != nil {
+		t.Fatalf("Forward mixed: %v", err)
+	}
+	if _, err := lnOpt.Forward(ctx, inOpt); err != nil {
+		t.Fatalf("Forward option: %v", err)
+	}
+
+	prevGamma := lnOpt.gamma.Gradient
+	dMixed, err := lnMixed.Backward(ctx, types.FullBackprop, gMixed, inMixed)
+	if err != nil {
+		t.Fatalf("Backward mixed: %v", err)
+	}
+	dOpt, err := lnOpt.Backward(ctx, types.FullBackprop, gOpt, inOpt)
+	if err != nil {
+		t.Fatalf("Backward option: %v", err)
+	}
+
+	if lnOpt.gamma.Gradient == prevGamma {
+		t.Error("engine-backward option must ASSIGN a fresh gamma gradient tensor")
+	}
+	if lnOpt.beta.Gradient == nil {
+		t.Fatal("beta gradient not set")
+	}
+
+	const tol = 1e-4
+	for i := range dMixed[0].Data() {
+		diff := float64(dMixed[0].Data()[i]) - float64(dOpt[0].Data()[i])
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > tol {
+			t.Errorf("dInput[%d]: mixed=%v option=%v (diff %g)", i, dMixed[0].Data()[i], dOpt[0].Data()[i], diff)
+		}
+	}
+	for i := range lnMixed.gamma.Gradient.Data() {
+		diff := float64(lnMixed.gamma.Gradient.Data()[i]) - float64(lnOpt.gamma.Gradient.Data()[i])
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > tol {
+			t.Errorf("dGamma[%d]: mixed=%v option=%v (diff %g)", i, lnMixed.gamma.Gradient.Data()[i], lnOpt.gamma.Gradient.Data()[i], diff)
+		}
+	}
+}
