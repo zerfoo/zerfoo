@@ -32,6 +32,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -56,11 +57,111 @@ type gradAccumulator[T tensor.Numeric] struct {
 
 	// accums maps each parameter to its persistent accumulator tensor.
 	accums map[*graph.Parameter[T]]*tensor.TensorNumeric[T]
+
+	// seeds caches the d(loss)/d(loss) = 1 upstream-gradient seed handed to
+	// loss.Backward (issue #872), keyed by the loss tensor's shape. The seed
+	// is built ONCE -- on the GPU engine via a device-side Fill kernel that
+	// writes directly into freshly allocated device memory -- and reused for
+	// every subsequent ComputeGradients call (issue #875).
+	//
+	// Why this matters for CUDA-graph capture: the pre-#875 seed was a
+	// host-backed tensor.New ones tensor that the engine had to host->device
+	// cudaMemcpy on every step. CaptureReplayRunner records ComputeGradients
+	// INSIDE a stream-capture region, and a host->device memcpy on the legacy
+	// stream during capture is illegal ("operation not permitted when stream
+	// is capturing"). Because the strategy (and thus this accumulator) is
+	// reused across all steps, the first call -- which happens during an eager
+	// warmup step, OUTSIDE capture -- populates this cache; capture-step calls
+	// reuse the already-resident device seed and enqueue no host copy.
+	seeds map[string]*tensor.TensorNumeric[T]
 }
 
 // setEngine configures the optional engine used for in-place device-side
 // accumulation.
 func (a *gradAccumulator[T]) setEngine(e compute.Engine[T]) { a.engine = e }
+
+// seedFor returns the cached d(loss)/d(loss) = 1 upstream-gradient seed for a
+// loss tensor of ref's shape, building (and caching) it on first use (#875).
+//
+// engine is the graph's engine (g.Engine()); it is used to fill the seed with
+// the value 1 via the engine's device-resident Fill path so that, on a GPU
+// engine, the seed lives in device memory after the first call and no
+// host->device copy is enqueued on later calls -- the property CUDA-graph
+// capture requires (the first call lands on a warmup step outside capture).
+//
+// When engine is nil (parameter-fixture graphs) the seed is the same plain
+// host ones tensor onesLike produced before #875, preserving correctness on
+// engine-less graphs; it is still cached so repeated calls reuse one buffer.
+//
+// The returned tensor must be treated as read-only by callers: loss.Backward
+// only reads the seed through engine.Mul(localGrad, dOut) and never mutates
+// it, so a single cached buffer is safe to share across every step.
+func (a *gradAccumulator[T]) seedFor(engine compute.Engine[T], ref *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	key := shapeKey(ref.Shape())
+	if s, ok := a.seeds[key]; ok {
+		return s, nil
+	}
+
+	seed, err := buildOnesSeed[T](engine, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	if a.seeds == nil {
+		a.seeds = make(map[string]*tensor.TensorNumeric[T])
+	}
+	a.seeds[key] = seed
+	return seed, nil
+}
+
+// shapeKey renders a shape as a stable map key.
+func shapeKey(shape []int) string {
+	if len(shape) == 0 {
+		return "scalar"
+	}
+	var b []byte
+	for i, d := range shape {
+		if i > 0 {
+			b = append(b, 'x')
+		}
+		b = strconv.AppendInt(b, int64(d), 10)
+	}
+	return string(b)
+}
+
+// buildOnesSeed allocates a ones tensor of ref's shape whose storage is
+// DEVICE-RESIDENT when engine is a GPU engine, so reusing it across steps
+// enqueues no host->device copy (#875).
+//
+// With an engine present it allocates a same-shaped tensor and calls
+// engine.Fill(t, 1): on the GPU engine Fill runs a device-side fill kernel and
+// swaps in fresh GPU storage (no host memcpy of the seed values); on the CPU
+// engine it fills the host slice in place. With no engine it falls back to the
+// host-tensor onesLike path used before #875.
+func buildOnesSeed[T tensor.Numeric](engine compute.Engine[T], ref *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if engine == nil {
+		return onesLike[T](engine, ref)
+	}
+	one, err := onesValue[T](engine)
+	if err != nil {
+		return nil, err
+	}
+	shape := ref.Shape()
+	n := 1
+	for _, d := range shape {
+		n *= d
+	}
+	// Start from a zeroed host tensor; engine.Fill overwrites every element
+	// with 1 (and, on the GPU engine, re-homes the storage to device memory).
+	seed, err := tensor.New[T](shape, make([]T, n))
+	if err != nil {
+		return nil, err
+	}
+	if err := engine.Fill(context.Background(), seed, one); err != nil {
+		return nil, fmt.Errorf("training: filling device-resident loss seed: %w", err)
+	}
+	return seed, nil
+}
 
 // capture is the post-Backward hook: for every trainable parameter of g
 // whose Gradient is arena-backed, accumulate the gradient into the

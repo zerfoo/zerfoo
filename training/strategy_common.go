@@ -142,7 +142,24 @@ func computeGradientsTensorCommon[T tensor.Numeric](
 	// (1/2)L^2 -- a different objective with a loss-dependent effective learning
 	// rate (issue #872). A ones tensor matching the loss shape ([1] for the
 	// scalar loss) broadcasts correctly through that final Mul.
-	ones, err := onesLike[T](g.Engine(), lossTensor)
+	//
+	// The seed is DEVICE-RESIDENT and cached on the strategy's accumulator,
+	// built once (during an eager warmup step, outside any CUDA-graph capture
+	// region) and reused every step (issue #875). The pre-#875 per-call
+	// onesLike built a HOST tensor that the engine host->device cudaMemcpy'd on
+	// every step; inside CaptureReplayRunner's capture region that host copy is
+	// illegal ("operation not permitted when stream is capturing") and crashed
+	// capture-on training. Reusing the cached device seed enqueues no host copy.
+	//
+	// When acc is nil (a few unit tests bypass the strategy accumulator) there
+	// is nowhere to cache, so fall back to the per-call host seed: those paths
+	// never run inside a capture region.
+	var ones *tensor.TensorNumeric[T]
+	if acc != nil {
+		ones, err = acc.seedFor(g.Engine(), lossTensor)
+	} else {
+		ones, err = onesLike[T](g.Engine(), lossTensor)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("seeding loss backward failed: %w", err)
 	}
