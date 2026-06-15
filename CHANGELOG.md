@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.2](https://github.com/zerfoo/zerfoo/compare/v1.50.1...v1.50.2) (2026-06-15)
+
+
+### Bug Fixes
+
+* **training:** device-resident loss seed so capture-on does not host-copy in the capture region ([#875](https://github.com/zerfoo/zerfoo/issues/875)) ([3b1615c](https://github.com/zerfoo/zerfoo/commit/3b1615cf1e5b02766b6e581dc8cc0cee78144f84))
+
 ## [1.50.1](https://github.com/zerfoo/zerfoo/compare/v1.50.0...v1.50.1) (2026-06-15)
 
 
