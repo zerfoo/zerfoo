@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.1](https://github.com/zerfoo/zerfoo/compare/v1.50.0...v1.50.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **training:** seed loss.Backward with 1.0, not the loss value ([#872](https://github.com/zerfoo/zerfoo/issues/872)) ([4869bbb](https://github.com/zerfoo/zerfoo/commit/4869bbb1c1d3ae06af92242927a7982e64a008af))
+
 ## [1.50.0](https://github.com/zerfoo/zerfoo/compare/v1.49.1...v1.50.0) (2026-06-13)
 
 
