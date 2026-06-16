@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.52.0](https://github.com/zerfoo/zerfoo/compare/v1.51.0...v1.52.0) (2026-06-16)
+
+
+### Features
+
+* **layers:** make Softmax, Linear, Conv1D, VarSelection, CE-loss bf16-instantiable ([138c233](https://github.com/zerfoo/zerfoo/commit/138c2334d7c19babfb3d5d86d17914d54fdaeca1))
+
+
+### Bug Fixes
+
+* **optimizer:** keep AdamW hyperparameters in float64 for reduced-precision T ([9083452](https://github.com/zerfoo/zerfoo/commit/90834525d6594cea7f2aa77c28ba0cdc28b45d07))
+
 ## [1.51.0](https://github.com/zerfoo/zerfoo/compare/v1.50.3...v1.51.0) (2026-06-16)
 
 
