@@ -292,9 +292,29 @@ func (a *AdamW[T]) stepMixedV(ctx context.Context, params []*graph.Parameter[T])
 	alpha := lrF * (numer / denom)
 	lrWd := lrF * wdF
 
+	// On-device fast path (ADR 070 end state, ADR 075 lever L1): when the
+	// engine provides a fused on-device AdamW kernel and the parameter and its
+	// gradient are GPU-resident, run the entire update on device. param.Value,
+	// grad, and the first/second moments never round-trip to host, removing the
+	// ~4 synchronous host<->device memcpys per parameter (param/grad D2H +
+	// param/m H2D, ~200/step on CrossAsset) that the host loop below incurs.
+	// The fused kernel owns the device-resident m (f32) and v (f64) moments, so
+	// the host mMixed/v64 sidecars are unused for GPU-resident parameters. The
+	// math is identical f64 arithmetic, so the trajectory matches the host path
+	// bit-for-bit modulo f32 rounding (the AdamW equivalence gate).
+	fused, fusedOK := any(a.engine).(gpuFusedAdamW[T])
+
 	for _, param := range params {
 		grad := param.Gradient
 		if grad == nil {
+			continue
+		}
+
+		if fusedOK && isGPUResident(param.Value) && isGPUResident(grad) {
+			if err := fused.GPUFusedAdamW(param.Value, grad,
+				beta1F, beta2F, epsF, lrF, wdF, a.t); err != nil {
+				return fmt.Errorf("adamw: on-device fused step for parameter %q: %w", param.Name, err)
+			}
 			continue
 		}
 
@@ -367,6 +387,29 @@ func (a *AdamW[T]) stepMixedV(ctx context.Context, params []*graph.Parameter[T])
 	}
 
 	return nil
+}
+
+// gpuFusedAdamW is implemented by engines that can run the AdamW
+// mixed-precision update entirely on device (e.g. ztensor's GPUEngine). When
+// available and the parameter/gradient are GPU-resident, stepMixedV calls this
+// instead of the host loop, removing the per-step host<->device round-trips.
+// The engine owns the device-resident first/second moments (m in f32, v in
+// f64) across steps and zeroes the gradient in place. Scalars are the raw
+// hyperparameters; the engine precomputes bias correction to match the host
+// trajectory bit-for-bit modulo f32 rounding.
+type gpuFusedAdamW[T tensor.Numeric] interface {
+	GPUFusedAdamW(param, grad *tensor.TensorNumeric[T], beta1, beta2, eps, lr, weightDecay float64, t int) error
+}
+
+// isGPUResident reports whether the tensor's storage lives on the device, so
+// the on-device fused AdamW path can read its device pointer with no transfer.
+// A nil-pool or CPU-backed tensor returns false and takes the host path.
+func isGPUResident[T tensor.Numeric](t *tensor.TensorNumeric[T]) bool {
+	if t == nil {
+		return false
+	}
+	gs, ok := t.GetStorage().(*tensor.GPUStorage[T])
+	return ok && gs != nil && gs.Ptr() != nil
 }
 
 // numericToFloat64 converts a tensor.Numeric value to float64.
