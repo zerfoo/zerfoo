@@ -61,7 +61,7 @@ func NewConv1D[T tensor.Numeric](
 	}
 
 	// Weight: [outChannels, inChannels, kernelSize]
-	wData := randomData[T](outChannels * inChannels * kernelSize)
+	wData := randomData[T](ops, outChannels*inChannels*kernelSize)
 	wTensor, err := tensor.New[T]([]int{outChannels, inChannels, kernelSize}, wData)
 	if err != nil {
 		return nil, err
