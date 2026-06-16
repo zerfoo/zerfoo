@@ -138,14 +138,34 @@ func (l *Linear[T]) Backward(ctx context.Context, mode types.BackwardMode, outpu
 		return nil, err
 	}
 
-	// Gradient with respect to input
-	transposedWeights, err := l.engine.Transpose(ctx, l.weights.Value, []int{1, 0})
-	if err != nil {
-		return nil, err
-	}
-	dx, err := l.engine.MatMul(ctx, gradReshaped, transposedWeights)
-	if err != nil {
-		return nil, err
+	// Gradient with respect to input: dx = grad @ W^T.
+	//
+	// device-resident-operand path (ADR 075 L1): when the engine can multiply
+	// by a transposed B directly (cuBLAS NT), compute dx = MatMulTransposeB(
+	// grad, W). This reads the weight parameter -- which is device-resident
+	// after UploadWeights -- in its NATURAL [in,out] layout, with NO explicit
+	// Transpose allocation/kernel and NO opportunity for a transposed view to
+	// drop GPUStorage and trigger a per-op host->device re-upload of the
+	// weight. The explicit-transpose fallback below is byte-identical for
+	// engines without the NT path (notably the CPU engine), so the CPU result
+	// is unchanged.
+	var dx *tensor.TensorNumeric[T]
+	if tb, ok := l.engine.(interface {
+		MatMulTransposeB(context.Context, *tensor.TensorNumeric[T], *tensor.TensorNumeric[T], ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+	}); ok {
+		dx, err = tb.MatMulTransposeB(ctx, gradReshaped, l.weights.Value)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		transposedWeights, terr := l.engine.Transpose(ctx, l.weights.Value, []int{1, 0})
+		if terr != nil {
+			return nil, terr
+		}
+		dx, err = l.engine.MatMul(ctx, gradReshaped, transposedWeights)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Reshape back to original input shape
