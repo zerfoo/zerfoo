@@ -65,14 +65,12 @@ func (cel *CrossEntropyLoss[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	intData := make([]int, flat)
 	dataT := targetsT.Data()
 	for i := 0; i < flat; i++ {
-		switch v := any(dataT[i]).(type) {
-		case float32:
-			intData[i] = int(v)
-		case float64:
-			intData[i] = int(v)
-		default:
-			return nil, fmt.Errorf("CrossEntropyLoss requires targets convertible to int; unsupported element type %T", v)
-		}
+		// Convert the class index through numericToFloat64 so targets supplied
+		// in any numeric element type -- including the reduced-precision floats
+		// (float16, bfloat16, float8) used by mixed-precision training -- are
+		// accepted. Class indices are small integers that round-trip exactly
+		// through these formats, so the float64 detour is loss-free.
+		intData[i] = int(numericToFloat64(dataT[i]))
 	}
 	targets, err := tensor.New[int](tShape, intData)
 	if err != nil {

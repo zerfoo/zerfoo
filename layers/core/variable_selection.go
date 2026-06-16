@@ -61,7 +61,7 @@ func NewVariableSelection[T tensor.Numeric](
 		return nil, fmt.Errorf("numFeatures and hiddenDim must be positive")
 	}
 
-	w1Tensor, err := tensor.New[T]([]int{numFeatures, hiddenDim}, randomData[T](numFeatures*hiddenDim))
+	w1Tensor, err := tensor.New[T]([]int{numFeatures, hiddenDim}, randomData[T](ops, numFeatures*hiddenDim))
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func NewVariableSelection[T tensor.Numeric](
 		return nil, err
 	}
 
-	w2Tensor, err := tensor.New[T]([]int{hiddenDim, numFeatures}, randomData[T](hiddenDim*numFeatures))
+	w2Tensor, err := tensor.New[T]([]int{hiddenDim, numFeatures}, randomData[T](ops, hiddenDim*numFeatures))
 	if err != nil {
 		return nil, err
 	}

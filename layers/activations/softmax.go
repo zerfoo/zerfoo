@@ -13,10 +13,15 @@ import (
 
 // Softmax applies the softmax function along a given axis.
 //
-// Softmax is constrained to floating-point element types: the operation is
-// only defined on real-valued inputs, and the backward pass requires the
-// arithmetic implied by tensor.Float.
-type Softmax[T tensor.Float] struct {
+// Softmax is constrained to tensor.Numeric element types. The operation is
+// only meaningful on real-valued inputs, but both forward and backward are
+// expressed entirely through the compute.Engine (Softmax/Mul/ReduceSum/Sub),
+// so the layer is instantiable over any numeric element type the engine
+// supports -- including the reduced-precision floats (float16, bfloat16,
+// float8) used by mixed-precision training. The narrower tensor.Float bound
+// was an over-constraint: it blocked bf16 model graphs without protecting any
+// invariant the body relies on.
+type Softmax[T tensor.Numeric] struct {
 	engine      compute.Engine[T]
 	axis        int
 	outputShape []int
@@ -33,7 +38,7 @@ func (s *Softmax[T]) SetSaver(sv graph.Saver[T]) {
 }
 
 // NewSoftmax creates a new Softmax activation layer.
-func NewSoftmax[T tensor.Float](engine compute.Engine[T], axis int) *Softmax[T] {
+func NewSoftmax[T tensor.Numeric](engine compute.Engine[T], axis int) *Softmax[T] {
 	return &Softmax[T]{engine: engine, axis: axis}
 }
 
@@ -126,7 +131,7 @@ func (s *Softmax[T]) Parameters() []*graph.Parameter[T] { return nil }
 
 // BuildSoftmax constructs a Softmax layer for the registry.
 // The optional "axis" attribute (int or int64) selects the softmax axis; defaults to -1.
-func BuildSoftmax[T tensor.Float](
+func BuildSoftmax[T tensor.Numeric](
 	engine compute.Engine[T],
 	_ numeric.Arithmetic[T],
 	_ string,

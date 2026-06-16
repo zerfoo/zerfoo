@@ -23,10 +23,39 @@ type Linear[T tensor.Numeric] struct {
 	outputFeatures int
 }
 
-func randomData[T tensor.Numeric](size int) []T {
+// randomData returns size uniform-random values in [0,1) as element type T.
+//
+// The conversion goes through ops.FromFloat32 rather than a direct T(...)
+// conversion: the reduced-precision float types (float16, bfloat16, float8)
+// are defined struct types and a Go conversion from float32 to them does not
+// compile, so a layer that called the old T(rand.Float32()) form could not be
+// instantiated over bf16. Routing through the Arithmetic ops keeps the
+// initializer generic across every numeric element type the engine supports.
+//
+// ops may be nil: some callers construct a layer with a nil engine/ops to
+// validate configuration before wiring an engine (e.g. the Mamba nil-engine
+// guard test). In that case the reduced-precision conversion is unavailable, so
+// fall back to the built-in conversion for the native float kinds (the only Ts
+// the pre-bf16 direct-conversion form supported) and leave others zero-valued.
+func randomData[T tensor.Numeric](ops numeric.Arithmetic[T], size int) []T {
 	data := make([]T, size)
+	if ops == nil {
+		var zero T
+		for i := range data {
+			switch any(zero).(type) {
+			case float32:
+				data[i] = any(rand.Float32()).(T)
+			case float64:
+				data[i] = any(float64(rand.Float32())).(T)
+			default:
+				// No ops to convert into a defined-type T; leave zero. A real
+				// engine/ops must be supplied to initialize such a layer.
+			}
+		}
+		return data
+	}
 	for i := range data {
-		data[i] = T(rand.Float32())
+		data[i] = ops.FromFloat32(rand.Float32())
 	}
 	return data
 }
@@ -46,7 +75,7 @@ func NewLinear[T tensor.Numeric](
 	}
 	weightsTensor, err := tensor.New[T](
 		[]int{inputFeatures, outputFeatures},
-		randomData[T](inputFeatures*outputFeatures),
+		randomData[T](ops, inputFeatures*outputFeatures),
 	)
 	if err != nil {
 		return nil, err
