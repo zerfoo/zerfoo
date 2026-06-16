@@ -33,6 +33,26 @@ type AdamW[T tensor.Numeric] struct {
 	weightDecay  T
 	maxGradNorm  float64 // If > 0, clip global gradient norm to this value.
 
+	// Full-precision (float64) copies of the hyperparameters.
+	//
+	// AdamW's defaults -- beta2 = 0.999, epsilon = 1e-7/1e-8 -- are NOT
+	// representable in the reduced-precision floats (bfloat16, float16, float8)
+	// used by mixed-precision training: bfloat16(0.999) rounds to exactly 1.0,
+	// which collapses (1 - beta2) to 0 and zeroes the second-moment update and
+	// the bias-correction term, so the optimizer silently stops learning. The
+	// mixed-precision update (stepMixedV) already runs its arithmetic in float64,
+	// so it must read the hyperparameters from these float64 fields rather than
+	// from the T-typed fields, which may have been rounded at construction.
+	//
+	// Populated by every constructor: NewAdamW converts its T inputs up to
+	// float64 (so f32 callers are unchanged), and NewAdamWFromFloat64 stores the
+	// caller's exact float64 values (so sub-f32 callers keep full precision).
+	learningRateF64 float64
+	beta1F64        float64
+	beta2F64        float64
+	epsilonF64      float64
+	weightDecayF64  float64
+
 	// State variables for each parameter.
 	m map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // First moment estimates (T-precision)
 	v map[*graph.Parameter[T]]*tensor.TensorNumeric[T] // Second moment estimates (T-precision, GPU path)
@@ -53,8 +73,15 @@ type AdamW[T tensor.Numeric] struct {
 }
 
 // NewAdamW creates a new AdamW optimizer.
+//
+// For reduced-precision element types (bfloat16, float16, float8) prefer
+// NewAdamWFromFloat64: passing hyperparameters as T rounds beta2 = 0.999 to 1.0
+// and epsilon to 0 in bfloat16, which disables learning. NewAdamW recovers the
+// float64 sidecars from the T inputs, so it is lossless for float32/float64
+// callers but inherits whatever precision the caller already lost when it
+// constructed the T-typed beta2/epsilon.
 func NewAdamW[T tensor.Numeric](engine compute.Engine[T], learningRate, beta1, beta2, epsilon, weightDecay T) *AdamW[T] {
-	return &AdamW[T]{
+	a := &AdamW[T]{
 		engine:       engine,
 		learningRate: learningRate,
 		beta1:        beta1,
@@ -67,6 +94,47 @@ func NewAdamW[T tensor.Numeric](engine compute.Engine[T], learningRate, beta1, b
 		mMixed:       make(map[*graph.Parameter[T]][]T),
 		useMixedV:    shouldUseMixedPrecisionV[T](engine),
 		t:            0,
+	}
+	a.learningRateF64 = numericToFloat64(learningRate)
+	a.beta1F64 = numericToFloat64(beta1)
+	a.beta2F64 = numericToFloat64(beta2)
+	a.epsilonF64 = numericToFloat64(epsilon)
+	a.weightDecayF64 = numericToFloat64(weightDecay)
+	return a
+}
+
+// NewAdamWFromFloat64 creates a new AdamW optimizer with the hyperparameters
+// given in full float64 precision, which is the correct constructor for
+// reduced-precision element types (T = bfloat16/float16/float8).
+//
+// The T-typed fields (used only by the all-T stepEngine path and by SetLR) are
+// derived once via ops.FromFloat64, but the float64 fields retain the exact
+// values, and the mixed-precision update -- the path every sub-f32 T takes --
+// reads only the float64 fields. This keeps beta2 = 0.999 and epsilon = 1e-7
+// from collapsing to 1.0 / 0 in bfloat16.
+func NewAdamWFromFloat64[T tensor.Numeric](
+	engine compute.Engine[T],
+	learningRate, beta1, beta2, epsilon, weightDecay float64,
+) *AdamW[T] {
+	ops := engine.Ops()
+	return &AdamW[T]{
+		engine:          engine,
+		learningRate:    ops.FromFloat64(learningRate),
+		beta1:           ops.FromFloat64(beta1),
+		beta2:           ops.FromFloat64(beta2),
+		epsilon:         ops.FromFloat64(epsilon),
+		weightDecay:     ops.FromFloat64(weightDecay),
+		learningRateF64: learningRate,
+		beta1F64:        beta1,
+		beta2F64:        beta2,
+		epsilonF64:      epsilon,
+		weightDecayF64:  weightDecay,
+		m:               make(map[*graph.Parameter[T]]*tensor.TensorNumeric[T]),
+		v:               make(map[*graph.Parameter[T]]*tensor.TensorNumeric[T]),
+		v64:             make(map[*graph.Parameter[T]][]float64),
+		mMixed:          make(map[*graph.Parameter[T]][]T),
+		useMixedV:       shouldUseMixedPrecisionV[T](engine),
+		t:               0,
 	}
 }
 
@@ -281,11 +349,14 @@ func (a *AdamW[T]) stepMixedV(ctx context.Context, params []*graph.Parameter[T])
 	ops := a.engine.Ops()
 	one64 := 1.0
 	t64 := float64(a.t)
-	beta1F := numericToFloat64(a.beta1)
-	beta2F := numericToFloat64(a.beta2)
-	epsF := numericToFloat64(a.epsilon)
-	lrF := numericToFloat64(a.learningRate)
-	wdF := numericToFloat64(a.weightDecay)
+	// Read the full-precision hyperparameters, NOT the T-typed fields: for
+	// reduced-precision T the latter may have rounded beta2 -> 1.0 and eps -> 0,
+	// which would zero the update. See the AdamW struct's float64-field comment.
+	beta1F := a.beta1F64
+	beta2F := a.beta2F64
+	epsF := a.epsilonF64
+	lrF := a.learningRateF64
+	wdF := a.weightDecayF64
 
 	numer := math.Sqrt(one64 - math.Pow(beta2F, t64))
 	denom := one64 - math.Pow(beta1F, t64)
@@ -516,8 +587,20 @@ func (a *AdamW[T]) guardAndClipGradients(ctx context.Context, params []*graph.Pa
 }
 
 // SetLR sets the learning rate. This is typically called by a scheduler.
+//
+// Both the T-typed field (stepEngine path) and the float64 sidecar (mixed-
+// precision path) are updated so the new rate takes effect regardless of T.
 func (a *AdamW[T]) SetLR(lr T) {
 	a.learningRate = lr
+	a.learningRateF64 = numericToFloat64(lr)
+}
+
+// SetLRFloat64 sets the learning rate in full float64 precision. Prefer this
+// over SetLR for reduced-precision T so a small rate (e.g. 1e-4) is not rounded
+// when stored in the T-typed field.
+func (a *AdamW[T]) SetLRFloat64(lr float64) {
+	a.learningRate = a.engine.Ops().FromFloat64(lr)
+	a.learningRateF64 = lr
 }
 
 // Statically assert that the type implements the Optimizer interface.
