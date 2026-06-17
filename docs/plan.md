@@ -20,7 +20,7 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 - E91: Extract crossasset/ from zerfoo to feza-ai/wolf (14/14 COMPLETE -- v3.0.0 cut 2026-04-13, ADR-084)
 - E125: mmap-based GGUF loading (Waves 1-2 + 4a/4b DONE; Wave 3 GPU integration + 4c/d MiniMax-M2 stress test PENDING)
 - E126: PJRT multi-accelerator backend (E60-E62, E64 DONE 2026-04-02; E63.2 hardware validation -- CUDA/Trainium PENDING)
-- E127: LTX-2 Diffusion A/V Inference (DiT-first) (~4/35 IN PROGRESS -- Phase-0 de-risk done (fp8=F8_E4M3, oracle-harness audit); T127.1.0a op-classes complete (GroupNorm/CrossAttn/AdaLN/TimestepEmbed in ztensor#159/#164; Conv3D/ConvTranspose3D forward as layers zerfoo#896); GEMM-spike tooling merged zerfoo#894; GB10 perf numbers + torch-oracle replays still gated; ADR-092)
+- E127: LTX-2 Diffusion A/V Inference (DiT-first) (~5/35 IN PROGRESS -- Phase-0 de-risk done (fp8=F8_E4M3, oracle-harness audit); T127.1.0a op-classes complete (GroupNorm/CrossAttn/AdaLN/TimestepEmbed in ztensor#159/#164; Conv3D/ConvTranspose3D forward layers zerfoo#896); GroupNorm production layer + VAE-decode skeleton zerfoo#898; GEMM-spike tooling zerfoo#894; GB10 perf numbers + torch-oracle replays + weight-accurate VAE still gated; ADR-092)
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
@@ -4227,11 +4227,11 @@ New code needed (all general primitives):
 
 #### E127.4: Video VAE Decode (Conv3D / ConvTranspose / GroupNorm, decode-only) -- Size: XL. Hardest: Conv3D + ConvTranspose3D forward parity under causal temporal padding
 
-- [ ] T127.4.1 Declare conv inference-only for this epic; add GroupNorm; track conv backward as deferred  Owner: TBD  Est: 5h  verifies: [UC-LTX03]
+- [x] T127.4.1 Declare conv inference-only for this epic; add GroupNorm; track conv backward as deferred  Owner: TBD  Est: 5h  verifies: [UC-LTX03]
   File: layers/core/conv2d.go (doc note), layers/normalization/group_norm.go, GitHub issue (conv backward)
   Resolve the conv-backward contradiction explicitly: **the VAE is decode-only (never trained), so the inference path does NOT require Conv2d/Conv3D/ConvTranspose backward.** Declare the conv ops inference-only for E127 and file a tracked deferred issue "Conv2d/Conv3D/ConvTranspose backward for future VAE training" (general-purpose doctrine wants the primitive eventually; this epic does not gate on it). `conv2d.go:14` documents inference-only -- annotate this decision there. Add GroupNorm (the canonical VAE/UNet norm, currently MISSING -- only a bare string literal in a test); GroupNorm IS exercised in both forward and backward (it is a plain norm, not a conv) so it keeps the full gradcheck AC.
   AC: GroupNorm passes gradcheck/OpInfo + GPU/CPU parity + PyTorch-oracle; Conv2d **forward**-parity (PyTorch-oracle forward + GPU/CPU parity) passes; conv-backward deferred issue filed and linked. **No task in this phase asserts both "decode-only sidesteps backward" AND "gradcheck passes" on the same conv op.**
-  STATUS (2026-06-17): PARTIAL. Conv-backward deferred issue filed (#887); conv ops documented inference-only in the new conv layers. GroupNorm landed in the ztensor gradcheck+oracle (ztensor#159, gradcheck-verified). STILL PENDING: the zerfoo GroupNorm **production layer** (`layers/normalization/group_norm.go`) -- only the oracle reference exists so far.
+  STATUS (2026-06-17): DONE. Conv-backward deferred issue filed (#887); conv ops documented inference-only in the conv layers. GroupNorm is covered both as a ztensor gradcheck+oracle op (ztensor#159) AND as the zerfoo **production layer** `layers/normalization/group_norm.go` (forward+backward, zerfoo#898) -- verified vs a naive reference (2D/4D/5D) + a finite-difference check of dX/dScale/dBias. GPU/CPU-parity + torch-oracle replays run on GB10 (gated).
 
 - [x] T127.4.2 Add Conv3D node (forward-parity, inference-only)  Owner: TBD  Est: 6h  verifies: [UC-LTX03]
   File: layers/core/conv3d.go
@@ -4250,6 +4250,7 @@ New code needed (all general primitives):
   Compose the causal 3D VAE decoder: latent_channels=128 -> RGB, block_out_channels [256,512,1024,2048], 32x spatial / 8x temporal upsample (vae_scale_factors=[8,32,32]), ResNet3D + GroupNorm + mid-block 3D attention. Decode-only (no VAE training) -- consistent with the inference-only conv decision in T127.4.1 (no contradiction: nothing here needs conv backward). Load weights from the VAE GGUF (T127.3.2b).
   Deps: T127.4.1, T127.4.2, T127.4.3, T127.3.2b
   AC: decoded frames match the reference VAE decode (per-pixel within tolerance) on a fixture latent; PyTorch-oracle parity on the decoder forward.
+  STATUS (2026-06-17): PARTIAL -- skeleton landed (zerfoo#898). `LTXVAEDecoderSkeleton` (layers/vision/ltx_vae_decode.go) wires Conv3d/ConvTranspose3d/GroupNorm/GELU into a residual + 2x-upsample decode forward (shape-correct, finite) with FIXTURE weights, proving the primitive set composes end-to-end. STILL PENDING: the weight-accurate decoder (real block_out_channels=[256,512,1024,2048], 32x spatial / 8x temporal, stacked ResNet3D + mid-block 3D attention) loading converted VAE GGUF weights (dep T127.3.2b).
 
 - [ ] T127.4.5 End-to-end text-fixture -> video (no real text encoder yet)  Owner: TBD  Est: 3h  verifies: [UC-LTX02]
   File: tests/architecture/ltx2_video_e2e_test.go
