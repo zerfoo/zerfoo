@@ -20,7 +20,7 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 - E91: Extract crossasset/ from zerfoo to feza-ai/wolf (14/14 COMPLETE -- v3.0.0 cut 2026-04-13, ADR-084)
 - E125: mmap-based GGUF loading (Waves 1-2 + 4a/4b DONE; Wave 3 GPU integration + 4c/d MiniMax-M2 stress test PENDING)
 - E126: PJRT multi-accelerator backend (E60-E62, E64 DONE 2026-04-02; E63.2 hardware validation -- CUDA/Trainium PENDING)
-- E127: LTX-2 Diffusion A/V Inference (DiT-first) (0/35 -- PLANNED; 7 phases + deferred LTX-2.3 geometry gate; DiT denoiser + general diffusion primitives reused across diffusion/vision; ADR-092)
+- E127: LTX-2 Diffusion A/V Inference (DiT-first) (~4/35 IN PROGRESS -- Phase-0 de-risk done (fp8=F8_E4M3, oracle-harness audit); T127.1.0a op-classes complete (GroupNorm/CrossAttn/AdaLN/TimestepEmbed in ztensor#159/#164; Conv3D/ConvTranspose3D forward as layers zerfoo#896); GEMM-spike tooling merged zerfoo#894; GB10 perf numbers + torch-oracle replays still gated; ADR-092)
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
@@ -4113,16 +4113,18 @@ New code needed (all general primitives):
 
 #### E127.1: Oracle/Fixture Harness + DiT Denoiser Core + Conditioning Primitives (DiT-first) -- Size: L. Hardest: AdaLN-Zero cross-modality modulation node (zero-init, 6-vector split, timestep-conditioned)
 
-- [ ] T127.1.0a Extend the ADR-091 PyTorch-oracle harness to the new op classes  Owner: TBD  Est: 6-8h (M)  verifies: [infrastructure]
+- [x] T127.1.0a Extend the ADR-091 PyTorch-oracle harness to the new op classes  Owner: TBD  Est: 6-8h (M)  verifies: [infrastructure]
   File: ztensor `testing/oracle/` (bundle.go, generate.go, torchmap.go) + `testing/gradcheck/registry.go` + `scripts/oracle/run_oracle.py` -- repo: **ztensor**, NOT zerfoo
   RESOLVED (Phase-0 audit 2026-06-16): the harness EXISTS and IS op-generic -- adding an op is a 2-step registration (a `gradcheck.Registry()` entry in `registry.go` + a `torchMap` PyTorch expression in `torchmap.go`, lockstep-enforced by a cross-check test); references are generated on-the-fly by `cmd/oracle-gen` and replayed in NGC PyTorch on GB10. 26 ops registered today, **none** of conv/groupnorm/adaln/attn. Remaining work: add 6 op wrappers + registry entries + torch exprs for conv3d, conv_transpose, group_norm, adaln-zero, timestep/sinusoidal embed, cross-attention (Conv3D templates from Conv1D/Conv2D; GroupNorm templates from LayerNorm; AdaLN/CrossAttn need custom backward). NOTE: this is ztensor work -- the earlier `tests/oracle/` zerfoo path was wrong.
   AC: `oracle-gen` emits bundles for all six new op classes and `run_oracle.py` reports per-op tolerance pass on GB10; ztensor gradcheck registry <-> torchmap lockstep test green.
+  STATUS (2026-06-17): DONE across two mechanisms. The 4 backward-having classes landed in the ztensor gradcheck+oracle, each gradcheck-verified on CPU (analytic backward vs finite-difference) + lockstep green: GroupNorm (ztensor#159); CrossAttention, AdaLN, TimestepEmbed (ztensor#164). The 2 forward-only conv classes (conv3d, conv_transpose) were **rehomed to zerfoo forward-parity layers** (T127.4.2/T127.4.3, zerfoo#896) -- they cannot be backward-checked by gradcheck, so they live as layers with forward-parity tests instead. Remaining: torch-oracle replays run on GB10 (gated).
 
 - [ ] T127.1.0b fp8 sub-format + n>1 low-precision GEMM spike (de-risk converter + perf early)  Owner: TBD  Est: 3h  verifies: [infrastructure]
   File: docs/devlog.md (spike findings), docs/bench/manifests/ltx2-fp8-spike.yaml
   PART 1 -- DONE (2026-06-16): fp8 sub-format confirmed **F8_E4M3** via `huggingface_hub` byte-range header read of `ltx-2-19b-dev-fp8.safetensors` (1,176 F8_E4M3 tensors, 0 E5M2). Checkpoints are **mixed-precision F32 + BF16 + F8_E4M3** (norms/embeds high-precision, matmul weights fp8); LTX-2.3-fp8 matches. Recorded in docs/devlog.md. The converter storage mapping (T127.3.2) may now be committed against E4M3.
   PART 2 -- REMAINING (hardware-gated, GB10/Spark): micro-benchmark one n>1 fp8 GEMM and one n>1 Q4_K GEMM on the GB10 via Spark to size whether the denoise-regime dequant-to-f32 path is acceptable or new kernels are needed. This is the load-bearing perf risk.
   AC: ~~fp8 sub-format confirmed and recorded~~ DONE; n>1 fp8/Q4_K GEMM sec/op measured on GB10; go/no-go note on whether new kernels are required for the denoise regime.
+  STATUS (2026-06-17): PART 1 done (fp8=F8_E4M3). Bench tooling -- `cmd/bench_gemm` + `docs/bench/manifests/ltx2-fp8-spike.yaml` -- merged zerfoo#894 and CPU-smoke-verified (all three variants run). PART 2 (GB10 sec/op numbers + kernel go/no-go) still pending: build the binary natively on the host and submit via Spark.
 
 - [ ] T127.1.0c Provision + pin the PyTorch/diffusers reference + fixture generator on Spark  Owner: TBD  Est: 3h  verifies: [infrastructure]
   File: docs/bench/manifests/ltx2-reference.yaml, scripts/ltx2-fixtures.py
@@ -4229,16 +4231,19 @@ New code needed (all general primitives):
   File: layers/core/conv2d.go (doc note), layers/normalization/group_norm.go, GitHub issue (conv backward)
   Resolve the conv-backward contradiction explicitly: **the VAE is decode-only (never trained), so the inference path does NOT require Conv2d/Conv3D/ConvTranspose backward.** Declare the conv ops inference-only for E127 and file a tracked deferred issue "Conv2d/Conv3D/ConvTranspose backward for future VAE training" (general-purpose doctrine wants the primitive eventually; this epic does not gate on it). `conv2d.go:14` documents inference-only -- annotate this decision there. Add GroupNorm (the canonical VAE/UNet norm, currently MISSING -- only a bare string literal in a test); GroupNorm IS exercised in both forward and backward (it is a plain norm, not a conv) so it keeps the full gradcheck AC.
   AC: GroupNorm passes gradcheck/OpInfo + GPU/CPU parity + PyTorch-oracle; Conv2d **forward**-parity (PyTorch-oracle forward + GPU/CPU parity) passes; conv-backward deferred issue filed and linked. **No task in this phase asserts both "decode-only sidesteps backward" AND "gradcheck passes" on the same conv op.**
+  STATUS (2026-06-17): PARTIAL. Conv-backward deferred issue filed (#887); conv ops documented inference-only in the new conv layers. GroupNorm landed in the ztensor gradcheck+oracle (ztensor#159, gradcheck-verified). STILL PENDING: the zerfoo GroupNorm **production layer** (`layers/normalization/group_norm.go`) -- only the oracle reference exists so far.
 
-- [ ] T127.4.2 Add Conv3D node (forward-parity, inference-only)  Owner: TBD  Est: 6h  verifies: [UC-LTX03]
+- [x] T127.4.2 Add Conv3D node (forward-parity, inference-only)  Owner: TBD  Est: 6h  verifies: [UC-LTX03]
   File: layers/core/conv3d.go
   General 3D conv (causal temporal padding option: replicate-pad first frame by kernel-1, symmetric spatial). Unlocks video/volumetric models. Reference Conv1D (`layers/core/conv1d.go:19`) and Conv2d patterns. Inference-only per T127.4.1 (backward deferred).
   AC: **forward**-parity -- GPU/CPU parity passes; PyTorch-oracle matches torch Conv3d (causal mode) within tolerance. (Backward deferred; no gradcheck gate.)
+  STATUS (2026-06-17): DONE (forward). `layers/core/conv3d.go` (im2col + engine.MatMul; stride/pad/dilation/groups/bias) merged zerfoo#896, forward-parity verified on CPU vs an independent naive nested-loop reference (valid / strided+padded+bias / dilated). Follow-ups: causal replicate-pad-first-frame mode; torch-oracle on GB10; GGUF-registry wiring (the "Conv" op name collides with Conv2d -- needs a rank-dispatch builder).
 
-- [ ] T127.4.3 Add ConvTranspose (2D/3D upsampling conv, forward-parity, inference-only)  Owner: TBD  Est: 6h  verifies: [UC-LTX03]
+- [x] T127.4.3 Add ConvTranspose (2D/3D upsampling conv, forward-parity, inference-only)  Owner: TBD  Est: 6h  verifies: [UC-LTX03]
   File: layers/core/conv_transpose.go
   Transposed/upsampling conv for VAE decoders (currently MISSING entirely). Unlocks all convolutional decoders. Inference-only per T127.4.1. HARDEST TASK of phase.
   AC: **forward**-parity -- GPU/CPU parity passes; PyTorch-oracle matches torch ConvTranspose within tolerance. (Backward deferred; no gradcheck gate.)
+  STATUS (2026-06-17): DONE (forward, 3D). `layers/core/conv_transpose.go` (engine.MatMul WT@X + col2im scatter; stride/pad/dilation/output_padding) merged zerfoo#896, forward-parity verified on CPU (tiny hand-checked scatter + strided-upsample + **adjoint cross-check** vs the naive-verified Conv3d). Follow-ups: groups>1 (currently errors); torch-oracle on GB10; GGUF-registry wiring.
 
 - [ ] T127.4.4 Build the LTX-2 video VAE decoder (decode-only)  Owner: TBD  Est: 6h  verifies: [UC-LTX03]
   File: layers/vision/ltx_vae_decode.go
