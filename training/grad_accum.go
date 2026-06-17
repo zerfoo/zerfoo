@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/zerfoo/float16"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
@@ -236,7 +237,13 @@ func (a *gradAccumulator[T]) engineFor(g *graph.Graph[T], accum, grad *tensor.Te
 		return a.engine
 	}
 	var zero T
-	if _, isF32 := any(zero).(float32); !isF32 {
+	_, isF32 := any(zero).(float32)
+	_, isBF16 := any(zero).(float16.BFloat16)
+	// f32 and bf16 both have native, in-place device Add kernels (bf16 via
+	// launch_add_bf16, ztensor v1.13.0+). Any other element type has no native
+	// device accumulation and its CPU fallback does not honor the in-place dst
+	// contract for device-backed tensors, so it takes the host fallback.
+	if !isF32 && !isBF16 {
 		return nil
 	}
 	if _, ok := accum.GetStorage().(*tensor.GPUStorage[T]); !ok {
