@@ -20,6 +20,7 @@ Task statuses updated 2026-04-10 based on merged PRs and git history.
 - E91: Extract crossasset/ from zerfoo to feza-ai/wolf (14/14 COMPLETE -- v3.0.0 cut 2026-04-13, ADR-084)
 - E125: mmap-based GGUF loading (Waves 1-2 + 4a/4b DONE; Wave 3 GPU integration + 4c/d MiniMax-M2 stress test PENDING)
 - E126: PJRT multi-accelerator backend (E60-E62, E64 DONE 2026-04-02; E63.2 hardware validation -- CUDA/Trainium PENDING)
+- E127: LTX-2 Diffusion A/V Inference (DiT-first) (0/35 -- PLANNED; 7 phases + deferred LTX-2.3 geometry gate; DiT denoiser + general diffusion primitives reused across diffusion/vision; ADR-092)
 - E45: Verification remediation (3/3 complete) -- DONE
 - E46: Ecosystem v1 release (46/46 complete -- all 5 repos at v1.0.0) -- DONE 2026-03-30
 - E47: Batched training performance (19/19 complete) -- DONE 2026-03-30
@@ -2832,6 +2833,11 @@ See git history for full changelog.
 | UC-TS02 | TimeMixer forecasting | Multi-scale decomposition MLP training and inference |
 | UC-TS03 | Foundation model zero-shot | Zero-shot forecasting via Chronos-2/TiRex/Moirai-2 gRPC bridge |
 | UC-TS04 | Train time series with composed backward | Backward passes use functional backward ops (not raw f64 loops) for maintainability and future GPU acceleration |
+| UC-LTX01 | LTX-2 DiT denoiser inference | Run the 48-block dual-stream audio/video DiT denoiser forward in zerfoo, parity vs the GB10 PyTorch reference |
+| UC-LTX02 | LTX-2 diffusion generation loop | Flow-matching Euler denoise loop (40-step full / 8-step distilled) with bimodal CFG and CUDA-graph capture, end-to-end generation |
+| UC-LTX03 | Video VAE decode (Conv3D/ConvTranspose/GroupNorm) | Decode-only causal 3D convolutional VAE from latents to RGB frames |
+| UC-LTX04 | Gemma3-12B text conditioning | Frozen Gemma3-12B multi-layer feature extractor + per-stream connector producing video/audio conditioning |
+| UC-LTX05 | Synchronized audio stream + vocoder | Audio VAE + HiFi-GAN vocoder + bidirectional cross-modal A/V attention for synchronized audio output |
 
 ---
 
@@ -4003,3 +4009,380 @@ Annapurna Labs partnership pitch. Original plan archived at
 #### Wave E126-3: Benchmark + lint (1 agent)
 - [ ] T126.1.4 PJRT vs native CUDA bench (depends on T126.1.2)
 - [ ] T126.1.5 go vet sweep
+
+## E127: LTX-2 Diffusion Audio/Video Inference in Zerfoo (DiT-first)
+
+### Context
+
+LTX-2 (arXiv 2601.03233, Lightricks, Jan 2026) is an **asymmetric dual-stream
+audio+video diffusion transformer (DiT)** -- a 14B-parameter video stream and a
+5B-parameter audio stream (~19B total) coupled by bidirectional audio-video
+cross-attention. This is a **diffusion model, not an autoregressive LLM**: there
+is no token-by-token KV-cache decode loop. Generation is an iterative
+**flow-matching / rectified-flow** denoising of a fixed-shape latent (40 steps
+full, 8 steps distilled), with modality-aware classifier-free guidance, decoded
+to pixels and audio by two VAEs plus a HiFi-GAN vocoder.
+
+**Scope is LTX-2 19B only.** LTX-2.3 (22B) is explicitly OUT of this epic's
+converter, builder, and sizing scope. Its geometry is only *reported* identical
+to LTX-2 (the verifier could not independently re-fetch the 2.3 binary header),
+so no 2.3 work may be scheduled or sized as if geometry parity is established --
+see ADR-092 "Deferred" and the precondition task T127.8.1.
+
+**Baseline / parity target.** Because LTX is diffusion, the reference is the
+**LTX-2 PyTorch / ComfyUI pipeline running on the GB10 DGX Spark** (submitted via
+Spark, per the Hardware doctrine). **Ollama is NOT a baseline -- Ollama does not
+run LTX.** All throughput and numerical parity in this epic are measured against
+that PyTorch reference path on the same GB10. The reference requires the
+LTX2-specific diffusers dev build (`0.37.0.dev0`, classes `LTX2Pipeline`,
+`AutoencoderKLLTX2Video`/`Audio`, `LTX2Vocoder`, `LTX2TextConnectors`),
+provisioned on Spark by T127.1.0c.
+
+**Numerical-parity definition.** Parity in this epic means **matching the LTX-2
+PyTorch reference within the per-op tolerance band defined by the PyTorch-oracle
+gate (ADR-091)** -- NOT bit-exactness. Bit-exactness is impossible here: GPU is
+`GPUEngine[float32]` with bf16/fp8 as reduced-precision *storage* (no native
+`GPUEngine[bfloat16]`), the FFN is gelu-approximate, and fused kernels reorder
+arithmetic. Every "matches PyTorch-oracle" AC below means "within the ADR-091
+tolerance band."
+
+**Why DiT-first.** The transformer denoiser is the FLOPs-dominant core (~19B of
+the model, run 40x per generation). Zerfoo already has the hard parts of a DiT:
+`attention.ScaledDotProductAttention`/`FusedSDPA`, `normalization.RMSNorm`,
+`embeddings.RotaryPositionalEmbedding`, `activations.Gelu`, fused CUDA kernels
+(FusedAddRMSNorm, FusedQKNormRoPE, FusedSoftmaxVMul), quantized GEMM (Q4/Q8/K/FP8),
+and the compile + `ExecutionPlan` + `NewCUDAGraphExecutor` substrate. Landing the
+denoiser first -- with the VAE, scheduler, and text encoder initially stubbed or
+fed fixtures -- reaches a **measurable per-step benchmark against the GB10 PyTorch
+reference early**, before committing to the long tail of VAE/audio/DSP work.
+
+**Doctrine (CLAUDE.md).** Zerfoo stays general-purpose. Every new building block
+below is a **reusable primitive**, not LTX-special-cased code:
+
+- **AdaLN-Zero + timestep/sinusoidal embedding** -> unlocks *every* DiT-family
+  model (PixArt, SD3/Flux MM-DiT, Hunyuan, Mochi, Wan, all future diffusion DiTs).
+- **A packaged CrossAttention module** (separate context K/V projections, masking)
+  -> unlocks encoder-decoder transformers, T5/Whisper-style models, multimodal
+  fusion, and the dual-stream A/V coupling here.
+- **A `compute.Scheduler` / flow-matching loop abstraction** -> unlocks *all*
+  diffusion samplers (DDPM, DDIM, Euler, rectified-flow, distilled).
+- **Conv3D, ConvTranspose, GroupNorm** -> unlock video/volumetric models,
+  convolutional VAEs/UNets, and the entire Stable-Diffusion-family VAE class.
+- **A general safetensors -> GGUF conversion path (in zonnx)** -> unlocks the
+  whole HuggingFace ecosystem of diffusion + vision checkpoints, not just LTX.
+
+Decision rationale: docs/adr/092-ltx2-diffusion-dit-first.md
+
+### Approach
+
+Existing components reused without modification:
+- `attention.ScaledDotProductAttention` / `attention.FusedSDPA` (Q,K,V separate inputs -> cross-attention primitive) -- `layers/attention/scaled_dot_product_attention.go:117`, `layers/attention/fused_sdpa_node.go:106`
+- `normalization.RMSNorm` (qk_norm=rms_norm_across_heads) -- `layers/normalization/rmsnorm.go:15`
+- `embeddings.RotaryPositionalEmbedding` (split RoPE base) -- `layers/embeddings/rotary_positional_embedding.go`
+- `activations.Gelu` / `FastGelu` (gelu-approximate FFN; this IS the LTX-2 activation, `activation_fn=gelu-approximate`) -- `layers/activations/gelu.go:19`
+- `core.FiLM` as the affine-modulation base AdaLN extends -- `layers/core/film.go:19`
+- Fused kernels: FusedAddRMSNorm, FusedQKNormRoPE, FusedSoftmaxVMul, FusedSwiGLU (bf16 variants) -- `ztensor/compute/gpu_engine_elementwise.go`, `ztensor/internal/cuda/kernels/`
+- Quantized GEMM/GEMV (Q4/Q8/Q4_K/Q5_K/Q6_K, FP8 cuBLASLt, W4A16) -- `ztensor/compute/gpu_engine.go:1409`, `ztensor/compute/gpu_fp8.go:403`
+- Compile + capture substrate: `graph.Graph[T].Compile`, `ExecutionPlan[T]`, `NewCUDAGraphExecutor[T]`, `PoolResetter` arena reset -- `ztensor/graph/compile.go:572`, `ztensor/graph/cuda_graph.go:268`
+- ArchBuilder registry + `tensorLookup` weight mapping -- `inference/registry.go:17`, `inference/builder_helpers.go:19`
+
+New code needed (all general primitives):
+- `layers/embeddings/timestep_embedding.go`: sinusoidal + MLP timestep embedder (DiT/diffusion)
+- `layers/core/adaln.go`: AdaLN-Zero modulation node (general 6-vector shift/scale/gate, parameterizable count, zero-init projection). The LTX-specific `adaln_single` + `scale_shift_table` layout is mapped onto this general node IN THE ARCH BUILDER (T127.1.5/T127.3.3), never inside `adaln.go`.
+- `layers/attention/cross_attention.go`: packaged cross-attention with separate context projections
+- `layers/normalization/group_norm.go`: GroupNorm (canonical VAE/UNet norm)
+- `layers/core/conv3d.go` + `layers/core/conv_transpose.go`: 3D conv + transposed/upsampling conv (forward-parity; backward deferred -- see T127.4.1)
+- `compute/scheduler` (or `generate/diffusion/`): flow-matching scheduler abstraction + Euler denoise loop
+- `inference/arch_ltx2.go`: dual-stream DiT builder registered via `RegisterArchitecture`
+- safetensors header parser reused/generalized from `inference/timeseries/convert_*.go`; conversion (DiT + VAEs + vocoder) lands in **zonnx**, not this repo
+- `layers/vision/ltx_vae_decode.go` (conv VAE decoder, decode-only) + audio VAE + vocoder (Phase 6)
+- PyTorch reference/fixture/oracle harness on Spark (T127.1.0a-c): extends the ADR-091 oracle to the new ops and emits all fixture tensors
+
+### Acceptance Criteria
+
+- DiT denoiser hidden states **match the LTX-2 PyTorch reference within the per-op tolerance band defined by ADR-091** for one block (fixed-fixture weights) and for one full forward (REAL weights, T127.3.4), on the GB10 via Spark. (No "bit-comparable" claim -- bit-exactness is impossible under reduced-precision storage + gelu-approximate + fused kernels.)
+- One full LTX-2 19B generation (text -> video frames + audio) runs end-to-end in zerfoo and is visually/aurally coherent vs the ComfyUI reference on the same prompt.
+- Every new op (AdaLN, timestep embed, cross-attention, GroupNorm, Conv3D, ConvTranspose) passes **gradcheck/OpInfo where a backward exists, the GPU/CPU parity-under-arena-stress harness, and the PyTorch-oracle gate (ADR-091)** before merge. **Conv ops are inference-only for this epic (decode-only VAE): their AC is forward-parity (PyTorch-oracle forward + GPU/CPU parity), NOT gradcheck; conv backward is tracked as a separate deferred issue for future VAE training.** The oracle harness coverage for the new op classes is guaranteed by T127.1.0a.
+- One denoising step is CUDA-graph-captured and replayed; per-step latency is benchmarked against the GB10 PyTorch reference (sec/step) via Spark, reported separately for full-CFG (40-step) and distilled-CFG-off (8-step) regimes.
+- The full resident-set memory budget (DiT + Gemma3-12B encoder + video VAE + audio VAE + vocoder, co-resident on GB10 unified memory) is sized and shown to fit at the target resolution, across bf16 / fp8 / fp4 storage (T127.7.3a).
+- **Non-Wolf acceptance:** all new primitives (timestep embed, AdaLN, cross-attention, GroupNorm, Conv3D, scheduler) are exercised by a standalone generic image-DiT that achieves **PyTorch-oracle parity against a small real DiT checkpoint** (e.g. a tiny PixArt/SD3-style reference), independent of LTX -- proving they are framework primitives, not LTX-special-cased. (The epic AC and the satisfying task T127.1.7 now agree.)
+- All existing architecture/training tests remain green (no regressions); CUDA-graph decode capture for LLMs is unaffected by the static-shape capture-gate change.
+- New primitives carry a doc note naming the other model classes they unlock.
+
+### Work Breakdown
+
+#### E127.1: Oracle/Fixture Harness + DiT Denoiser Core + Conditioning Primitives (DiT-first) -- Size: L. Hardest: AdaLN-Zero cross-modality modulation node (zero-init, 6-vector split, timestep-conditioned)
+
+- [ ] T127.1.0a Extend the ADR-091 PyTorch-oracle harness to the new op classes  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  File: tests/oracle/ (ADR-091 harness extension)
+  CONFIRM whether the ADR-091 oracle harness is op-generic; if it only covers existing LLM ops, extend it to generate torch reference tensors for: conv3d, conv_transpose, group_norm, adaln-zero, timestep/sinusoidal embed, and cross-attention. Without this, every op-parity AC in E127 references infrastructure that does not exist.
+  AC: harness emits reference tensors for all six new op classes; a smoke run produces a comparable tensor for each. `go test ./tests/oracle/...` green (or harness doc confirms op-generic).
+
+- [ ] T127.1.0b fp8 sub-format + n>1 low-precision GEMM spike (de-risk converter + perf early)  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  File: docs/devlog.md (spike findings), docs/bench/manifests/ltx2-fp8-spike.yaml
+  Read one real fp8 LTX-2 19B shard header via a **huggingface_hub byte-range request (NOT WebFetch)** to confirm **E4M3FN vs E5M2** before the converter storage mapping is committed (T127.3.2). Micro-benchmark one n>1 fp8 GEMM and one n>1 Q4_K GEMM on the GB10 via Spark to size whether the denoise-regime dequant-to-f32 path is acceptable or new kernels are needed. This is the load-bearing perf risk; surface it now, not in Phase 7.
+  AC: fp8 sub-format confirmed and recorded; n>1 fp8/Q4_K GEMM sec/op measured on GB10; go/no-go note on whether new kernels are required for the denoise regime.
+
+- [ ] T127.1.0c Provision + pin the PyTorch/diffusers reference + fixture generator on Spark  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  File: docs/bench/manifests/ltx2-reference.yaml, scripts/ltx2-fixtures.py
+  Provision the LTX2-specific diffusers dev build (`0.37.0.dev0` with `LTX2Pipeline`, `AutoencoderKLLTX2Video`/`Audio`, `LTX2Vocoder`, `LTX2TextConnectors`) on Spark and build the fixture generator that emits the fixed random latents, the fixed text-context fixture, and the PyTorch-oracle reference tensors Phases 1-3 depend on (ADR-092 Alternative #2 names PyTorch as the temporary fixture/stub generator -- this task builds it).
+  AC: pinned reference image runs on Spark; fixture generator emits latent/context/reference tensors consumed by T127.1.5/T127.1.6/T127.3.4.
+
+- [ ] T127.1.1 Add sinusoidal + MLP timestep embedding node  Owner: TBD  Est: 3h  verifies: [UC-LTX01]
+  File: layers/embeddings/timestep_embedding.go
+  General primitive: sinusoidal frequency embedding (timestep_scale_multiplier=1000) -> 2-layer MLP -> conditioning vector. Unlocks every diffusion DiT (PixArt, SD3, Flux, Hunyuan, Wan). Reference the unexported `addSinusoidalPosEnc` in `layers/audio/whisper_encoder.go:557` for the sin/cos pattern but ship an exported, generic-over-T graph node.
+  Deps: T127.1.0a
+  AC: gradcheck/OpInfo passes; GPU/CPU parity harness passes; PyTorch-oracle (ADR-091) matches torch sinusoidal+MLP within per-op tolerance. `go test ./layers/embeddings/...` green.
+
+- [ ] T127.1.2 Add AdaLN-Zero modulation node (general, parameterizable vector count)  Owner: TBD  Est: 5h  verifies: [UC-LTX01]
+  File: layers/core/adaln.go
+  General primitive extending `core.FiLM` (`layers/core/film.go:19`): produce N modulation vectors (default 6: shift/scale/gate for attn + FFN) from the timestep/conditioning vector via a **zero-initialized** projection; apply as `LayerNorm/RMSNorm(x)*(1+scale)+shift` and gated residuals. Support **cross-modality AdaLN** (shared timestep MLP feeding both streams). The vector count is a parameter; the node is the generic PixArt/DiT 6-vector convention. **Keep the LTX `adaln_single`/`scale_shift_table` layout OUT of this primitive** -- that mapping is the arch builder's job (T127.1.5/T127.3.3). Unlocks all AdaLN-DiT models.
+  Deps: T127.1.0a
+  AC: gradcheck/OpInfo passes; GPU/CPU parity harness passes; PyTorch-oracle matches torch AdaLN-Zero (incl. zero-init -> identity at step 0) within tolerance. HARDEST TASK of phase.
+
+- [ ] T127.1.3 Add packaged cross-attention module  Owner: TBD  Est: 4h  verifies: [UC-LTX01]
+  File: layers/attention/cross_attention.go
+  General primitive wrapping `ScaledDotProductAttention`/`FusedSDPA` (`layers/attention/fused_sdpa_node.go:2` already cites cross-attention as intended consumer): separate Q (from stream) and K/V (from context) projections, optional mask, qk_norm=rms_norm_across_heads, temporal-only RoPE option. Unlocks encoder-decoder transformers, T5/Whisper, multimodal fusion.
+  Deps: T127.1.0a
+  AC: gradcheck/OpInfo passes; GPU/CPU parity harness passes; PyTorch-oracle matches torch cross-attention within tolerance.
+
+- [ ] T127.1.5 Build the dual-stream DiT block (video + audio sub-blocks, cross-modal attn)  Owner: TBD  Est: 6h  verifies: [UC-LTX01]
+  File: inference/arch_ltx2_block.go
+  Compose BasicAVTransformerBlock from primitives: video self-attn (4096, 32x128) + text cross-attn + FFN (16384, gelu-approx); audio self-attn (2048, 32x64) + text cross-attn + FFN (8192); bidirectional `audio_to_video_attn` (Q=video, KV=audio) + `video_to_audio_attn` (Q=audio, KV=video) using the audio head config (32x64); split RoPE theta=10000. Use existing GQA/RMSNorm/FusedQKNormRoPE.
+  **AdaLN mapping note:** map LTX's `adaln_single` + the learned `scale_shift_table` (broadcast across blocks) onto the general AdaLN node's parameters HERE in the builder -- do not push the LTX table shape into `layers/core/adaln.go`.
+  Deps: T127.1.1, T127.1.2, T127.1.3
+  AC: one block forward matches PyTorch-oracle on a FIXED injected-weight fixture within per-op tolerance (both sides use the same injected weights, so this is a legitimate oracle match -- GPU/CPU parity harness + ADR-091 oracle).
+
+- [ ] T127.1.6 Register `ltx2` arch builder; wire 48-block denoiser with fixture latents  Owner: TBD  Est: 5h  verifies: [UC-LTX01]
+  File: inference/arch_ltx2.go, inference/registry_init.go
+  `buildLTX2Graph(tensors, cfg, engine)` following the `arch_llama.go` template (`inference/arch_llama.go:36`): **patchify_proj is a 1x1 (patch_size=1, patch_size_t=1) Linear from 128 latent channels to 4096 (video) / 2048 (audio); there is NO spatial patch folding -- the DiT ingests VAE latents directly. Spatial compression lives entirely in the VAE (vae_scale_factors=[8,32,32]).** Stack 48 dual-stream blocks, proj_out. Register via `RegisterArchitecture("ltx2", ...)` in `inference/registry_init.go`. VAE/scheduler/text-encoder **stubbed**: feed fixed random latents + a fixed text-context fixture so the denoiser forward runs standalone.
+  Deps: T127.1.5
+  AC: **full 48-block forward builds and runs from fixture weights; output shape is correct; the forward is self-consistent (deterministic across runs on the same fixture); per-step latency is benchmarkable on the GB10 via Spark. (Oracle parity is NOT asserted here -- random fixture weights cannot match the real-checkpoint oracle; that match is T127.3.4.)** **First benchmarkable milestone.**
+
+- [ ] T127.1.7 Generic-DiT PyTorch-oracle parity fixture (non-Wolf, non-LTX primitive validation)  Owner: TBD  Est: 4h  verifies: [UC-LTX01]
+  File: tests/architecture/dit_primitives_test.go
+  Assemble a tiny generic image-DiT (timestep embed + AdaLN + self-attn + FFN, no audio) and assert **PyTorch-oracle parity against a small REAL DiT checkpoint** (e.g. a tiny PixArt/SD3-style reference) -- proving the Phase-1 primitives are framework-general, not LTX-only, and satisfying the framework's non-single-consumer acceptance rule. (Upgraded from a smoke test so it matches the epic's non-Wolf AC.)
+  Deps: T127.1.5, T127.1.0a
+  AC: `go test ./tests/architecture/...` green; tiny generic DiT forward matches its PyTorch oracle within tolerance; primitives exercised outside any LTX-specific path.
+
+#### E127.2: Flow-Matching Scheduler + Denoising Loop -- Size: M. Hardest: in-place latent feedback (x_t -> x_{t-1}) with a fixed reused tensor across steps
+
+- [ ] T127.2.1 Define a general scheduler abstraction  Owner: TBD  Est: 3h  verifies: [UC-LTX02]
+  File: generate/diffusion/scheduler.go
+  Interface `Scheduler[T]`: `Sigmas(steps int) []T`, `Step(ctx, model_out, x_t, sigma_t, sigma_next) x_next`. General over DDPM/DDIM/Euler/rectified-flow. Unlocks all diffusion samplers.
+  AC: unit tests for sigma schedules; gradcheck not required (inference-only control), but GPU/CPU parity on the `Step` arithmetic via the parity harness.
+
+- [ ] T127.2.2 Implement flow-matching Euler scheduler + sigma schedules  Owner: TBD  Est: 4h  verifies: [UC-LTX02]
+  File: generate/diffusion/flow_match_euler.go
+  Implement FlowMatchEuler (default steps are per-variant: **LTX_2_PARAMS=40 for LTX-2 19B**; 30/15 are LTX-2.3/HQ and OUT of scope), the token-count-dependent shifted-sigmoid sigma schedule (terminal 0.1), and the distilled schedules using the **exact source constant names: `DISTILLED_SIGMA_VALUES` (9 sigmas / 8 steps) + `STAGE_2_DISTILLED_SIGMA_VALUES` (4 sigmas / 3 steps)** from `constants.py`. Match Lightricks values bit-for-bit.
+  AC: sigma arrays match the reference constants bit-for-bit; PyTorch-oracle matches one Euler step within tolerance.
+
+- [ ] T127.2.3 Diffusion denoise loop with in-place latent feedback  Owner: TBD  Est: 5h  verifies: [UC-LTX02]
+  File: generate/diffusion/denoise.go
+  New loop alongside `Generate` (replaces `runDecodeStep` body, `generate/decode_step.go:26`): reset arena via `PoolResetter`, inject timestep as a time-varying auto-input (analogous to RoPE position injection), run the compiled denoiser plan, apply scheduler step **writing x_{t-1} back into the same fixed latent tensor**. No KV cache. Reuse `ResetStatefulNodes` once before the loop.
+  Deps: T127.2.1, T127.2.2, T127.1.6
+  AC: N-step loop produces a stable denoised latent from fixture noise; matches the reference trajectory (latent L2 within tolerance) on the GB10 via Spark. HARDEST TASK of phase (in-place x_t feedback has no existing analog in the token path).
+
+- [ ] T127.2.4 Modality-aware (bimodal) CFG  Owner: TBD  Est: 3h  verifies: [UC-LTX02]
+  File: generate/diffusion/cfg.go
+  Per-stream `M_hat = M + s_t*(M - M_textnull) + s_m*(M - M_modalitynull)`; video s_t=3/s_m=3, audio s_t=7/s_m=3. **CFG-off path for distilled mode (CFG=1, verified README).** Document the batch-expansion cost: full-CFG runs 2-3 forwards per step (text-null + modality-null + conditional); distilled runs 1 (CFG off) -- this drives the divergent perf story reported in T127.7.4.
+  Deps: T127.2.3
+  AC: CFG combination matches PyTorch-oracle within tolerance; distilled CFG-off path verified; per-step forward-count cost documented for both regimes.
+
+#### E127.3: SafeTensors Loader + LTX-2 Weight Mapping (DiT + VAEs + vocoder) -- Size: M. Hardest: dual-stream weight-name remapping (video + audio_* + cross-stream av_ca_*) without an LTX special case
+
+- [ ] T127.3.1 Generalize the safetensors header parser into a reusable reader  Owner: TBD  Est: 3h  verifies: [infrastructure]
+  File: zonnx (new safetensors package), referencing inference/timeseries/convert_tirex.go:77
+  Per CONTRIBUTING.md, **no safetensors runtime loader lands in zerfoo**. Extract the `parseSafeTensorsHeader` pattern (8-byte LE length + JSON header, `data_offsets`, `__metadata__` skip, `safeTensorsDTypeToGGUF`) from `inference/timeseries/convert_*.go` into a general safetensors reader in **zonnx**. Unlocks the whole HF diffusion/vision ecosystem.
+  AC: parses LTX-2 19B sharded headers; enumerates tensor names/shapes/dtypes. `go test` in zonnx green.
+  repo: zonnx
+
+- [ ] T127.3.2 SafeTensors -> GGUF converter for the LTX-2 19B DiT (bf16/fp8/fp4)  Owner: TBD  Est: 5h  verifies: [infrastructure]
+  File: zonnx (convert_ltx2.go)
+  Emit GGUF from the **LTX-2 19B transformer shards only**. Map storage using the fp8 sub-format **confirmed in T127.1.0b (E4M3 vs E5M2)** -- do not assume. Handle the LTX-2 19B bf16 dev / distilled and fp8/fp4 variants. **LTX-2.3 22B is OUT of scope (see T127.8.1).**
+  Deps: T127.3.1, T127.1.0b
+  AC: produces a loadable GGUF for the 19B DiT; round-trip tensor shapes match the safetensors header.
+  repo: zonnx
+
+- [ ] T127.3.2b SafeTensors -> GGUF converter for the video VAE, audio VAE, and vocoder  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  File: zonnx (convert_ltx2_vae.go)
+  The DiT is not the only safetensors checkpoint: Phases 4 and 6 load the video VAE, audio VAE, and HiFi-GAN vocoder, whose weights also live in safetensors and need conversion. Extend the converter to emit GGUF for these three non-DiT components (conv/groupnorm/convtranspose weight keys). Without this, Phases 4/6 have no weights to load.
+  Deps: T127.3.1
+  AC: produces loadable GGUF for video VAE, audio VAE, and vocoder; shapes round-trip against the safetensors headers.
+  repo: zonnx
+
+- [ ] T127.3.3 GGUF tensor-name map for LTX-2 dual-stream keys  Owner: TBD  Est: 4h  verifies: [infrastructure]
+  File: model/gguf/arch.go (MapTensorName + ModelConfig fields)
+  Add canonical-name mapping for video keys (patchify_proj, transformer_blocks.N.{attn1,attn2,ff}, adaln_single, scale_shift_table, proj_out), audio keys (audio_* parallels), and cross-stream keys (audio_to_video_attn, video_to_audio_attn, av_ca_* adaln). **Map the LTX `adaln_single`/`scale_shift_table` layout onto the general AdaLN node's parameters in the builder mapping -- not into the AdaLN primitive.** Add ModelConfig fields: video/audio heads + dims, num_layers=48, cross_attention_dim 4096/2048, caption_channels 3840, rope_theta, vae_scale_factors=[8,32,32].
+  AC: `go test ./model/gguf/...` passes; a converted LTX-2 19B GGUF populates all config fields. HARDEST TASK of phase.
+
+- [ ] T127.3.4 Load real LTX-2 19B weights into the denoiser (replace fixtures) + first full-forward oracle match  Owner: TBD  Est: 4h  verifies: [UC-LTX01]
+  File: inference/arch_ltx2.go
+  Wire `tensorLookup` (`inference/builder_helpers.go:19`) to the converted GGUF; replace Phase-1 fixture latents/contexts with real weights.
+  Deps: T127.3.3, T127.3.2, T127.1.6
+  AC: **the full 48-block forward on REAL weights matches the PyTorch-oracle (which runs the real checkpoint) within per-op tolerance on the GB10 via Spark.** (This is where the "one full forward matches oracle" AC lives -- it requires real weights, which only exist here, not at T127.1.6.)
+
+#### E127.4: Video VAE Decode (Conv3D / ConvTranspose / GroupNorm, decode-only) -- Size: XL. Hardest: Conv3D + ConvTranspose3D forward parity under causal temporal padding
+
+- [ ] T127.4.1 Declare conv inference-only for this epic; add GroupNorm; track conv backward as deferred  Owner: TBD  Est: 5h  verifies: [UC-LTX03]
+  File: layers/core/conv2d.go (doc note), layers/normalization/group_norm.go, GitHub issue (conv backward)
+  Resolve the conv-backward contradiction explicitly: **the VAE is decode-only (never trained), so the inference path does NOT require Conv2d/Conv3D/ConvTranspose backward.** Declare the conv ops inference-only for E127 and file a tracked deferred issue "Conv2d/Conv3D/ConvTranspose backward for future VAE training" (general-purpose doctrine wants the primitive eventually; this epic does not gate on it). `conv2d.go:14` documents inference-only -- annotate this decision there. Add GroupNorm (the canonical VAE/UNet norm, currently MISSING -- only a bare string literal in a test); GroupNorm IS exercised in both forward and backward (it is a plain norm, not a conv) so it keeps the full gradcheck AC.
+  AC: GroupNorm passes gradcheck/OpInfo + GPU/CPU parity + PyTorch-oracle; Conv2d **forward**-parity (PyTorch-oracle forward + GPU/CPU parity) passes; conv-backward deferred issue filed and linked. **No task in this phase asserts both "decode-only sidesteps backward" AND "gradcheck passes" on the same conv op.**
+
+- [ ] T127.4.2 Add Conv3D node (forward-parity, inference-only)  Owner: TBD  Est: 6h  verifies: [UC-LTX03]
+  File: layers/core/conv3d.go
+  General 3D conv (causal temporal padding option: replicate-pad first frame by kernel-1, symmetric spatial). Unlocks video/volumetric models. Reference Conv1D (`layers/core/conv1d.go:19`) and Conv2d patterns. Inference-only per T127.4.1 (backward deferred).
+  AC: **forward**-parity -- GPU/CPU parity passes; PyTorch-oracle matches torch Conv3d (causal mode) within tolerance. (Backward deferred; no gradcheck gate.)
+
+- [ ] T127.4.3 Add ConvTranspose (2D/3D upsampling conv, forward-parity, inference-only)  Owner: TBD  Est: 6h  verifies: [UC-LTX03]
+  File: layers/core/conv_transpose.go
+  Transposed/upsampling conv for VAE decoders (currently MISSING entirely). Unlocks all convolutional decoders. Inference-only per T127.4.1. HARDEST TASK of phase.
+  AC: **forward**-parity -- GPU/CPU parity passes; PyTorch-oracle matches torch ConvTranspose within tolerance. (Backward deferred; no gradcheck gate.)
+
+- [ ] T127.4.4 Build the LTX-2 video VAE decoder (decode-only)  Owner: TBD  Est: 6h  verifies: [UC-LTX03]
+  File: layers/vision/ltx_vae_decode.go
+  Compose the causal 3D VAE decoder: latent_channels=128 -> RGB, block_out_channels [256,512,1024,2048], 32x spatial / 8x temporal upsample (vae_scale_factors=[8,32,32]), ResNet3D + GroupNorm + mid-block 3D attention. Decode-only (no VAE training) -- consistent with the inference-only conv decision in T127.4.1 (no contradiction: nothing here needs conv backward). Load weights from the VAE GGUF (T127.3.2b).
+  Deps: T127.4.1, T127.4.2, T127.4.3, T127.3.2b
+  AC: decoded frames match the reference VAE decode (per-pixel within tolerance) on a fixture latent; PyTorch-oracle parity on the decoder forward.
+
+- [ ] T127.4.5 End-to-end text-fixture -> video (no real text encoder yet)  Owner: TBD  Est: 3h  verifies: [UC-LTX02]
+  File: tests/architecture/ltx2_video_e2e_test.go
+  Denoiser (real weights) + scheduler + VAE decode, fed a fixed text-context fixture: produce coherent video frames vs the ComfyUI reference on the same seed/sigmas.
+  Deps: T127.4.4, T127.3.4, T127.2.4
+  AC: frames visually coherent vs reference; latent + decoded-frame parity within tolerance on the GB10 via Spark.
+
+#### E127.5: Text Encoder (Gemma3-12B) + Per-Stream Connector -- Size: M. Hardest: multi-layer feature extractor (all decoder layers -> mean-center -> flatten -> learned projection)
+
+- [ ] T127.5.1 Reuse the existing Gemma path as a frozen text encoder  Owner: TBD  Est: 4h  verifies: [UC-LTX04]
+  File: inference/arch_ltx2_text.go
+  Zerfoo already supports Gemma via GGUF (`registry_init.go`). Wire a frozen Gemma3-12B (hidden 3840, 48 layers) to emit per-layer hidden states for the conditioning pipeline. No new transformer needed -- reuse the Gemma builder. (Counts toward the resident-set budget in T127.7.3a.)
+  AC: Gemma encoder hidden states match the reference within tolerance; `go test` green.
+
+- [ ] T127.5.2 Multi-layer feature extractor + learned projection  Owner: TBD  Est: 4h  verifies: [UC-LTX04]
+  File: inference/arch_ltx2_text.go
+  Pull activations across ALL decoder layers ([B,T,D,L]), mean-center, flatten to [B,T,D*L], project via learned W (text_proj_in_factor=49) to D. Frozen after init.
+  Deps: T127.5.1
+  AC: PyTorch-oracle matches the extractor+projection within tolerance. HARDEST TASK of phase.
+
+- [ ] T127.5.3 Per-stream text connector (video 4096 / audio 2048)  Owner: TBD  Est: 4h  verifies: [UC-LTX04]
+  File: layers/vision/ltx_text_connector.go
+  2-layer bidirectional transformer connector with learnable registers/"thinking tokens"; separate connector per stream projecting 3840 -> 4096 (video) / 2048 (audio). Reuse the cross-attention + RMSNorm primitives.
+  Deps: T127.5.2, T127.1.3
+  AC: gradcheck/OpInfo + GPU/CPU parity + PyTorch-oracle within tolerance.
+
+- [ ] T127.5.4 Real-prompt -> video (full text path, no audio yet)  Owner: TBD  Est: 3h  verifies: [UC-LTX02]
+  File: tests/architecture/ltx2_text2video_test.go
+  Replace the text fixture with the real Gemma encoder + connector; generate video from a real prompt.
+  Deps: T127.5.3, T127.4.5
+  AC: prompt-conditioned video coherent vs ComfyUI reference on the same prompt; parity within tolerance on the GB10 via Spark.
+
+#### E127.6: Audio Stream + Cross-Modal Sync + Vocoder -- Size: XL. Hardest: bidirectional A/V cross-attention with temporal-only RoPE synchronization across all 48 blocks
+
+- [ ] T127.6.1 Audio VAE decoder (mel-spectrogram latents)  Owner: TBD  Est: 6h  verifies: [UC-LTX05]
+  File: layers/audio/ltx_audio_vae_decode.go
+  Causal audio VAE: latent_channels=8, base_channels=128, ch_mult [1,2,4], mel_bins=64, 16kHz, decode to stereo mel. Reuse `layers/audio/mel.go` + Conv1D/GroupNorm. Load weights from the audio-VAE GGUF (T127.3.2b).
+  Deps: T127.3.2b
+  AC: decoded mel matches reference within tolerance; PyTorch-oracle parity on the decoder forward.
+
+- [ ] T127.6.2 Modified HiFi-GAN vocoder (mel -> 24kHz stereo)  Owner: TBD  Est: 6h  verifies: [UC-LTX05]
+  File: layers/audio/ltx_vocoder.go
+  HiFi-GAN with doubled channels (stereo); ConvTranspose1D upsampling. Load weights from the vocoder GGUF (T127.3.2b).
+  Deps: T127.6.1, T127.4.3, T127.3.2b
+  AC: reconstructed waveform matches reference within tolerance; PyTorch-oracle parity.
+
+- [ ] T127.6.3 Wire the audio stream + bidirectional cross-modal attention end-to-end  Owner: TBD  Est: 6h  verifies: [UC-LTX05]
+  File: inference/arch_ltx2.go
+  Activate audio self-attn + audio text cross-attn + the bidirectional `audio_to_video_attn`/`video_to_audio_attn` in all 48 blocks with **temporal-only RoPE** in the cross-modal path (time-only sync). Joint denoise of video+audio latents.
+  Deps: T127.6.2, T127.5.4
+  AC: A/V latents jointly denoise; cross-modal attention matches PyTorch-oracle per-block within tolerance. HARDEST TASK of phase (temporal sync is a correctness landmine).
+
+- [ ] T127.6.4 Full text -> synchronized video+audio generation  Owner: TBD  Est: 4h  verifies: [UC-LTX02]
+  File: tests/architecture/ltx2_av_e2e_test.go
+  Complete pipeline: prompt -> Gemma+connector -> joint A/V denoise (bimodal CFG) -> video VAE + audio VAE + vocoder.
+  Deps: T127.6.3
+  AC: synchronized A/V output coherent vs ComfyUI reference on the same prompt/seed, on the GB10 via Spark.
+
+#### E127.7: Performance (Quantization + CUDA-Graph Capture) + Memory Budget + Parity -- Size: L. Hardest: generalizing the CUDA-graph capture gate to a static-shape predicate without regressing LLM decode capture
+
+- [ ] T127.7.1 Generalize CUDA-graph capture gate to a static-shape predicate  Owner: TBD  Est: 5h  verifies: [infrastructure]
+  File: ztensor/graph/cuda_graph.go (gate at cuda_graph.go:354-355)
+  The capture gate keys on `inputs[0]` last-axis > 1 (prefill skip; autoregressive decode is last-axis==1). Add a general "shapes-unchanged-across-replays" predicate so a fixed-shape diffusion step is capturable, **without relaxing the existing LLM decode gate** (guard behind a new predicate, not a loosened one).
+  **snapshotCache contract:** `NewCUDAGraphExecutor` (`cuda_graph.go:268`) takes `snapshotCache func(ctx context.Context) func()` and invokes it at `cuda_graph.go:401` as `restoreCache = g.snapshotCache(ctx)`. A no-op for diffusion (no growing KV cache to roll back) **must still return a non-nil restore closure (an empty `func(){}` is fine)** -- returning nil would be dereferenced on capture failure. Honor the closure contract; verify against the call site.
+  AC: LLM decode capture unchanged (existing tests green); a fixed-shape step is recognized as capturable; the diffusion snapshotCache returns a non-nil empty restore closure. HARDEST TASK of phase.
+  repo: ztensor
+
+- [ ] T127.7.2 CUDA-graph-capture one denoising step  Owner: TBD  Est: 5h  verifies: [UC-LTX02]
+  File: generate/diffusion/denoise.go
+  Wrap the denoiser plan in `NewCUDAGraphExecutor` (`ztensor/graph/cuda_graph.go:268`) and replay per step; feed new x_t/timestep into the pre-allocated fixed-shape buffer before replay. Pass the non-nil no-op snapshotCache from T127.7.1. Disable via env flag mirroring `ZERFOO_DISABLE_CUDA_GRAPH`.
+  Deps: T127.7.1, T127.2.3
+  AC: captured step replays correctly; per-step latency measured on the GB10 via Spark.
+
+- [ ] T127.7.3 Quantized denoiser inference (bf16 storage; fp8/fp4 path)  Owner: TBD  Est: 5h  verifies: [UC-LTX01]
+  File: inference/arch_ltx2.go
+  Run the 19B DiT with bf16 weight storage under GPUEngine[float32], plus the fp8 cuBLASLt path (sub-format from T127.1.0b). **VALIDATED ASSUMPTION (T127.1.0b):** GPU low-precision GEMM for n>1 (the denoise regime, NOT n==1 decode) dequantizes to f32 for most K-quants -- use the T127.1.0b measurement to decide whether f32 compute is acceptable or new kernels are needed; do NOT claim bf16-activation GPU compute (no native GPUEngine[bfloat16]).
+  Deps: T127.1.0b
+  AC: quantized forward matches bf16 reference within tolerance; per-storage-format DiT footprint recorded (feeds T127.7.3a).
+
+- [ ] T127.7.3a Full resident-set memory budget on GB10 unified memory  Owner: TBD  Est: 3h  verifies: [UC-LTX01]
+  File: docs/bench/ltx2-memory-budget.md
+  Size the FULL co-resident set on GB10 unified memory: DiT (43.3GB bf16 / 27.1GB fp8 / ~20GB fp4 verified HF sizes) + Gemma3-12B text encoder + video VAE + audio VAE + vocoder + CFG batch-expansion activation (2-3x in full mode). Determine what fits, what must be off-loaded/streamed, and the target resolution that fits each storage tier.
+  Deps: T127.7.3, T127.5.1, T127.4.4, T127.6.1, T127.6.2, T127.2.4
+  AC: a documented resident-set table per storage format (bf16/fp8/fp4) showing co-resident fit (or required off-load) at target resolution on GB10.
+
+- [ ] T127.7.4 End-to-end perf + parity benchmark vs GB10 PyTorch reference  Owner: TBD  Est: 4h  verifies: [UC-LTX02]
+  File: docs/bench/manifests/ltx2-infer.yaml, docs/bench/benchmarks.md
+  Submit via Spark (per Hardware doctrine -- NOT interactive SSH). Measure sec/step and total generation time vs the LTX-2 **PyTorch/ComfyUI** reference on the same GB10, **reported separately for full-CFG 40-step and distilled-CFG-off 8-step regimes** (the CFG batch-expansion cost makes these sharply different). Record visual/audio coherence parity. **Ollama is NOT a baseline.**
+  Deps: T127.7.2, T127.7.3a, T127.6.4
+  AC: documented sec/step and end-to-end latency for both regimes vs the PyTorch reference; parity (latent + decoded output) within tolerance. **Done is benchmarked + parity-verified on the GB10 via Spark.**
+
+#### E127.8: LTX-2.3 (22B) Precondition -- DEFERRED (Size: S, gated on independent header read)
+
+- [ ] T127.8.1 Independently read the ltx-2.3-22b safetensors header before ANY 2.3 work  Owner: TBD  Est: 2h  verifies: [infrastructure]
+  File: docs/devlog.md (2.3 geometry finding)
+  **Precondition for any LTX-2.3 builder/converter work.** Independently read the ltx-2.3-22b safetensors header (byte-range via huggingface_hub, NOT WebFetch) and confirm 48L / video inner 4096 / audio inner 2048 (and any 2.3-specific config) BEFORE sizing or scheduling 2.3 support. The verifier marked the "2.3 geometry identical to 2" claim UNCERTAIN; this task is the gate. Until it passes, 2.3 stays Deferred (ADR-092) and nothing downstream may assume geometry parity.
+  AC: 2.3 header read and geometry recorded; explicit go/no-go on whether 2.3 reuses the LTX-2 19B builder or needs a distinct config. No 2.3 builder code lands before this.
+
+### E127 Waves
+
+> Pre-wave note: T127.1.0a (oracle harness coverage), T127.1.0b (fp8/n>1 spike), and T127.1.0c (PyTorch reference + fixture generator) are **gating infrastructure** -- they must land before the op-parity ACs and the converter mapping they unblock. T127.1.4 (SiLU node promotion) is generic tidy NOT on the LTX critical path (LTX FFN is gelu-approximate, and Gelu already exists); it is removed from the critical Wave E127-1 and parked as opportunistic cleanup so it does not contend for the first-milestone agent budget.
+
+#### Wave E127-0: Gating infrastructure (3 agents)
+T127.1.0a (oracle harness), T127.1.0b (fp8/n>1 spike), T127.1.0c (PyTorch reference + fixtures) in parallel. Blocks the op-parity ACs and the Phase-3 converter mapping.
+
+#### Wave E127-1: DiT denoiser core + conditioning primitives (5 agents)
+T127.1.1, T127.1.2, T127.1.3 in parallel (each gated on T127.1.0a); then T127.1.5 -> T127.1.6 -> T127.1.7.
+
+#### Wave E127-2: Scheduler + loader (parallel tracks) (6 agents)
+Track A (scheduler): T127.2.1 -> T127.2.2 -> T127.2.3 -> T127.2.4. Track B (loader, zonnx): T127.3.1 -> {T127.3.2 (gated on T127.1.0b), T127.3.2b} in parallel; T127.3.3 in zerfoo; converge at T127.3.4.
+
+#### Wave E127-3: VAE decode primitives (5 agents)
+T127.4.1, T127.4.2, T127.4.3 in parallel (forward-parity ACs; GroupNorm keeps gradcheck, conv ops forward-only); then T127.4.4 -> T127.4.5.
+
+#### Wave E127-4: Text encoder (3 agents)
+T127.5.1 -> T127.5.2 -> T127.5.3 -> T127.5.4.
+
+#### Wave E127-5: Audio + cross-modal (4 agents)
+T127.6.1 -> T127.6.2; T127.6.3 -> T127.6.4.
+
+#### Wave E127-6: Perf + memory + parity (4 agents)
+T127.7.1 (ztensor) -> T127.7.2; T127.7.3 -> T127.7.3a; converge at T127.7.4.
+
+#### Wave E127-7 (DEFERRED): LTX-2.3 precondition (1 agent)
+T127.8.1 only -- gates all future 2.3 work; not scheduled until LTX-2 19B is benchmarked + parity-verified.
+
+### E127 opportunistic cleanup (not on the critical path)
+
+- [ ] T127.C1 Promote SiLU to a standalone graph node  Owner: TBD  Est: 1h  verifies: [infrastructure]
+  File: layers/activations/silu.go
+  Wrap `functional.SiLU` (`layers/functional/activations.go:43`) as a registry-visible `graph.Node` (today SiLU only exists functionally + inlined in SSM blocks). General cleanup usable by any block. **NOT on the LTX-2 critical path** -- LTX FFN is gelu-approximate; do not let this contend for the DiT-first milestone budget. Land opportunistically.
+  AC: gradcheck/OpInfo passes; GPU/CPU parity passes; `go test ./layers/activations/...` green.
+
+### Appendix: Use Case IDs (register in plan.md "Use Case IDs Referenced" table)
+
+| ID | Name | Description |
+|----|------|-------------|
+| UC-LTX01 | LTX-2 DiT denoiser inference | Run the 48-block dual-stream audio/video DiT denoiser forward in zerfoo, parity vs the GB10 PyTorch reference |
+| UC-LTX02 | LTX-2 diffusion generation loop | Flow-matching Euler denoise loop (40-step full / 8-step distilled) with bimodal CFG and CUDA-graph capture, end-to-end generation |
+| UC-LTX03 | Video VAE decode (Conv3D/ConvTranspose/GroupNorm) | Decode-only causal 3D convolutional VAE from latents to RGB frames |
+| UC-LTX04 | Gemma3-12B text conditioning | Frozen Gemma3-12B multi-layer feature extractor + per-stream connector producing video/audio conditioning |
+| UC-LTX05 | Synchronized audio stream + vocoder | Audio VAE + HiFi-GAN vocoder + bidirectional cross-modal A/V attention for synchronized audio output |
