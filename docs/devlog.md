@@ -2,6 +2,62 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-06-16: LTX-2 (E127) Phase-0 de-risk -- fp8 = F8_E4M3, ADR-091 oracle harness is op-generic (lives in ztensor)
+
+**Type:** finding
+**Tags:** ltx-2, e127, adr-092, diffusion, fp8, e4m3, safetensors, pytorch-oracle, ztensor, phase-0, #887, #888
+
+**Context:** After E127 (LTX-2 diffusion inference epic) + ADR-092 landed (PR #886),
+ran the autonomously-doable front of Phase 0 -- the "investigate-first" lines of
+T127.1.0a (oracle harness) and T127.1.0b (fp8 sub-format) -- to flip two
+`[uncertain]` assumptions before any implementation.
+
+**Finding 1 -- fp8 sub-format is F8_E4M3 (was an open ASSUMPTION).**
+Method: `huggingface_hub` byte-range read of the safetensors header (first 8 bytes
+= little-endian u64 header length, then the JSON header), scanning `"dtype"`
+values -- no full download, no WebFetch.
+- `Lightricks/LTX-2 :: ltx-2-19b-dev-fp8.safetensors` (27 GB): **1,176 F8_E4M3, 0
+  F8_E5M2**; header also carries 2,546 F32 + 2,682 BF16.
+- `Lightricks/LTX-2.3-fp8 :: ltx-2.3-22b-dev-fp8.safetensors`: **1,496 F8_E4M3, 0
+  F8_E5M2** (3,282 F32 + 4,161 BF16).
+- Conclusion: Lightricks ships fp8 as **F8_E4M3**, and checkpoints are
+  **mixed-precision (F32 + BF16 + F8_E4M3)** -- norms/embeds stay high-precision,
+  matmul weights are fp8. The T127.3.2 converter must preserve per-tensor dtype,
+  not assume one global precision. Unblocks the converter storage mapping.
+
+**Finding 2 -- repo layout correction (raw research was wrong).** The merged
+research claimed "no `model.safetensors.index.json` in any Lightricks LTX repo;
+each checkpoint single-file." That conflated the FLAT single-file LTX-2.3 line
+with the LTX-2 19B diffusers layout. Verified via the HF tree API: `Lightricks/LTX-2`
+ships bf16 in the `transformer/` subfolder as **8 shards +
+`diffusion_pytorch_model.safetensors.index.json`**, while the **quantized
+variants are flat single-files at repo root** (`ltx-2-19b-dev-fp8.safetensors`
+27 GB, `ltx-2-19b-dev-fp4.safetensors` 20 GB, `ltx-2-19b-distilled-fp8.safetensors`).
+The merged epic already said "sharded," so docs were correct; the converter task
+(T127.3.2) now records both layouts.
+
+**Finding 3 -- ADR-091 PyTorch-oracle harness EXISTS, is op-generic, and lives in
+ztensor (not zerfoo).** Location: `ztensor/testing/oracle/` (bundle.go,
+generate.go, torchmap.go, cmd/oracle-gen) + `ztensor/testing/gradcheck/registry.go`
++ `ztensor/scripts/oracle/run_oracle.py` (replays bundles in NGC PyTorch on GB10).
+Adding an op is a 2-step registration -- a `gradcheck.Registry()` entry + a
+`torchMap` PyTorch expression, lockstep-enforced by a cross-check test. 26 ops
+registered today (elementwise, activations, MatMul/Transpose/Reshape, Softmax,
+LayerNorm, reductions); **none** of conv/groupnorm/adaln/attn. So T127.1.0a is
+real but bounded: ~**M (6-8h)** to add 6 wrappers + registry entries + torch
+exprs (Conv3D templates from Conv1D/Conv2D; GroupNorm from LayerNorm; AdaLN and
+CrossAttn need custom backward). The epic's `tests/oracle/` zerfoo path was wrong
+and has been corrected to the ztensor harness.
+
+**Side-effects this session:** filed #887 (Conv2d/Conv3D/ConvTranspose backward
+for future VAE training -- deferred) and #888 (LTX-2.3 22B geometry header-read
+gate, T127.8.1). Updated E127 (T127.1.0a/0b/3.2) and ADR-092 to reflect the two
+resolved assumptions.
+
+**Still hardware-gated (need GB10/Spark, not done here):** T127.1.0b PART 2 (n>1
+fp8/Q4_K GEMM micro-benchmark -- the load-bearing perf risk) and T127.1.0c
+(provision the LTX2 diffusers dev build + fixture generator on Spark).
+
 ## 2026-06-11: GPU training hardening close-out -- device-resident gradient accumulation (#855) validated end-to-end on GB10 f32
 
 **Type:** finding
