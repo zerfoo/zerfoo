@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.53.1](https://github.com/zerfoo/zerfoo/compare/v1.53.0...v1.53.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **training:** bf16 device-resident gradient accumulation uses the engine ([f8570db](https://github.com/zerfoo/zerfoo/commit/f8570dbfdf31d8f79d8eb1045c8515b0417b53a5))
+
 ## [1.53.0](https://github.com/zerfoo/zerfoo/compare/v1.52.0...v1.53.0) (2026-06-17)
 
 
