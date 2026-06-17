@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"math/rand/v2"
 
+	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
-	"github.com/zerfoo/zerfoo/model"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 	"github.com/zerfoo/ztensor/types"
@@ -154,13 +154,33 @@ func (l *Linear[T]) Backward(ctx context.Context, mode types.BackwardMode, outpu
 		return nil, err
 	}
 
-	transposedInput, err := l.engine.Transpose(ctx, inputReshaped, []int{1, 0})
-	if err != nil {
-		return nil, err
-	}
-	dw, err := l.engine.MatMul(ctx, transposedInput, gradReshaped)
-	if err != nil {
-		return nil, err
+	// Gradient with respect to weights: dW = X^T @ grad.
+	//
+	// Mirror the dx path (ADR 075 L1/L4): when the engine can multiply by a
+	// transposed A directly (MatMulTransposeA), use it instead of an explicit
+	// Transpose of X. This is required for the bf16 GPU path -- GPUEngine.Transpose
+	// routes non-float32 types to the CPU engine, so an explicit bf16 transpose
+	// would force a D2H/H2D round trip per step (breaking CUDA-graph capture and
+	// tensor-core throughput). The explicit Transpose+MatMul fallback below is
+	// byte-identical for engines without the path (notably the CPU engine), so the
+	// CPU result is unchanged.
+	var dw *tensor.TensorNumeric[T]
+	if ta, ok := l.engine.(interface {
+		MatMulTransposeA(context.Context, *tensor.TensorNumeric[T], *tensor.TensorNumeric[T], ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error)
+	}); ok {
+		dw, err = ta.MatMulTransposeA(ctx, inputReshaped, gradReshaped)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		transposedInput, terr := l.engine.Transpose(ctx, inputReshaped, []int{1, 0})
+		if terr != nil {
+			return nil, terr
+		}
+		dw, err = l.engine.MatMul(ctx, transposedInput, gradReshaped)
+		if err != nil {
+			return nil, err
+		}
 	}
 	l.weights.Gradient, err = l.engine.Add(ctx, l.weights.Gradient, dw, l.weights.Gradient)
 	if err != nil {
