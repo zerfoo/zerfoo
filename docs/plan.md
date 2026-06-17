@@ -2657,6 +2657,26 @@ Task details removed during /tidy --apply. See git history for full lists.
 
 ## Progress Log
 
+### 2026-06-17: E127 (LTX-2 diffusion) -- session handover; DiT/VAE primitives landed
+
+- **Change summary.** Advanced E127 from 0/35 PLANNED to ~5/35 IN PROGRESS. The
+  Phase-0 de-risk plus the general diffusion-DiT/VAE primitive set landed and is
+  CPU-verified. 9 PRs merged and 2 issues filed this session.
+- **Merged (zerfoo):** #886 E127 epic + ADR-092; #894 `cmd/bench_gemm` + fp8/Q4_K
+  GEMM-spike manifest; #896 `Conv3d` + `ConvTranspose3d` forward layers; #898
+  `GroupNormalization` production layer + `LTXVAEDecoderSkeleton`; #897/#899 plan
+  tracking.
+- **Merged (ztensor):** #159 GroupNorm gradcheck+oracle op; #164 CrossAttention +
+  AdaLN + TimestepEmbed gradcheck+oracle ops.
+- **Issues filed:** #887 (Conv2d/Conv3D/ConvTranspose backward for future VAE
+  training -- deferred); #888 (LTX-2.3 22B geometry header-read gate, T127.8.1).
+- **Tasks completed:** T127.1.0a (oracle op-classes: 4 in ztensor, 2 conv rehomed
+  to forward-parity layers), T127.4.1 (conv inference-only + GroupNorm production
+  layer), T127.4.2 (Conv3d forward), T127.4.3 (ConvTranspose3d forward). T127.1.0b
+  PART 1 (fp8 = F8_E4M3) done, PART 2 GB10-gated. T127.4.4 partial (skeleton only).
+- **ADRs:** ADR-092 (DiT-first, general primitives) added in #886; no new ADR this run.
+- See "Hand-off Notes" (E127 entry) for the next-session action list and gotchas.
+
 ### 2026-04-27: Standalone plan files folded into plan.md
 
 - **Change summary.** Folded 7 standalone plan files into plan.md as the
@@ -2794,6 +2814,55 @@ See git history for full changelog.
   Key differences from Gemma 3: GELU (not SwiGLU), K=V in global layers,
   hybrid attention with 2 RoPE configs per model, MoE variant with 128 experts.
   Vision and audio encoders are deferred (multimodal epic). ADR-085.
+- **E127 (LTX-2 diffusion A/V) -- state as of 2026-06-17 (~5/35).** Strategy is
+  DiT-first (ADR-092). LTX-2 is a diffusion model, NOT an autoregressive LLM; the
+  parity baseline is the LTX-2 PyTorch/ComfyUI reference on the GB10 via Spark,
+  NOT Ollama. Numerical parity = within the ADR-091 PyTorch-oracle tolerance band,
+  not bit-exactness.
+  - **Landed + CPU-verified primitives:**
+    * Oracle ops (ztensor `testing/gradcheck/ops.go` + `testing/oracle/torchmap.go`):
+      GroupNorm, CrossAttention, AdaLN, TimestepEmbed. gradcheck = analytic backward
+      vs finite-difference on CPU; the torch-oracle replay runs on the GB10.
+    * Forward-only conv layers (zerfoo): `layers/core/conv3d.go` (Conv3d),
+      `layers/core/conv_transpose.go` (ConvTranspose3d). Verified vs a naive
+      reference + an adjoint cross-check.
+    * `layers/normalization/group_norm.go` (GroupNormalization, fwd+bwd, FD-verified).
+    * `layers/vision/ltx_vae_decode.go` (LTXVAEDecoderSkeleton -- composition
+      demonstrator with FIXTURE weights; NOT the weight-accurate VAE).
+    * `cmd/bench_gemm` + `docs/bench/manifests/ltx2-fp8-spike.yaml` (GEMM-spike tool).
+  - **Next-session actions (CPU-doable first):**
+    1. Scheduler T127.2.x: flow-matching Euler denoise loop + sigma schedules in
+       `generate/diffusion/`. Other non-DiT core; unblocks a fixture->denoise->decode path.
+    2. GroupNorm registry wiring (BuildGroupNormalization exists, not registered).
+    3. SafeTensors->GGUF converter T127.3.x in zonnx (DiT + VAEs + vocoder).
+    4. Weight-accurate VAE decoder T127.4.4 (needs converter T127.3.2b + real config).
+  - **GB10-gated (DGX host via Spark, not interactive ssh):** T127.1.0b PART 2
+    (n>1 fp8/Q4_K GEMM sec/op + kernel go/no-go); T127.1.0c (provision the LTX2
+    diffusers dev build + fixture generator); torch-oracle replays for the new op
+    classes; GPU/CPU parity.
+  - **Gotchas / landmines:**
+    * The PyTorch-oracle + gradcheck harness lives in the **ztensor** repo, NOT
+      zerfoo (ztensor cannot import zerfoo). Add an op = gradcheck registry entry +
+      torchMap entry (lockstep-enforced by a cross-check test).
+    * Conv ops are FORWARD-ONLY (backward deferred, #887). ConvTranspose3d supports
+      groups=1 only (errors otherwise).
+    * Conv GGUF-registry wiring is blocked on a name collision: Conv2d already
+      registers "Conv"; a rank-dispatch builder is needed before Conv3d registers.
+    * fp8 = **F8_E4M3**; checkpoints are mixed-precision F32 + BF16 + F8_E4M3 (the
+      converter must preserve per-tensor dtype). LTX-2 19B ships bf16 as a sharded
+      `transformer/` (8 shards + index.json) plus flat fp8/fp4 single-files at repo
+      root. Repos: `Lightricks/LTX-2` (19B, in scope); `Lightricks/LTX-2.3`/`-fp8`
+      (22B, OUT of scope until #888 header read).
+    * Bench binaries build NATIVELY on the GB10 host (CGO_ENABLED=0, purego);
+      cross-compiling from darwin fails on purego's linux-only dlopen relocations.
+    * Branch hygiene: this session's edits repeatedly began on stray local branches
+      (fix/bf16-*). ALWAYS branch from `origin/main` per task and confirm
+      `git log origin/main..HEAD` shows only your own commit before opening a PR.
+  - **Verified geometry (ADR-092):** 48 DiT blocks; video inner 4096 (32x128),
+    audio 2048 (32x64); caption 3840; latent 128ch; patch_size=1 (DiT ingests VAE
+    latents directly); VAE vae_scale_factors=[8,32,32]; FlowMatchEuler 40-step full
+    / 8-step distilled; Gemma3-12B text encoder. UNVERIFIED assumptions: n>1 GEMM
+    perf in the denoise regime; LTX-2.3 22B geometry.
 - E86 (PyTorch parity): The golden file generator is tests/golden/generate_golden.py.
   Run `python3 tests/golden/generate_golden.py` to regenerate all golden files.
   Go tests are in tests/parity/layer_parity_test.go. Pattern for adding a new layer:
