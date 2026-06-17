@@ -4113,15 +4113,16 @@ New code needed (all general primitives):
 
 #### E127.1: Oracle/Fixture Harness + DiT Denoiser Core + Conditioning Primitives (DiT-first) -- Size: L. Hardest: AdaLN-Zero cross-modality modulation node (zero-init, 6-vector split, timestep-conditioned)
 
-- [ ] T127.1.0a Extend the ADR-091 PyTorch-oracle harness to the new op classes  Owner: TBD  Est: 4h  verifies: [infrastructure]
-  File: tests/oracle/ (ADR-091 harness extension)
-  CONFIRM whether the ADR-091 oracle harness is op-generic; if it only covers existing LLM ops, extend it to generate torch reference tensors for: conv3d, conv_transpose, group_norm, adaln-zero, timestep/sinusoidal embed, and cross-attention. Without this, every op-parity AC in E127 references infrastructure that does not exist.
-  AC: harness emits reference tensors for all six new op classes; a smoke run produces a comparable tensor for each. `go test ./tests/oracle/...` green (or harness doc confirms op-generic).
+- [ ] T127.1.0a Extend the ADR-091 PyTorch-oracle harness to the new op classes  Owner: TBD  Est: 6-8h (M)  verifies: [infrastructure]
+  File: ztensor `testing/oracle/` (bundle.go, generate.go, torchmap.go) + `testing/gradcheck/registry.go` + `scripts/oracle/run_oracle.py` -- repo: **ztensor**, NOT zerfoo
+  RESOLVED (Phase-0 audit 2026-06-16): the harness EXISTS and IS op-generic -- adding an op is a 2-step registration (a `gradcheck.Registry()` entry in `registry.go` + a `torchMap` PyTorch expression in `torchmap.go`, lockstep-enforced by a cross-check test); references are generated on-the-fly by `cmd/oracle-gen` and replayed in NGC PyTorch on GB10. 26 ops registered today, **none** of conv/groupnorm/adaln/attn. Remaining work: add 6 op wrappers + registry entries + torch exprs for conv3d, conv_transpose, group_norm, adaln-zero, timestep/sinusoidal embed, cross-attention (Conv3D templates from Conv1D/Conv2D; GroupNorm templates from LayerNorm; AdaLN/CrossAttn need custom backward). NOTE: this is ztensor work -- the earlier `tests/oracle/` zerfoo path was wrong.
+  AC: `oracle-gen` emits bundles for all six new op classes and `run_oracle.py` reports per-op tolerance pass on GB10; ztensor gradcheck registry <-> torchmap lockstep test green.
 
 - [ ] T127.1.0b fp8 sub-format + n>1 low-precision GEMM spike (de-risk converter + perf early)  Owner: TBD  Est: 3h  verifies: [infrastructure]
   File: docs/devlog.md (spike findings), docs/bench/manifests/ltx2-fp8-spike.yaml
-  Read one real fp8 LTX-2 19B shard header via a **huggingface_hub byte-range request (NOT WebFetch)** to confirm **E4M3FN vs E5M2** before the converter storage mapping is committed (T127.3.2). Micro-benchmark one n>1 fp8 GEMM and one n>1 Q4_K GEMM on the GB10 via Spark to size whether the denoise-regime dequant-to-f32 path is acceptable or new kernels are needed. This is the load-bearing perf risk; surface it now, not in Phase 7.
-  AC: fp8 sub-format confirmed and recorded; n>1 fp8/Q4_K GEMM sec/op measured on GB10; go/no-go note on whether new kernels are required for the denoise regime.
+  PART 1 -- DONE (2026-06-16): fp8 sub-format confirmed **F8_E4M3** via `huggingface_hub` byte-range header read of `ltx-2-19b-dev-fp8.safetensors` (1,176 F8_E4M3 tensors, 0 E5M2). Checkpoints are **mixed-precision F32 + BF16 + F8_E4M3** (norms/embeds high-precision, matmul weights fp8); LTX-2.3-fp8 matches. Recorded in docs/devlog.md. The converter storage mapping (T127.3.2) may now be committed against E4M3.
+  PART 2 -- REMAINING (hardware-gated, GB10/Spark): micro-benchmark one n>1 fp8 GEMM and one n>1 Q4_K GEMM on the GB10 via Spark to size whether the denoise-regime dequant-to-f32 path is acceptable or new kernels are needed. This is the load-bearing perf risk.
+  AC: ~~fp8 sub-format confirmed and recorded~~ DONE; n>1 fp8/Q4_K GEMM sec/op measured on GB10; go/no-go note on whether new kernels are required for the denoise regime.
 
 - [ ] T127.1.0c Provision + pin the PyTorch/diffusers reference + fixture generator on Spark  Owner: TBD  Est: 3h  verifies: [infrastructure]
   File: docs/bench/manifests/ltx2-reference.yaml, scripts/ltx2-fixtures.py
@@ -4199,7 +4200,7 @@ New code needed (all general primitives):
 
 - [ ] T127.3.2 SafeTensors -> GGUF converter for the LTX-2 19B DiT (bf16/fp8/fp4)  Owner: TBD  Est: 5h  verifies: [infrastructure]
   File: zonnx (convert_ltx2.go)
-  Emit GGUF from the **LTX-2 19B transformer shards only**. Map storage using the fp8 sub-format **confirmed in T127.1.0b (E4M3 vs E5M2)** -- do not assume. Handle the LTX-2 19B bf16 dev / distilled and fp8/fp4 variants. **LTX-2.3 22B is OUT of scope (see T127.8.1).**
+  Emit GGUF from the **LTX-2 19B transformer**. Storage mapping: fp8 = **F8_E4M3** (confirmed T127.1.0b), and checkpoints are **mixed-precision F32 + BF16 + F8_E4M3** so the converter must preserve per-tensor dtype, not assume one global precision. Repo layout (verified): bf16 lives in the diffusers `transformer/` subfolder as 8 shards + `diffusion_pytorch_model.safetensors.index.json`, while quantized variants are flat single-files at repo root (`ltx-2-19b-dev-fp8.safetensors` 27 GB, `ltx-2-19b-dev-fp4.safetensors` 20 GB, `ltx-2-19b-distilled-fp8.safetensors`). **LTX-2.3 22B is OUT of scope (see T127.8.1).**
   Deps: T127.3.1, T127.1.0b
   AC: produces a loadable GGUF for the 19B DiT; round-trip tensor shapes match the safetensors header.
   repo: zonnx

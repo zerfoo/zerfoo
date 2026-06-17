@@ -60,11 +60,15 @@ FlowMatchEuler, 40-step full / 8-step distilled, Gemma3-12B encoder (hidden
 3840), VAE `vae_scale_factors=[8,32,32]` with 128-latent, audio VAE latent 8, and
 crucially **`patch_size=patch_size_t=audio_patch_size=audio_patch_size_t=1`** --
 the DiT ingests VAE latents directly with NO spatial patch folding; all spatial
-compression lives in the VAE. Three things the research could NOT independently
+compression lives in the VAE. Two things the research could NOT independently
 verify are carried as explicit "ASSUMPTION -- validate in T127.x" items, not
-asserted facts: (1) the fp8 sub-format (E4M3FN vs E5M2; binary header unreadable
-via WebFetch); (2) whether n>1 low-precision GPU GEMM at the denoise regime needs
-new kernels; (3) LTX-2.3 22B geometry (its binary header could not be re-fetched).
+asserted facts: (1) whether n>1 low-precision GPU GEMM at the denoise regime
+needs new kernels (hardware-gated -- GB10/Spark); (2) LTX-2.3 22B geometry (its
+binary header could not be re-fetched). A third -- the fp8 sub-format -- was
+**RESOLVED in Phase-0** (2026-06-16): a `huggingface_hub` byte-range header read
+of `ltx-2-19b-dev-fp8.safetensors` confirmed **F8_E4M3** (1,176 F8_E4M3 tensors,
+0 E5M2; mixed-precision F32 + BF16 + F8_E4M3), matched by the LTX-2.3-fp8
+checkpoint. Recorded in docs/devlog.md.
 
 The central tension is **breadth vs. bandwidth**: the full LTX-2 pipeline is a
 large surface (DiT + 2 VAEs + vocoder + text encoder + connectors + scheduler +
@@ -199,8 +203,9 @@ performance story lives.
   only. Conv2d/Conv3D/ConvTranspose **backward** is a known gap, tracked as a
   separate deferred issue; the conv ops are inference-only here and gated on
   forward-parity, not gradcheck.
-- fp8 sub-format (E4M3FN vs E5M2) confirmation is an explicit validate-before-use
-  task in Phase 0/3 (byte-range header read), not an assumption.
+- fp8 sub-format: **RESOLVED to F8_E4M3** (Phase-0 byte-range header read,
+  2026-06-16; mixed-precision F32 + BF16 + F8_E4M3). No longer an open item;
+  recorded in docs/devlog.md.
 
 ## Alternatives Considered
 
