@@ -1,14 +1,22 @@
 # GPU parity test container.
 #
-# Multi-stage build: compiles a static test binary in the builder stage,
+# Multi-stage build: compiles the parity test binary in the builder stage,
 # then copies it into a minimal Ubuntu 24.04 runtime image. CUDA libs are
 # mounted from the host at runtime (see gpu-parity.yaml manifest).
 #
 # Build:
 #   docker build --platform linux/arm64 -f tests/parity/Containerfile -t ghcr.io/zerfoo/zerfoo-parity:latest .
 #
-# The test binary is built with CGO_ENABLED=0 — GPU acceleration is loaded
-# at runtime via purego/dlopen from host-mounted /usr/local/cuda.
+# CGO is ENABLED but the build needs NO CUDA toolkit or cutlass headers
+# (issue #902). The binary is built WITHOUT the `cuda` build tag, so:
+#   - internal/cuda selects the cgo dlopen path (purego_linux_arm64_cgo.go),
+#     which resolves dlopen/dlsym at link time (the CGO-free !cgo path's
+#     //go:linkname runtime.dlopen is unresolvable in a static binary --
+#     the original `-tags cuda` + CGO_ENABLED=0 combination did not link).
+#   - ztensor selects its `!cuda` purego kernel bindings, which dlopen the
+#     real CUDA kernels at runtime from the host-mounted /usr/local/cuda and
+#     /opt/zerfoo/lib (see gpu-parity.yaml). No CUDA/cutlass at build time.
+# A plain gcc (already in golang:1.26-bookworm) satisfies CGO.
 
 # ── Build stage ──────────────────────────────────────────────────────────────
 FROM golang:1.26-bookworm AS build
@@ -21,9 +29,10 @@ RUN go mod download
 
 COPY . .
 
-# Compile the parity test binary for linux/arm64.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-    go test -c -tags cuda -trimpath \
+# Compile the parity test binary for linux/arm64. CGO on, no `cuda` tag
+# (issue #902): cgo dlopen path links; CUDA kernels load at runtime via dlopen.
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=arm64 \
+    go test -c -trimpath \
     -o /out/parity-test ./tests/parity/
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
