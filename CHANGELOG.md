@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.54.0](https://github.com/zerfoo/zerfoo/compare/v1.53.1...v1.54.0) (2026-06-18)
+
+
+### Features
+
+* **bench:** bench_gemm + ltx2-fp8-spike manifest (E127/T127.1.0b) ([92909be](https://github.com/zerfoo/zerfoo/commit/92909be9f97b5432c08f31d29cc08c97bbc5e48f))
+* **layers:** Conv3d + ConvTranspose3d forward (E127/T127.4.2-4.3) ([374b807](https://github.com/zerfoo/zerfoo/commit/374b807bcb50585c5f91e531f355bcb5d87fc618))
+* **layers:** GroupNormalization layer + LTX-2 VAE decoder skeleton (E127) ([7a5ffc8](https://github.com/zerfoo/zerfoo/commit/7a5ffc88b641128fcc5dec4b50659c2bc0495357))
+
+
+### Bug Fixes
+
+* **optimizer:** keep AdamW grad-norm reduction on-device (T11.8) ([39750c7](https://github.com/zerfoo/zerfoo/commit/39750c783fa647b171523cf5129cf33148539bc9))
+* **parity:** build GPU parity container with CGO, no cuda tag ([#902](https://github.com/zerfoo/zerfoo/issues/902)) ([58731e9](https://github.com/zerfoo/zerfoo/commit/58731e939211e252e20da4d2ac223a0db9184d56))
+
 ## [1.53.1](https://github.com/zerfoo/zerfoo/compare/v1.53.0...v1.53.1) (2026-06-17)
 
 
