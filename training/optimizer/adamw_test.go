@@ -525,6 +525,75 @@ func TestAdamW_Step_GradientClippingActuallyClips(t *testing.T) {
 	testutils.AssertFloatEqual(t, 1.0, clippedNorm, 1e-5, "Clipped gradient norm should be 1.0")
 }
 
+// TestAdamW_GuardClip_MultiDimReducesAllAxes pins the T11.8 invariant: the
+// gradient-norm reduction must sum over EVERY element of a multi-dimensional
+// gradient, not just one axis/stripe. The fix reshapes each gradient to rank-1
+// and reduces axis 0 (on-device when GPU-resident); this test proves that the
+// reshape-then-reduce path still computes the global norm over all axes on a
+// 2-D gradient, where a single-last-axis reduction (or a stale .Data()[0] of a
+// non-scalar result) would silently use only the first row and clip wrongly.
+func TestAdamW_GuardClip_MultiDimReducesAllAxes(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+
+	adamw := NewAdamW[float32](engine, 0.01, 0.9, 0.999, 1e-8, 0.0)
+	adamw.SetMaxGradNorm(1.0)
+
+	// 2-D gradient: global norm over ALL elements = sqrt(3^2+0+0+4^2) = 5.0.
+	// A last-axis-only reduction would see row sums [3,4] and mis-scale.
+	value, err := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
+	testutils.AssertNoError(t, err, "Failed to create value tensor")
+	gradient, err := tensor.New[float32]([]int{2, 2}, []float32{3, 0, 0, 4})
+	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
+
+	param, err := graph.NewParameter("w", value, tensor.New[float32])
+	testutils.AssertNoError(t, err, "Failed to create parameter")
+	param.Gradient = gradient
+
+	err = adamw.guardAndClipGradients(context.Background(), []*graph.Parameter[float32]{param})
+	testutils.AssertNoError(t, err, "guardAndClipGradients should not error")
+
+	// scale = MaxGradNorm/globalNorm = 1/5 = 0.2 applied to every element.
+	clipped := param.Gradient.Data()
+	want := []float32{0.6, 0.0, 0.0, 0.8}
+	for i, w := range want {
+		testutils.AssertFloatEqual(t, float64(w), float64(clipped[i]), 1e-5,
+			"clipped gradient element should use the all-axes global norm")
+	}
+	clippedNorm := 0.0
+	for _, v := range clipped {
+		clippedNorm += float64(v) * float64(v)
+	}
+	testutils.AssertFloatEqual(t, 1.0, math.Sqrt(clippedNorm), 1e-5,
+		"clipped global norm should be 1.0")
+}
+
+// TestAdamW_GuardClip_MultiDimDetectsNaNAnyAxis ensures NaN/Inf detection still
+// inspects the whole gradient after the T11.8 reshape: a non-finite value in a
+// LATER row (not the first stripe) must still be detected. A reduction that
+// collapsed only one axis and read .Data()[0] would miss it.
+func TestAdamW_GuardClip_MultiDimDetectsNaNAnyAxis(t *testing.T) {
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine[float32](ops)
+	adamw := NewAdamW[float32](engine, 0.01, 0.9, 0.999, 1e-8, 0.0)
+	adamw.SetMaxGradNorm(1.0)
+
+	value, err := tensor.New[float32]([]int{2, 2}, []float32{1, 2, 3, 4})
+	testutils.AssertNoError(t, err, "Failed to create value tensor")
+	// NaN sits at [1,1] -- the last element, deep past the first stripe.
+	gradient, err := tensor.New[float32]([]int{2, 2}, []float32{0.1, 0.2, 0.3, float32(math.NaN())})
+	testutils.AssertNoError(t, err, "Failed to create gradient tensor")
+
+	param, err := graph.NewParameter("w", value, tensor.New[float32])
+	testutils.AssertNoError(t, err, "Failed to create parameter")
+	param.Gradient = gradient
+
+	err = adamw.guardAndClipGradients(context.Background(), []*graph.Parameter[float32]{param})
+	if err == nil {
+		t.Fatal("expected NaN in a later gradient row to be detected, got nil error")
+	}
+}
+
 func TestAdamW_Step_NormalGradientUnchanged(t *testing.T) {
 	ops := numeric.Float32Ops{}
 	engine := compute.NewCPUEngine[float32](ops)
