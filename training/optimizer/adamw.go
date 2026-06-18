@@ -533,7 +533,20 @@ func (a *AdamW[T]) guardAndClipGradients(ctx context.Context, params []*graph.Pa
 			continue
 		}
 
-		sumTensor, err := a.engine.ReduceSum(ctx, grad, -1, false)
+		// T11.8: reduce over the whole gradient ON-DEVICE. The negative-axis
+		// "reduce over all axes" sentinel (ReduceSum(grad, -1, ...)) hits ztensor
+		// gpuSum's axis<0 CPU fallback, which copies the entire gradient host-side
+		// (a per-parameter D2H of the full tensor) just to produce one scalar.
+		// Reshaping to rank-1 and reducing axis 0 runs the on-device SumAxis
+		// kernel instead, so only the 4-byte scalar result is copied back. Reshape
+		// shares the underlying storage (it is a view), so a GPU-resident gradient
+		// stays resident; the reduced scalar is identical to the all-axes sum.
+		gradFlat, err := grad.Reshape([]int{-1})
+		if err != nil {
+			return fmt.Errorf("adamw: reshape gradient of parameter %q: %w", param.Name, err)
+		}
+
+		sumTensor, err := a.engine.ReduceSum(ctx, gradFlat, 0, false)
 		if err != nil {
 			return fmt.Errorf("adamw: ReduceSum failed for parameter %q: %w", param.Name, err)
 		}
@@ -548,12 +561,12 @@ func (a *AdamW[T]) guardAndClipGradients(ctx context.Context, params []*graph.Pa
 			return fmt.Errorf("adamw: Inf detected in gradient of parameter %q", param.Name)
 		}
 
-		gradSquared, err := a.engine.Mul(ctx, grad, grad, nil)
+		gradSquared, err := a.engine.Mul(ctx, gradFlat, gradFlat, nil)
 		if err != nil {
 			return fmt.Errorf("adamw: Mul failed for parameter %q: %w", param.Name, err)
 		}
 
-		sqSumTensor, err := a.engine.ReduceSum(ctx, gradSquared, -1, false)
+		sqSumTensor, err := a.engine.ReduceSum(ctx, gradSquared, 0, false)
 		if err != nil {
 			return fmt.Errorf("adamw: ReduceSum failed for parameter %q: %w", param.Name, err)
 		}

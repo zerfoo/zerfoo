@@ -111,6 +111,68 @@ func TestGPUParity_Linear(t *testing.T) {
 	assertGPUClose(t, "linear_forward", cpuOut.Data(), gpuOut.Data(), 1e-3)
 }
 
+// TestGPUParity_GradNormReduceAll pins the T11.8 fix: AdamW's gradient-norm
+// guard sums a whole (possibly multi-dimensional) gradient to a scalar. The fix
+// reshapes the gradient to rank-1 and reduces axis 0 so the reduction runs
+// on-device (the negative-axis "reduce all" sentinel falls back to a host copy
+// in ztensor's gpuSum). This asserts the on-device path -- reshape-to-rank-1 +
+// ReduceSum(axis 0), for both the raw sum (NaN/Inf probe) and the sum-of-squares
+// (global norm) -- produces the IDENTICAL scalar on the CPU and GPU engines.
+// The reshape is a storage-sharing view, so the GPU operand stays device-resident.
+func TestGPUParity_GradNormReduceAll(t *testing.T) {
+	cpuEng, gpuEng, gpuRaw, _ := gpuOpsSetup(t)
+	ctx := context.Background()
+
+	// Multi-dim gradient: a single-axis reduction would NOT collapse this to a
+	// scalar, so this also guards the all-axes semantics on the device.
+	gradData := deterministicData(4 * 16)
+	shape := []int{4, 16}
+
+	// CPU: reshape -> ReduceSum(axis 0); square -> ReduceSum(axis 0).
+	cpuGrad := testutil.MakeTensor(t, gradData, shape)
+	cpuFlat, err := cpuGrad.Reshape([]int{-1})
+	if err != nil {
+		t.Fatalf("CPU reshape: %v", err)
+	}
+	cpuSum, err := cpuEng.ReduceSum(ctx, cpuFlat, 0, false)
+	if err != nil {
+		t.Fatalf("CPU ReduceSum: %v", err)
+	}
+	cpuSq, err := cpuEng.Mul(ctx, cpuFlat, cpuFlat, nil)
+	if err != nil {
+		t.Fatalf("CPU Mul: %v", err)
+	}
+	cpuSqSum, err := cpuEng.ReduceSum(ctx, cpuSq, 0, false)
+	if err != nil {
+		t.Fatalf("CPU ReduceSum sq: %v", err)
+	}
+
+	// GPU: same operations, on-device (operand uploaded; reshape keeps residency).
+	gpuGrad := testutil.MakeTensor(t, cloneF32(gradData), shape)
+	if err := gpuRaw.UploadWeights([]*tensor.TensorNumeric[float32]{gpuGrad}); err != nil {
+		t.Fatalf("UploadWeights: %v", err)
+	}
+	gpuFlat, err := gpuGrad.Reshape([]int{-1})
+	if err != nil {
+		t.Fatalf("GPU reshape: %v", err)
+	}
+	gpuSum, err := gpuEng.ReduceSum(ctx, gpuFlat, 0, false)
+	if err != nil {
+		t.Fatalf("GPU ReduceSum: %v", err)
+	}
+	gpuSq, err := gpuEng.Mul(ctx, gpuFlat, gpuFlat, nil)
+	if err != nil {
+		t.Fatalf("GPU Mul: %v", err)
+	}
+	gpuSqSum, err := gpuEng.ReduceSum(ctx, gpuSq, 0, false)
+	if err != nil {
+		t.Fatalf("GPU ReduceSum sq: %v", err)
+	}
+
+	assertGPUClose(t, "gradnorm_sum_all_axes", cpuSum.Data(), gpuSum.Data(), 1e-3)
+	assertGPUClose(t, "gradnorm_sqsum_all_axes", cpuSqSum.Data(), gpuSqSum.Data(), 1e-2)
+}
+
 func TestGPUParity_MatMul(t *testing.T) {
 	cpuEng, gpuEng, gpuRaw, _ := gpuOpsSetup(t)
 	ctx := context.Background()
