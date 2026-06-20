@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.55.0](https://github.com/zerfoo/zerfoo/compare/v1.54.0...v1.55.0) (2026-06-20)
+
+
+### Features
+
+* **regularization:** add optional seeded RNG to Dropout and FeatureDropout ([ec7dc54](https://github.com/zerfoo/zerfoo/commit/ec7dc54a4db3fd001fbd178bdbccdbb46880a7e8))
+
 ## [1.54.0](https://github.com/zerfoo/zerfoo/compare/v1.53.1...v1.54.0) (2026-06-18)
 
 
