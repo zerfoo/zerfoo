@@ -25,6 +25,12 @@ type Dropout[T tensor.Float] struct {
 	rate     T
 	training bool
 
+	// rng, when non-nil, is a seeded source used to draw the dropout mask so
+	// that training is reproducible. When nil (the default) the package-global
+	// unseeded math/rand/v2 source is used, preserving the historical
+	// non-deterministic behavior. See WithDropoutSeed / WithDropoutSource.
+	rng *rand.Rand
+
 	// Cache for backward pass. The mask is registered with the
 	// save-for-backward contract (ztensor ADR 006) every training-mode
 	// Forward: it cannot be recomputed (it is random), so arena-backed
@@ -34,6 +40,33 @@ type Dropout[T tensor.Float] struct {
 	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
 }
 
+// DropoutOption configures optional behavior of a Dropout layer.
+type DropoutOption[T tensor.Float] func(*Dropout[T])
+
+// WithDropoutSeed returns a DropoutOption that makes the dropout mask
+// reproducible by drawing it from a deterministic source seeded with the
+// given value. Two layers constructed with the same seed produce identical
+// masks for identical inputs and call sequences. Without this option (the
+// default) masks are drawn from the unseeded package-global source and are
+// not reproducible.
+func WithDropoutSeed[T tensor.Float](seed uint64) DropoutOption[T] {
+	return func(d *Dropout[T]) {
+		d.rng = rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15)) //#nosec G404
+	}
+}
+
+// WithDropoutSource returns a DropoutOption that draws the dropout mask from
+// the provided source, allowing callers to supply their own seeded or shared
+// rand.Source for reproducible training. A nil source is ignored, leaving the
+// default unseeded behavior in place.
+func WithDropoutSource[T tensor.Float](src rand.Source) DropoutOption[T] {
+	return func(d *Dropout[T]) {
+		if src != nil {
+			d.rng = rand.New(src) //#nosec G404
+		}
+	}
+}
+
 // SetSaver implements graph.SaverAware.
 func (d *Dropout[T]) SetSaver(sv graph.Saver[T]) {
 	d.saver = sv
@@ -41,12 +74,31 @@ func (d *Dropout[T]) SetSaver(sv graph.Saver[T]) {
 
 // NewDropout creates a new Dropout layer with the given drop rate.
 // The rate must be in [0, 1). A rate of 0 disables dropout entirely.
-func NewDropout[T tensor.Float](engine compute.Engine[T], ops numeric.Arithmetic[T], rate T) *Dropout[T] {
-	return &Dropout[T]{
+//
+// By default the dropout mask is drawn from the unseeded package-global
+// math/rand/v2 source, so masks are not reproducible across runs. Pass
+// WithDropoutSeed or WithDropoutSource to make the mask deterministic.
+func NewDropout[T tensor.Float](engine compute.Engine[T], ops numeric.Arithmetic[T], rate T, opts ...DropoutOption[T]) *Dropout[T] {
+	d := &Dropout[T]{
 		engine: engine,
 		ops:    ops,
 		rate:   rate,
 	}
+	for _, opt := range opts {
+		opt(d)
+	}
+
+	return d
+}
+
+// randFloat64 returns the next mask draw, using the layer's seeded source when
+// configured and falling back to the unseeded package-global source otherwise.
+func (d *Dropout[T]) randFloat64() float64 {
+	if d.rng != nil {
+		return d.rng.Float64()
+	}
+
+	return rand.Float64() //#nosec G404
 }
 
 // OpType returns the operation type.
@@ -101,7 +153,7 @@ func (d *Dropout[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 
 	maskData := make([]T, size)
 	for i := range maskData {
-		if rand.Float64() >= rate64 { //#nosec G404
+		if d.randFloat64() >= rate64 {
 			maskData[i] = scale
 		} else {
 			maskData[i] = zero

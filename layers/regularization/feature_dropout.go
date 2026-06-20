@@ -24,6 +24,13 @@ type FeatureDropout[T tensor.Float] struct {
 	rate     T
 	training bool
 
+	// rng, when non-nil, is a seeded source used to draw the per-feature mask
+	// so that training is reproducible. When nil (the default) the
+	// package-global unseeded math/rand/v2 source is used, preserving the
+	// historical non-deterministic behavior. See WithFeatureDropoutSeed /
+	// WithFeatureDropoutSource.
+	rng *rand.Rand
+
 	// Cache for backward pass. The mask is registered with the
 	// save-for-backward contract (ztensor ADR 006) every training-mode
 	// Forward: it cannot be recomputed (it is random), so arena-backed
@@ -33,6 +40,31 @@ type FeatureDropout[T tensor.Float] struct {
 	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
 }
 
+// FeatureDropoutOption configures optional behavior of a FeatureDropout layer.
+type FeatureDropoutOption[T tensor.Float] func(*FeatureDropout[T])
+
+// WithFeatureDropoutSeed returns a FeatureDropoutOption that makes the
+// per-feature dropout mask reproducible by drawing it from a deterministic
+// source seeded with the given value. Without this option (the default) masks
+// are drawn from the unseeded package-global source and are not reproducible.
+func WithFeatureDropoutSeed[T tensor.Float](seed uint64) FeatureDropoutOption[T] {
+	return func(d *FeatureDropout[T]) {
+		d.rng = rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15)) //#nosec G404
+	}
+}
+
+// WithFeatureDropoutSource returns a FeatureDropoutOption that draws the mask
+// from the provided source, allowing callers to supply their own seeded or
+// shared rand.Source for reproducible training. A nil source is ignored,
+// leaving the default unseeded behavior in place.
+func WithFeatureDropoutSource[T tensor.Float](src rand.Source) FeatureDropoutOption[T] {
+	return func(d *FeatureDropout[T]) {
+		if src != nil {
+			d.rng = rand.New(src) //#nosec G404
+		}
+	}
+}
+
 // SetSaver implements graph.SaverAware.
 func (d *FeatureDropout[T]) SetSaver(sv graph.Saver[T]) {
 	d.saver = sv
@@ -40,12 +72,32 @@ func (d *FeatureDropout[T]) SetSaver(sv graph.Saver[T]) {
 
 // NewFeatureDropout creates a new FeatureDropout layer with the given drop rate.
 // The rate must be in [0, 1). A rate of 0 disables dropout entirely.
-func NewFeatureDropout[T tensor.Float](engine compute.Engine[T], ops numeric.Arithmetic[T], rate T) *FeatureDropout[T] {
-	return &FeatureDropout[T]{
+//
+// By default the per-feature mask is drawn from the unseeded package-global
+// math/rand/v2 source, so masks are not reproducible across runs. Pass
+// WithFeatureDropoutSeed or WithFeatureDropoutSource to make the mask
+// deterministic.
+func NewFeatureDropout[T tensor.Float](engine compute.Engine[T], ops numeric.Arithmetic[T], rate T, opts ...FeatureDropoutOption[T]) *FeatureDropout[T] {
+	d := &FeatureDropout[T]{
 		engine: engine,
 		ops:    ops,
 		rate:   rate,
 	}
+	for _, opt := range opts {
+		opt(d)
+	}
+
+	return d
+}
+
+// randFloat64 returns the next mask draw, using the layer's seeded source when
+// configured and falling back to the unseeded package-global source otherwise.
+func (d *FeatureDropout[T]) randFloat64() float64 {
+	if d.rng != nil {
+		return d.rng.Float64()
+	}
+
+	return rand.Float64() //#nosec G404
 }
 
 // OpType returns the operation type.
@@ -105,7 +157,7 @@ func (d *FeatureDropout[T]) Forward(ctx context.Context, inputs ...*tensor.Tenso
 	// Generate a per-feature mask.
 	featureMask := make([]T, numFeatures)
 	for j := range featureMask {
-		if rand.Float64() >= rate64 { //#nosec G404
+		if d.randFloat64() >= rate64 {
 			featureMask[j] = scale
 		} else {
 			featureMask[j] = zero
