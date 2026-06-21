@@ -175,6 +175,24 @@ func (r *CaptureReplayRunner[T]) Step(
 	r.captured = true
 	r.capturesPerformed++
 
+	// ztensor#167 / ADR 007: the captured graph's kernels reference frozen
+	// device addresses for every buffer the step touches, including the
+	// save-for-backward intermediates that this capture step's own Backward
+	// already unpinned (ADR 006 pins are released when the node's Backward
+	// returns). Those addresses are then reissued by a later per-epoch
+	// ResetPool + arena free-list reuse, and the replayed graph reads the
+	// corrupted memory -- gradients collapse toward zero from the next step
+	// (GB10 CrossAsset fold-0 0.6047 vs the CPU baseline 0.7257). Reserve the
+	// captured graph's whole arena footprint for its replay lifetime by raising
+	// the arena reset floor to the capture high-water. This mirrors the proven
+	// decode-loop capture path (generate/generator.go onCaptured), which has
+	// always done this and is therefore correct under capture-replay.
+	if ap, ok := any(r.gc).(interface{ ArenaUsedBytes() int }); ok {
+		if asf, ok2 := any(r.gc).(interface{ SetArenaResetFloor(int) }); ok2 {
+			asf.SetArenaResetFloor(ap.ArenaUsedBytes())
+		}
+	}
+
 	// The capture recorded this step but did not execute it: launch the
 	// graph once so step `warmup` actually happens.
 	if err := r.gc.ReplayGraph(r.handle); err != nil {
