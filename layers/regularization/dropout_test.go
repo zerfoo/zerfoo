@@ -408,6 +408,131 @@ func TestDropout_Backward_EngineMulError(t *testing.T) {
 	}
 }
 
+// TestDropout_EngineOp_ForwardBackwardConsistency verifies that the capture-safe
+// engine-op path (WithEngineDropout) produces a valid inverted-dropout mask in
+// Forward and regenerates the SAME mask in Backward from the per-step seed.
+func TestDropout_EngineOp_ForwardBackwardConsistency(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
+	d := NewDropout(engine, ops, float32(0.5), WithDropoutSeed[float32](1234), WithEngineDropout[float32]())
+	d.SetTraining(true)
+
+	size := 1000
+	inputData := make([]float32, size)
+	for i := range inputData {
+		inputData[i] = 1.0
+	}
+	input, err := tensor.New([]int{size}, inputData)
+	if err != nil {
+		t.Fatalf("failed to create input tensor: %v", err)
+	}
+
+	output, err := d.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward returned error: %v", err)
+	}
+
+	// The engine path must not pin a host mask.
+	if d.mask != nil {
+		t.Error("engine-op path should not cache a host mask")
+	}
+
+	outData := output.Data()
+	zeros, survivors := 0, 0
+	scale := float32(1.0 / (1.0 - 0.5)) // == 2.0
+	for _, v := range outData {
+		switch {
+		case v == 0:
+			zeros++
+		case v == scale:
+			survivors++
+		default:
+			t.Fatalf("unexpected surviving value: got %v, want 0 or %v", v, scale)
+		}
+	}
+	if zeros == 0 || survivors == 0 {
+		t.Fatalf("expected a mix of dropped/surviving elements, got zeros=%d survivors=%d", zeros, survivors)
+	}
+
+	// Backward with dOut=ones must reproduce the same mask (dInput == output).
+	dOutData := make([]float32, size)
+	for i := range dOutData {
+		dOutData[i] = 1.0
+	}
+	dOut, err := tensor.New([]int{size}, dOutData)
+	if err != nil {
+		t.Fatalf("failed to create dOut tensor: %v", err)
+	}
+	grads, err := d.Backward(ctx, types.FullBackprop, dOut, input)
+	if err != nil {
+		t.Fatalf("Backward returned error: %v", err)
+	}
+	dInputData := grads[0].Data()
+	for i := range dInputData {
+		if dInputData[i] != outData[i] {
+			t.Fatalf("element %d: backward mask %v != forward mask %v (seed not reproduced)", i, dInputData[i], outData[i])
+		}
+	}
+}
+
+// TestDropout_EngineOp_Reproducible verifies that two engine-op layers built with
+// the same seed produce identical masks for identical inputs.
+func TestDropout_EngineOp_Reproducible(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
+
+	mk := func() *Dropout[float32] {
+		d := NewDropout(engine, ops, float32(0.3), WithDropoutSeed[float32](42), WithEngineDropout[float32]())
+		d.SetTraining(true)
+		return d
+	}
+
+	inputData := make([]float32, 256)
+	for i := range inputData {
+		inputData[i] = float32(i + 1)
+	}
+	input, _ := tensor.New([]int{256}, inputData)
+
+	a, err := mk().Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward a: %v", err)
+	}
+	b, err := mk().Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward b: %v", err)
+	}
+	ad, bd := a.Data(), b.Data()
+	for i := range ad {
+		if ad[i] != bd[i] {
+			t.Fatalf("element %d: same-seed outputs differ: %v != %v", i, ad[i], bd[i])
+		}
+	}
+}
+
+// TestDropout_EngineOp_RateZero verifies that the engine-op path is the identity
+// at rate 0 (dropout disabled).
+func TestDropout_EngineOp_RateZero(t *testing.T) {
+	ctx := context.Background()
+	ops := numeric.Float32Ops{}
+	engine := compute.NewCPUEngine(ops)
+	d := NewDropout(engine, ops, float32(0.0), WithEngineDropout[float32]())
+	d.SetTraining(true)
+
+	inputData := []float32{1.0, 2.0, 3.0, 4.0}
+	input, _ := tensor.New([]int{4}, inputData)
+	output, err := d.Forward(ctx, input)
+	if err != nil {
+		t.Fatalf("Forward returned error: %v", err)
+	}
+	for i, v := range output.Data() {
+		if v != inputData[i] {
+			t.Errorf("element %d: got %v, want %v (rate=0 must be identity)", i, v, inputData[i])
+		}
+	}
+}
+
 // failingMulEngine wraps CPUEngine but returns an error from Mul.
 type failingMulEngine struct {
 	*compute.CPUEngine[float32]
