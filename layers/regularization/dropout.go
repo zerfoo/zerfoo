@@ -31,6 +31,19 @@ type Dropout[T tensor.Float] struct {
 	// non-deterministic behavior. See WithDropoutSeed / WithDropoutSource.
 	rng *rand.Rand
 
+	// useEngineOp routes the mask through the engine's capture-safe Dropout op
+	// (compute.Dropouter) instead of generating a host-side mask. The op derives
+	// the mask deterministically from a per-step counter-based seed (Philox) and
+	// regenerates it in Backward, so no mask tensor is pinned — this is what
+	// makes dropout eligible for CUDA-graph capture on the GPU. Enable with
+	// WithEngineDropout; falls back to the host path if the engine does not
+	// implement compute.Dropouter. See WithEngineDropout.
+	useEngineOp bool
+	seedSet     bool   // a base seed was supplied explicitly (WithDropoutSeed)
+	baseSeed    uint64 // base seed for the engine-op path
+	counter     uint64 // advances each training Forward so masks vary across steps
+	lastSeed    uint64 // seed used by the most recent training Forward, for Backward
+
 	// Cache for backward pass. The mask is registered with the
 	// save-for-backward contract (ztensor ADR 006) every training-mode
 	// Forward: it cannot be recomputed (it is random), so arena-backed
@@ -52,6 +65,26 @@ type DropoutOption[T tensor.Float] func(*Dropout[T])
 func WithDropoutSeed[T tensor.Float](seed uint64) DropoutOption[T] {
 	return func(d *Dropout[T]) {
 		d.rng = rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15)) //#nosec G404
+		d.baseSeed = seed
+		d.seedSet = true
+	}
+}
+
+// WithEngineDropout returns a DropoutOption that routes the dropout mask through
+// the engine's capture-safe Dropout op (compute.Dropouter) instead of generating
+// the mask on the host. The op derives the mask deterministically on-device from
+// a per-step counter-based seed (Philox) and regenerates it in Backward, so no
+// mask tensor is pinned for the backward pass — this is what makes dropout
+// eligible for CUDA-graph capture on the GPU, where a host-generated random mask
+// is capture-ineligible.
+//
+// If the engine does not implement compute.Dropouter, the layer transparently
+// falls back to the host mask path. Combine with WithDropoutSeed to make the
+// engine-op masks reproducible across runs; without it a distinct base seed is
+// drawn once at construction so multiple layers decorrelate.
+func WithEngineDropout[T tensor.Float]() DropoutOption[T] {
+	return func(d *Dropout[T]) {
+		d.useEngineOp = true
 	}
 }
 
@@ -86,6 +119,17 @@ func NewDropout[T tensor.Float](engine compute.Engine[T], ops numeric.Arithmetic
 	}
 	for _, opt := range opts {
 		opt(d)
+	}
+
+	// For the engine-op path, derive a base seed once when none was supplied so
+	// that multiple dropout layers decorrelate and masks differ across runs.
+	// A seeded source (WithDropoutSource) is reused for reproducibility.
+	if d.useEngineOp && !d.seedSet {
+		if d.rng != nil {
+			d.baseSeed = d.rng.Uint64()
+		} else {
+			d.baseSeed = rand.Uint64() //#nosec G404
+		}
 	}
 
 	return d
@@ -145,9 +189,29 @@ func (d *Dropout[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeri
 		return input, nil
 	}
 
+	rate64 := float64(d.rate)
+
+	// Capture-safe path: delegate to the engine's Dropout op when requested and
+	// supported. The op generates the mask on-device from a counter-based seed
+	// and regenerates it in Backward, so nothing is pinned for the backward pass.
+	if d.useEngineOp {
+		if dr, ok := d.engine.(compute.Dropouter[T]); ok {
+			d.mask = nil
+			if rate64 <= 0 {
+				return input, nil
+			}
+			d.lastSeed = d.baseSeed + d.counter
+			d.counter++
+			output, err := dr.Dropout(ctx, input, rate64, d.lastSeed, true)
+			if err != nil {
+				return nil, fmt.Errorf("Dropout: engine dropout failed: %w", err)
+			}
+			return output, nil
+		}
+	}
+
 	// Build the inverted-dropout mask.
 	size := input.Size()
-	rate64 := float64(d.rate)
 	scale := d.ops.FromFloat64(1.0 / (1.0 - rate64))
 	zero := d.ops.FromFloat64(0.0)
 
@@ -186,7 +250,27 @@ func (d *Dropout[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *t
 		return nil, fmt.Errorf("Dropout: %w, expected 1, got %d", graph.ErrInvalidInputCount, len(inputs))
 	}
 
-	if !d.training || d.mask == nil {
+	if !d.training {
+		return []*tensor.TensorNumeric[T]{dOut}, nil
+	}
+
+	// Capture-safe path: regenerate the mask on-device from the Forward seed.
+	if d.useEngineOp {
+		if dr, ok := d.engine.(compute.Dropouter[T]); ok {
+			rate64 := float64(d.rate)
+			if rate64 <= 0 {
+				return []*tensor.TensorNumeric[T]{dOut}, nil
+			}
+			dInput, err := dr.DropoutBackward(ctx, dOut, rate64, d.lastSeed, true)
+			if err != nil {
+				return nil, fmt.Errorf("Dropout: engine dropout backward failed: %w", err)
+			}
+
+			return []*tensor.TensorNumeric[T]{dInput}, nil
+		}
+	}
+
+	if d.mask == nil {
 		return []*tensor.TensorNumeric[T]{dOut}, nil
 	}
 
