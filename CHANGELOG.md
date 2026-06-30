@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.55.1](https://github.com/zerfoo/zerfoo/compare/v1.55.0...v1.55.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **timeseries:** seed iTransformer init for deterministic gradient checks ([7115733](https://github.com/zerfoo/zerfoo/commit/711573393273dd65c5e84a9025343ac06d6f4c34))
+* **training:** reserve captured-graph arena footprint under capture-replay (ztensor[#167](https://github.com/zerfoo/zerfoo/issues/167)) ([6cb6c02](https://github.com/zerfoo/zerfoo/commit/6cb6c02b4fd75bcdddf31160d7be4c91d6ff5a54))
+
 ## [1.55.0](https://github.com/zerfoo/zerfoo/compare/v1.54.0...v1.55.0) (2026-06-20)
 
 
