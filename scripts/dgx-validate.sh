@@ -52,21 +52,27 @@ POLL_INTERVAL="${POLL_INTERVAL:-5}"
 
 usage() {
   cat >&2 <<USAGE
-Usage: $0 [-ref <git-ref>] [-timeout <seconds>] [-dry-run]
+Usage: $0 [-ref <git-ref>] [-timeout <seconds>] [-dry-run] [-keep] [-no-pull]
 
 Submits docs/bench/manifests/validate-arm64.yaml to Spark at \${SPARK}
 (currently ${SPARK}), polls until the pod terminates, streams logs, extracts
 the JSON report, deletes the pod, and exits 0 only on Succeeded + a report
-with no failures.
+with no failures. Pre-pulls the pod image via Spark's image API (skip with
+-no-pull). On failure, pod events are fetched and printed before deletion;
+-keep skips deletion entirely so the pod can be inspected.
 USAGE
   exit 2
 }
 
+KEEP=0
+PREPULL=1
 while [ $# -gt 0 ]; do
   case "$1" in
     -ref)      [ $# -ge 2 ] || usage; REF="$2"; shift 2 ;;
     -timeout)  [ $# -ge 2 ] || usage; TIMEOUT="$2"; shift 2 ;;
     -dry-run)  DRY_RUN=1; shift ;;
+    -keep)     KEEP=1; shift ;;
+    -no-pull)  PREPULL=0; shift ;;
     -h|--help) usage ;;
     *) echo "unknown arg: $1" >&2; usage ;;
   esac
@@ -180,6 +186,23 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
+# --- pre-pull image ------------------------------------------------------------
+
+# A cold host has no arm64 golang image; an in-pod pull can exceed the pod's
+# startup grace and surface as an instant Failed with no logs (observed on the
+# first live run, 2026-07-02). Pull explicitly first; failure is non-fatal.
+if [ "$PREPULL" -eq 1 ]; then
+  IMAGE="$(printf '%s\n' "$MANIFEST" | grep -m1 -E '^[[:space:]]*image:' | sed -E 's/^[[:space:]]*image:[[:space:]]*//')"
+  if [ -n "$IMAGE" ]; then
+    echo "dgx-validate: ensuring image present on host: ${IMAGE}"
+    if ! http_req POST "${SPARK}/api/v1/images/pull" \
+          -H 'Content-Type: application/json' \
+          --data "{\"image\":\"${IMAGE}\"}" --max-time 900; then
+      echo "dgx-validate: warning: image pre-pull failed (HTTP ${HTTP_CODE}); continuing -- in-pod pull may still succeed" >&2
+    fi
+  fi
+fi
+
 # --- submit ------------------------------------------------------------------
 
 echo "dgx-validate: submitting ${POD_NAME} to ${SPARK} (ref=${REF})"
@@ -232,9 +255,26 @@ else
   echo "dgx-validate: no JSON report line found in logs" >&2
 fi
 
+# On any non-success, pull the pod's event stream BEFORE deleting -- events
+# carry image-pull / container-create diagnoses that logs cannot (a pod whose
+# container never started has no logs at all).
+if [ "$PHASE" != "Succeeded" ]; then
+  echo "dgx-validate: fetching pod events for diagnosis"
+  if http_req GET "${SPARK}/api/v1/pods/${POD_NAME}/events"; then
+    printf '%s\n' "$HTTP_BODY"
+  else
+    echo "dgx-validate: events fetch failed (HTTP ${HTTP_CODE})" >&2
+  fi
+fi
+
 # --- cleanup -----------------------------------------------------------------
 
-if [ "$PHASE" != "timeout" ]; then
+if [ "$KEEP" -eq 1 ]; then
+  echo "dgx-validate: -keep set; leaving pod ${POD_NAME} for inspection:"
+  echo "  curl ${SPARK}/api/v1/pods/${POD_NAME}"
+  echo "  curl ${SPARK}/api/v1/pods/${POD_NAME}/logs"
+  echo "  curl -X DELETE ${SPARK}/api/v1/pods/${POD_NAME}"
+elif [ "$PHASE" != "timeout" ]; then
   if http_req DELETE "${SPARK}/api/v1/pods/${POD_NAME}"; then
     echo "dgx-validate: deleted pod ${POD_NAME}"
   else
