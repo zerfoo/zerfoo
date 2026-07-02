@@ -2,6 +2,10 @@
 
 See `../CLAUDE.md` for the full ecosystem vision and project map (covers 7 repos).
 
+## Product direction (H2 2026)
+
+Strategy: **Trust, then Traction** — `docs/product-strategy-2026-H2.md` (ADR-093). `docs/plan.md` is scoped to ONE phase at a time and ends with a task to plan the next phase. New session? Read in this order: product-strategy-2026-H2.md → plan.md → devlog.md (newest entry) → ADR-091/092/093.
+
 ## Mission
 
 Be the best-in-class ML inference framework in Go — competitive with C++ runtimes (llama.cpp, vLLM) in throughput, superior in developer experience and embeddability. GGUF is the sole model format.
