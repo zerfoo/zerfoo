@@ -1,6 +1,6 @@
 # Zerfoo Core Framework
 
-See `../CLAUDE.md` for the full ecosystem vision and project map (covers 7 repos).
+See `../CLAUDE.md` for the ecosystem repo map and cross-repo rules. The parent-level `../docs/` folder is archived Aug-2025 material — current documentation lives in this repo's `docs/`.
 
 ## Product direction (H2 2026)
 
