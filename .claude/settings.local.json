@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pdftotext \"/Users/dndungu/.claude/projects/-Users-dndungu-Code-zerfoo-zerfoo/257d1eed-0dd8-4633-9ccf-4b281e318841/tool-results/webfetch-1774633828334-h0utyz.bin\" /tmp/msa_paper.txt)",
+      "Read(//tmp/**)",
+      "Bash(find /Users/dndungu/Code/zerfoo/zerfoo/layers -type d -not -path */.*)",
+      "Bash(wc -l /Users/dndungu/Code/zerfoo/zerfoo/layers/attention/*.go)",
+      "Bash(grep -n \"^type Generator\\\\|^type InferenceSession\" /Users/dndungu/Code/zerfoo/zerfoo/generate/*.go)",
+      "Bash(grep -l \"func.*Forward\" /Users/dndungu/Code/zerfoo/zerfoo/layers/attention/*.go)",
+      "Bash(ls -1 /Users/dndungu/Code/zerfoo/zerfoo/layers/attention/*.go)",
+      "Bash(grep:*)",
+      "Bash(ls -1 /Users/dndungu/Code/zerfoo/zerfoo/layers/core/*.go)",
+      "Bash(xargs -I {} basename {})",
+      "WebSearch",
+      "Bash(ls -la /Users/dndungu/Code/zerfoo/ztensor/graph/*.go)",
+      "Bash(ls -la /Users/dndungu/Code/zerfoo/zerfoo/inference/arch_*.go)",
+      "Bash(ls:*)",
+      "WebFetch(domain:vllm.ai)",
+      "mcp__plugin_claude-mem_mcp-search__get_observations",
+      "mcp__plugin_claude-mem_mcp-search__search",
+      "WebFetch(domain:awsdocs-neuron.readthedocs-hosted.com)",
+      "WebFetch(domain:openxla.org)"
+    ],
+    "additionalDirectories": [
+      "/Users/dndungu/Code/zerfoo/zonnx",
+      "/Users/dndungu/Code/zerfoo/zmf",
+      "/Users/dndungu/Code/zerfoo/float8",
+      "/Users/dndungu/Code/zerfoo/float16"
+    ]
+  }
+}

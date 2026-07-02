@@ -1,0 +1,55 @@
+{
+  "date": "2026-03-27",
+  "hardware": "DGX Spark GB10 (sm_121, 128GB LPDDR5x)",
+  "prompt": "Explain the theory of relativity in simple terms.",
+  "tokens": 128,
+  "runs": 3,
+  "sampling": "greedy (temp=0)",
+  "notes": "All models produce coherent output after GQA repeat fix (ztensor v0.6.3) and flash attention decode fix (zerfoo v1.25.5).",
+  "results": [
+    {
+      "model": "gemma3-1b-Q4_K_M",
+      "architecture": "gemma3",
+      "size": "1B",
+      "quantization": "Q4_K_M",
+      "zerfoo_tps": 235,
+      "ollama_tps": 188,
+      "ratio": 1.25,
+      "winner": "Zerfoo",
+      "coherent": true
+    },
+    {
+      "model": "deepseek-r1-1.5b-Q4_K_M",
+      "architecture": "deepseek2",
+      "size": "1.5B",
+      "quantization": "Q4_K_M",
+      "zerfoo_tps": 186,
+      "ollama_tps": 167,
+      "ratio": 1.11,
+      "winner": "Zerfoo",
+      "coherent": true
+    },
+    {
+      "model": "llama3.2-3b-Q4_K_M",
+      "architecture": "llama",
+      "size": "3B",
+      "quantization": "Q4_K_M",
+      "zerfoo_tps": 92,
+      "ollama_tps": 93,
+      "ratio": 0.99,
+      "winner": "Even",
+      "coherent": true
+    },
+    {
+      "model": "mistral-7b-Q5_K_M",
+      "architecture": "mistral",
+      "size": "7B",
+      "quantization": "Q5_K_M",
+      "zerfoo_tps": 44,
+      "ollama_tps": 44,
+      "ratio": 1.00,
+      "winner": "Even",
+      "coherent": true
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+name: ci
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  GONOSUMDB: 'github.com/zerfoo/*'
+  GONOPROXY: 'github.com/zerfoo/*'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.26"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          check-latest: true
+      - name: Cache Go build
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-${{ matrix.go-version }}-
+      - name: Vet
+        run: go vet ./...
+      - name: Vulnerability check
+        continue-on-error: true  # bbolt GO-2026-4923 has no fix (v1.4.3 is latest); re-enable when fixed
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+      - name: Unit tests
+        run: go test -short ./... -race -timeout 300s
+      - name: Architecture enforcement
+        run: go test ./tests/architecture/ -race -timeout 120s
+      - name: Parity tests (PyTorch golden files)
+        run: go test -run 'TestParity_' -count=1 -timeout 120s ./tests/parity/...
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          format: cyclonedx-json
+          artifact-name: sbom-cyclonedx.json

@@ -1,0 +1,93 @@
+# Gemma 3 1B Q4_K_M throughput bench pod manifest.
+#
+# Recertifies the published 241 tok/s (+28% vs Ollama 188) Gemma 3 1B Q4_K_M
+# figure in docs/benchmarks.md. Uses cmd/bench_tps — the same binary that
+# originally recorded the 241 tok/s number — with greedy sampling, 128 output
+# tokens, and CUDA graph capture enabled (default).
+#
+# Submit via scripts/gemma3-spark.sh, which substitutes ${RUN_ID}, ${GGUF_PATH},
+# ${PROMPT}, ${TOKENS}, ${DEVICE}, and ${DTYPE} before POSTing to Spark.
+#
+# Prerequisites on the DGX host:
+#   1. /var/lib/zerfoo/bin/bench_tps is a linux/arm64 binary built from
+#      cmd/bench_tps/main.go. Build via:
+#         GOOS=linux GOARCH=arm64 go build -o bench_tps ./cmd/bench_tps
+#         rsync -av bench_tps ndungu@192.168.86.250:/var/lib/zerfoo/bin/
+#   2. The GGUF file is accessible at the path supplied via ${GGUF_PATH}
+#      (e.g. /var/lib/zerfoo/models/gemma-3-1b-it-Q4_K_M.gguf on the host,
+#      mounted read-only into the pod).
+#
+# Resource caps (cgroups enforced by Podman on the DGX host):
+#   memory 16Gi       (1B Q4_K_M loaded FP32 ~= 4GB; 4x margin)
+#   cpu "4"
+#   nvidia.com/gpu 1  (serialized via SPARK_GPU_MAX=1 on the host)
+#
+# NOTE: ZERFOO_DISABLE_CUDA_GRAPH is intentionally unset — the 241 tok/s
+# baseline was measured with capture enabled (184/185 instructions, 99.5%).
+# If the run fails with a capture error, set ZERFOO_DISABLE_CUDA_GRAPH=1
+# to fall back to eager mode and compare against the capture-off floor.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gemma3-tps-${RUN_ID}
+  labels:
+    app: bench
+    type: gemma3-tps
+spec:
+  restartPolicy: Never
+  containers:
+    - name: tps
+      image: docker.io/library/ubuntu:24.04
+      command:
+        - /var/lib/zerfoo/bin/bench_tps
+      args:
+        - "-model"
+        - "${GGUF_PATH}"
+        - "-prompt"
+        - "${PROMPT}"
+        - "-tokens"
+        - "${TOKENS}"
+        - "-device"
+        - "${DEVICE}"
+        - "-dtype"
+        - "${DTYPE}"
+        - "-temp"
+        - "0"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 16Gi
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: zerfoo-bin
+          mountPath: /var/lib/zerfoo/bin
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: zerfoo-models
+          mountPath: /var/lib/zerfoo/models
+          readOnly: true
+  volumes:
+    - name: zerfoo-bin
+      hostPath:
+        path: /var/lib/zerfoo/bin
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: zerfoo-models
+      hostPath:
+        path: /var/lib/zerfoo/models
+        type: Directory

@@ -1,0 +1,63 @@
+# GPU parity test pod manifest.
+#
+# Submit via:
+#   curl -X POST http://192.168.86.250:8080/api/v1/pods \
+#     --data-binary @docs/bench/manifests/gpu-parity.yaml \
+#     -H 'Content-Type: application/yaml'
+#
+# Before submitting, substitute ${RUN_ID} with a unique identifier
+# (e.g., git short SHA or timestamp):
+#   sed "s/\${RUN_ID}/$(git rev-parse --short HEAD)-$(date +%s)/" \
+#     docs/bench/manifests/gpu-parity.yaml | curl -X POST ...
+#
+# Resource caps are enforced by Podman cgroups on the DGX host:
+#   - memory 16Gi       (host RAM cap; NOT VRAM — GB10 has unified memory)
+#   - cpu "4"           (4 cores)
+#   - nvidia.com/gpu 1  (serialized via SPARK_GPU_MAX=1 on the host)
+#
+# CUDA runtime libs are mounted read-only from /usr/local/cuda on the host.
+# The test binary loads them via purego/dlopen at runtime.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-parity-${RUN_ID}
+  labels:
+    app: parity
+    type: gpu-parity
+spec:
+  restartPolicy: Never
+  containers:
+    - name: parity
+      image: ghcr.io/zerfoo/zerfoo-parity:latest
+      command:
+        - /usr/local/bin/parity-test
+      args:
+        - "-test.v"
+        - "-test.run"
+        - "TestGPUParity"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/cuda/lib64
+        - name: ZERFOO_DISABLE_CUDA_GRAPH
+          value: "1"
+      resources:
+        limits:
+          memory: 16Gi
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+  volumes:
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
