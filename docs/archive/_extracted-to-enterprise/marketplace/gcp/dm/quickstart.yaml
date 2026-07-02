@@ -1,0 +1,120 @@
+info:
+  title: Zerfoo ML Inference Framework - GCP Deployment Manager Quick Start
+  description: >
+    Deploys Zerfoo on Google Kubernetes Engine (GKE) with a load balancer,
+    autoscaling, and GCP Marketplace metering integration.
+
+required:
+  - zone
+  - network
+
+properties:
+  zone:
+    type: string
+    description: GCP zone for the GKE cluster (e.g., us-central1-a).
+    default: us-central1-a
+
+  network:
+    type: string
+    description: VPC network name for the GKE cluster.
+    default: default
+
+  subnetwork:
+    type: string
+    description: VPC subnetwork name. Leave empty to use the default.
+    default: ""
+
+  machineType:
+    type: string
+    description: Machine type for GKE nodes.
+    default: e2-standard-4
+    enum:
+      - e2-standard-2
+      - e2-standard-4
+      - e2-standard-8
+      - n2-standard-4
+      - n2-standard-8
+      - a2-highgpu-1g
+
+  initialNodeCount:
+    type: integer
+    description: Initial number of nodes in the GKE node pool.
+    default: 2
+    minimum: 1
+    maximum: 20
+
+  maxNodeCount:
+    type: integer
+    description: Maximum number of nodes for autoscaling.
+    default: 10
+    minimum: 1
+    maximum: 50
+
+  zerfooImage:
+    type: string
+    description: Container image URI for Zerfoo.
+    default: gcr.io/zerfoo-public/zerfoo:latest
+
+  replicas:
+    type: integer
+    description: Number of Zerfoo pod replicas.
+    default: 2
+    minimum: 1
+    maximum: 20
+
+  marketplaceServiceName:
+    type: string
+    description: >
+      GCP Marketplace service name for metering integration.
+      Leave empty to disable marketplace metering.
+    default: ""
+
+resources:
+  - name: zerfoo-cluster
+    type: container.v1.cluster
+    properties:
+      zone: $(ref.zone)
+      cluster:
+        name: zerfoo-cluster
+        network: $(ref.network)
+        subnetwork: $(ref.subnetwork)
+        initialClusterVersion: latest
+        nodePools:
+          - name: zerfoo-pool
+            initialNodeCount: $(ref.initialNodeCount)
+            config:
+              machineType: $(ref.machineType)
+              diskSizeGb: 100
+              oauthScopes:
+                - https://www.googleapis.com/auth/cloud-platform
+                - https://www.googleapis.com/auth/servicecontrol
+            autoscaling:
+              enabled: true
+              minNodeCount: 1
+              maxNodeCount: $(ref.maxNodeCount)
+            management:
+              autoUpgrade: true
+              autoRepair: true
+        loggingService: logging.googleapis.com/kubernetes
+        monitoringService: monitoring.googleapis.com/kubernetes
+
+  - name: zerfoo-sa
+    type: iam.v1.serviceAccount
+    properties:
+      accountId: zerfoo-marketplace
+      displayName: Zerfoo Marketplace Service Account
+
+  - name: zerfoo-sa-binding
+    type: gcp-types/cloudresourcemanager-v1:virtual.projects.iamMemberBinding
+    properties:
+      resource: $(ref.project)
+      role: roles/servicecontrol.reporter
+      member: serviceAccount:$(ref.zerfoo-sa.email)
+
+outputs:
+  - name: clusterName
+    value: $(ref.zerfoo-cluster.name)
+  - name: clusterEndpoint
+    value: $(ref.zerfoo-cluster.endpoint)
+  - name: serviceAccountEmail
+    value: $(ref.zerfoo-sa.email)

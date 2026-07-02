@@ -1,0 +1,212 @@
+package core
+
+import (
+	"context"
+	"testing"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/testing/testutils"
+	"github.com/zerfoo/ztensor/types"
+)
+
+func TestConcat_ForwardAxis1(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	layer := NewConcat[float32](engine, 1)
+
+	in1, err := tensor.New[float32]([]int{2, 3}, []float32{
+		0, 1, 2,
+		3, 4, 5,
+	})
+	testutils.AssertNoError(t, err, "create in1")
+	in2, err := tensor.New[float32]([]int{2, 2}, []float32{
+		100, 101,
+		102, 103,
+	})
+	testutils.AssertNoError(t, err, "create in2")
+
+	out, err := layer.Forward(context.Background(), in1, in2)
+	testutils.AssertNoError(t, err, "forward")
+	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{2, 5}, out.Shape()), "shape mismatch")
+
+	expected := []float32{
+		0, 1, 2, 100, 101,
+		3, 4, 5, 102, 103,
+	}
+	testutils.AssertFloat32SliceApproxEqual(t, expected, out.Data(), 0, "data mismatch")
+}
+
+func TestConcat_BackwardAxis1(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	layer := NewConcat[float32](engine, 1)
+
+	in1, _ := tensor.New[float32]([]int{2, 3}, []float32{
+		0, 1, 2,
+		3, 4, 5,
+	})
+	in2, _ := tensor.New[float32]([]int{2, 2}, []float32{
+		100, 101,
+		102, 103,
+	})
+	// Upstream gradient for concatenated output [2,5]
+	gOut, _ := tensor.New[float32]([]int{2, 5}, []float32{
+		10, 11, 12, 13, 14,
+		20, 21, 22, 23, 24,
+	})
+
+	grads, err := layer.Backward(context.Background(), types.FullBackprop, gOut, in1, in2)
+	testutils.AssertNoError(t, err, "backward")
+	testutils.AssertEqual(t, 2, len(grads), "grads len")
+	testutils.AssertTrue(t, testutils.IntSliceEqual(in1.Shape(), grads[0].Shape()), "grad1 shape")
+	testutils.AssertTrue(t, testutils.IntSliceEqual(in2.Shape(), grads[1].Shape()), "grad2 shape")
+
+	expG1 := []float32{
+		10, 11, 12,
+		20, 21, 22,
+	}
+	expG2 := []float32{
+		13, 14,
+		23, 24,
+	}
+
+	testutils.AssertFloat32SliceApproxEqual(t, expG1, grads[0].Data(), 0, "grad1 data")
+	testutils.AssertFloat32SliceApproxEqual(t, expG2, grads[1].Data(), 0, "grad2 data")
+}
+
+func TestConcat_ForwardRankAlignment(t *testing.T) {
+	// Simulates the ONNX SigLIP pattern: Unsqueeze output [1,1] concatenated
+	// with Constant [1]. Concat should auto-unsqueeze the 1D input to [1,1].
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	layer := NewConcat[float32](engine, 0)
+
+	// Unsqueeze output: rank 2, shape [1,1]
+	in1, err := tensor.New[float32]([]int{1, 1}, []float32{42})
+	testutils.AssertNoError(t, err, "create in1")
+	// Constant: rank 1, shape [1]
+	in2, err := tensor.New[float32]([]int{1}, []float32{7})
+	testutils.AssertNoError(t, err, "create in2")
+
+	out, err := layer.Forward(context.Background(), in1, in2)
+	testutils.AssertNoError(t, err, "forward rank alignment")
+	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{2, 1}, out.Shape()), "shape should be [2,1]")
+	testutils.AssertFloat32SliceApproxEqual(t, []float32{42, 7}, out.Data(), 0, "data")
+}
+
+func TestConcat_ForwardSameRankUnchanged(t *testing.T) {
+	// When all inputs have the same rank, no alignment should occur.
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	layer := NewConcat[float32](engine, 0)
+
+	in1, _ := tensor.New[float32]([]int{1}, []float32{1})
+	in2, _ := tensor.New[float32]([]int{1}, []float32{2})
+
+	out, err := layer.Forward(context.Background(), in1, in2)
+	testutils.AssertNoError(t, err, "forward same rank")
+	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{2}, out.Shape()), "shape should be [2]")
+	testutils.AssertFloat32SliceApproxEqual(t, []float32{1, 2}, out.Data(), 0, "data")
+}
+
+func TestConcat_ForwardAxis0(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	layer := NewConcat[float32](engine, 0)
+
+	in1, _ := tensor.New[float32]([]int{1, 3}, []float32{1, 2, 3})
+	in2, _ := tensor.New[float32]([]int{2, 3}, []float32{4, 5, 6, 7, 8, 9})
+
+	out, err := layer.Forward(context.Background(), in1, in2)
+	testutils.AssertNoError(t, err, "forward axis0")
+	testutils.AssertTrue(t, testutils.IntSliceEqual([]int{3, 3}, out.Shape()), "shape")
+
+	expected := []float32{
+		1, 2, 3,
+		4, 5, 6,
+		7, 8, 9,
+	}
+	testutils.AssertFloat32SliceApproxEqual(t, expected, out.Data(), 0, "data")
+}
+
+func TestConcat_BackwardAxis0(t *testing.T) {
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	layer := NewConcat[float32](engine, 0)
+
+	in1, _ := tensor.New[float32]([]int{1, 3}, []float32{1, 2, 3})
+	in2, _ := tensor.New[float32]([]int{2, 3}, []float32{4, 5, 6, 7, 8, 9})
+	gOut, _ := tensor.New[float32]([]int{3, 3}, []float32{
+		10, 11, 12,
+		20, 21, 22,
+		30, 31, 32,
+	})
+
+	grads, err := layer.Backward(context.Background(), types.FullBackprop, gOut, in1, in2)
+	testutils.AssertNoError(t, err, "backward axis0")
+	testutils.AssertEqual(t, 2, len(grads), "grads len")
+
+	expG1 := []float32{10, 11, 12}
+	expG2 := []float32{20, 21, 22, 30, 31, 32}
+
+	testutils.AssertFloat32SliceApproxEqual(t, expG1, grads[0].Data(), 0, "grad1 data")
+	testutils.AssertFloat32SliceApproxEqual(t, expG2, grads[1].Data(), 0, "grad2 data")
+}
+
+// TestConcat_BackwardEqualSplit exercises the engine.Split fast path
+// (equal-length inputs along the concat axis), the route taken by GPU
+// engines to keep the gradient device-resident (CUDA-graph capture
+// compatibility). Values must match the generic host path exactly.
+func TestConcat_BackwardEqualSplit(t *testing.T) {
+	tests := []struct {
+		name     string
+		axis     int
+		inShape  []int
+		inputs   int
+		gOut     []float32
+		outShape []int
+		expected [][]float32
+	}{
+		{
+			name:     "axis0 wolf pattern [1,d] x3",
+			axis:     0,
+			inShape:  []int{1, 3},
+			inputs:   3,
+			outShape: []int{3, 3},
+			gOut:     []float32{10, 11, 12, 20, 21, 22, 30, 31, 32},
+			expected: [][]float32{{10, 11, 12}, {20, 21, 22}, {30, 31, 32}},
+		},
+		{
+			name:     "axis1 equal halves",
+			axis:     1,
+			inShape:  []int{2, 2},
+			inputs:   2,
+			outShape: []int{2, 4},
+			gOut:     []float32{1, 2, 3, 4, 5, 6, 7, 8},
+			expected: [][]float32{{1, 2, 5, 6}, {3, 4, 7, 8}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+			layer := NewConcat[float32](engine, tt.axis)
+
+			ins := make([]*tensor.TensorNumeric[float32], tt.inputs)
+			n := 1
+			for _, d := range tt.inShape {
+				n *= d
+			}
+			for i := range ins {
+				var err error
+				ins[i], err = tensor.New[float32](tt.inShape, make([]float32, n))
+				testutils.AssertNoError(t, err, "create input")
+			}
+			gOut, err := tensor.New[float32](tt.outShape, tt.gOut)
+			testutils.AssertNoError(t, err, "create gOut")
+
+			grads, err := layer.Backward(context.Background(), types.FullBackprop, gOut, ins...)
+			testutils.AssertNoError(t, err, "backward")
+			testutils.AssertEqual(t, tt.inputs, len(grads), "grads len")
+			for i, exp := range tt.expected {
+				testutils.AssertTrue(t, testutils.IntSliceEqual(tt.inShape, grads[i].Shape()), "grad shape")
+				testutils.AssertFloat32SliceApproxEqual(t, exp, grads[i].Data(), 0, "grad data")
+			}
+		})
+	}
+}

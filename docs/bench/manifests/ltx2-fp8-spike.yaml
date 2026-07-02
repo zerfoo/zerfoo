@@ -1,0 +1,94 @@
+# LTX-2 fp8 / Q4_K n>1 GEMM micro-benchmark pod manifest (E127/T127.1.0b PART 2).
+#
+# Sizes the load-bearing perf risk for E127: whether low-precision GPU GEMM in
+# the DiT DENOISE regime (n>1, i.e. many latent tokens per forward -- NOT the
+# n==1 autoregressive-decode regime the LLM quant kernels were tuned for) is
+# fast enough, or whether new kernels are needed before the converter storage
+# mapping (T127.3.2) and the perf budget (T127.7.4) are committed. fp8 is
+# F8_E4M3 (confirmed Phase-0; see docs/devlog.md).
+#
+# Binary: cmd/bench_gemm. Like every Spark bench binary it is built NATIVELY ON
+# THE HOST (linux/arm64, CGO_ENABLED=0, purego/dlopen) and dropped at
+# /var/lib/zerfoo/bin/bench_gemm -- it does NOT cross-compile from darwin
+# (purego's runtime.dlopen relocations are linux-only). Build on the GB10:
+#   go build -o /var/lib/zerfoo/bin/bench_gemm ./cmd/bench_gemm
+#
+# Submit (substitute RUN_ID; per the Hardware doctrine use Spark, NOT ssh):
+#   SPARK=http://192.168.86.250:8080
+#   sed 's/${RUN_ID}/'"$(date +%s)"'/g' docs/bench/manifests/ltx2-fp8-spike.yaml \
+#     | curl -sf -X POST -H 'Content-Type: application/yaml' --data-binary @- \
+#       "$SPARK/api/v1/pods"
+# then poll /api/v1/pods/<name> and read /logs; results also persist to
+# /var/lib/zerfoo/bench-out/<RUN_ID>.txt on the host.
+#
+# Resource caps enforced by Podman cgroups on the host (memory 32Gi, cpu 8,
+# nvidia.com/gpu 1 serialized via SPARK_GPU_MAX=1). CUDA 13 runtime libs are
+# mounted read-only from /usr/local/cuda and loaded via purego at runtime.
+#
+# Shapes: m=k=4096 is the LTX-2 video-stream inner dim; ns sweeps the denoise
+# regime (256 / 1024 / 4096 latent tokens). The bench reports ms/op, GFLOP/s,
+# and fp8/Q4_K speedup vs the f32 baseline for each n.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bench-ltx2-gemm-${RUN_ID}
+  labels:
+    app: bench
+    type: ltx2-fp8-gemm
+spec:
+  restartPolicy: Never
+  containers:
+    - name: bench
+      image: docker.io/library/ubuntu:24.04
+      command:
+        - /var/lib/zerfoo/bin/bench_gemm
+      args:
+        - "-m"
+        - "4096"
+        - "-k"
+        - "4096"
+        - "-ns"
+        - "256,1024,4096"
+        - "-iters"
+        - "50"
+        - "-warmup"
+        - "10"
+        - "-out"
+        - "/var/lib/zerfoo/bench-out/${RUN_ID}.txt"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 32Gi
+          cpu: "8"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: zerfoo-bin
+          mountPath: /var/lib/zerfoo/bin
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: bench-out
+          mountPath: /var/lib/zerfoo/bench-out
+  volumes:
+    - name: zerfoo-bin
+      hostPath:
+        path: /var/lib/zerfoo/bin
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: bench-out
+      hostPath:
+        path: /var/lib/zerfoo/bench-out
+        type: DirectoryOrCreate

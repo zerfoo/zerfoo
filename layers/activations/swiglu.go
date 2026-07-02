@@ -1,0 +1,221 @@
+// Package activations provides neural network activation functions.
+package activations
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
+)
+
+// SwiGLU implements the SwiGLU activation function.
+type SwiGLU[T tensor.Numeric] struct {
+	engine  compute.Engine[T]
+	ops     numeric.Arithmetic[T]
+	sigmoid *Sigmoid[T] // SwiGLU uses composed Sigmoid internally
+
+	// Cached tensors for backward pass. gate and siluX1 are registered
+	// with the save-for-backward contract (ztensor ADR 006) every Forward
+	// so arena-backed storage stays pinned until Backward consumes them.
+	gate        *tensor.TensorNumeric[T] // sigmoid(x1), the gate activation
+	siluX1      *tensor.TensorNumeric[T] // x1 * sigmoid(x1), cached for backward
+	outputShape []int
+	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
+}
+
+// SetSaver implements graph.SaverAware, fanning the Saver out to the
+// composed Sigmoid so its cached output participates in the contract too.
+func (s *SwiGLU[T]) SetSaver(sv graph.Saver[T]) {
+	s.saver = sv
+	s.sigmoid.SetSaver(sv)
+}
+
+// OpType returns the operation type.
+func (s *SwiGLU[T]) OpType() string {
+	return "SwiGLU"
+}
+
+// Attributes returns the attributes.
+func (s *SwiGLU[T]) Attributes() map[string]interface{} {
+	return make(map[string]interface{})
+}
+
+// SwiGLUOptions holds configuration options for SwiGLU.
+type SwiGLUOptions[T tensor.Numeric] struct {
+	// No specific options for now, but kept for consistency.
+}
+
+// SwiGLUOption is a function that applies an option to SwiGLUOptions.
+type SwiGLUOption[T tensor.Numeric] func(*SwiGLUOptions[T])
+
+// NewSwiGLU creates a new SwiGLU activation layer.
+func NewSwiGLU[T tensor.Numeric](engine compute.Engine[T], ops numeric.Arithmetic[T], opts ...SwiGLUOption[T]) *SwiGLU[T] {
+	options := &SwiGLUOptions[T]{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	return &SwiGLU[T]{
+		engine:  engine,
+		ops:     ops,
+		sigmoid: NewSigmoid(engine, ops),
+	}
+}
+
+// OutputShape returns the output shape of SwiGLU.
+func (s *SwiGLU[T]) OutputShape() []int {
+	return s.outputShape
+}
+
+// Parameters returns an empty slice as SwiGLU has no trainable parameters.
+func (s *SwiGLU[T]) Parameters() []*graph.Parameter[T] {
+	return nil
+}
+
+// Forward computes the SwiGLU activation.
+// Input: A tensor with its last dimension being 2 * feature_dim.
+func (s *SwiGLU[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("SwiGLU: %w, expected %d, got %d", graph.ErrInvalidInputCount, 1, len(inputs))
+	}
+
+	input := inputs[0]
+
+	inputShape := input.Shape()
+	if len(inputShape) < 1 {
+		return nil, errors.New("SwiGLU input must have at least one dimension")
+	}
+
+	lastDim := inputShape[len(inputShape)-1]
+	if lastDim%2 != 0 {
+		return nil, fmt.Errorf("last dimension of input (%d) must be even for SwiGLU", lastDim)
+	}
+
+	s.outputShape = make([]int, len(inputShape))
+	copy(s.outputShape, inputShape)
+	s.outputShape[len(s.outputShape)-1] = lastDim / 2
+
+	// Split input into x1 and x2 along the last dimension
+	splitTensors, err := s.engine.Split(ctx, input, 2, len(inputShape)-1)
+	if err != nil {
+		return nil, err
+	}
+
+	x1 := splitTensors[0] // gate projection output
+	x2 := splitTensors[1] // up projection output
+
+	// SwiGLU(x1, x2) = silu(x1) * x2 = (x1 * sigmoid(x1)) * x2
+	// Compute gate = sigmoid(x1)
+	gate, err := s.sigmoid.Forward(ctx, x1)
+	if err != nil {
+		return nil, err
+	}
+
+	s.gate = gate // Cache gate for backward
+
+	// Compute silu(x1) = x1 * sigmoid(x1)
+	siluX1, err := s.engine.Mul(ctx, x1, gate, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.siluX1 = siluX1 // Cache for backward
+	if s.saver != nil {
+		s.saver.SaveForBackward(gate, siluX1)
+	}
+
+	// Compute output = silu(x1) * x2
+	output, err := s.engine.Mul(ctx, siluX1, x2, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return output, nil
+}
+
+// Backward computes the gradients for SwiGLU.
+func (s *SwiGLU[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 1 {
+		return nil, fmt.Errorf("invalid input count: %w", graph.ErrInvalidInputCount)
+	}
+	// dOut shape: (..., feature_dim)
+	// inputs[0] shape: (..., 2 * feature_dim)
+	//
+	// The original input is re-split from the live inputs the graph passes
+	// in, not from a cached forward tensor (ztensor ADR 006).
+	inputShape := inputs[0].Shape()
+
+	// Re-split original input into x1 and x2
+	splitTensors, err := s.engine.Split(ctx, inputs[0], 2, len(inputShape)-1)
+	if err != nil {
+		return nil, err
+	}
+
+	x1 := splitTensors[0]
+	x2 := splitTensors[1]
+
+	// Forward was: output = silu(x1) * x2 = (x1 * sigmoid(x1)) * x2
+	// gate = sigmoid(x1), siluX1 = x1 * gate
+	//
+	// dL/dx2 = dOut * silu(x1) = dOut * siluX1
+	dLdx2, err := s.engine.Mul(ctx, dOut, s.siluX1, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// dL/dx1 = dOut * x2 * d(silu(x1))/dx1
+	// d(silu(x1))/dx1 = sigmoid(x1) + x1 * sigmoid(x1) * (1 - sigmoid(x1))
+	//                 = sigmoid(x1) * (1 + x1 * (1 - sigmoid(x1)))
+	//                 = gate * (1 + x1 * (1 - gate))
+	negGate, err := s.engine.MulScalar(ctx, s.gate, s.ops.FromFloat64(-1))
+	if err != nil {
+		return nil, err
+	}
+	oneMinusGate, err := s.engine.AddScalar(ctx, negGate, s.ops.One())
+	if err != nil {
+		return nil, err
+	}
+	// x1 * (1 - gate)
+	x1OneMinusGate, err := s.engine.Mul(ctx, x1, oneMinusGate, nil)
+	if err != nil {
+		return nil, err
+	}
+	// 1 + x1 * (1 - gate)
+	onePlusX1OneMinusGate, err := s.engine.AddScalar(ctx, x1OneMinusGate, s.ops.One())
+	if err != nil {
+		return nil, err
+	}
+	// gate * (1 + x1 * (1 - gate))
+	siluGrad, err := s.engine.Mul(ctx, s.gate, onePlusX1OneMinusGate, nil)
+	if err != nil {
+		return nil, err
+	}
+	// dOut * x2
+	dOutX2, err := s.engine.Mul(ctx, dOut, x2, nil)
+	if err != nil {
+		return nil, err
+	}
+	// dL/dx1 = dOut * x2 * siluGrad
+	dLdx1, err := s.engine.Mul(ctx, dOutX2, siluGrad, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Concatenate dL/dx1 and dL/dx2
+	dInput, err := s.engine.Concat(ctx, []*tensor.TensorNumeric[T]{dLdx1, dLdx2}, len(inputShape)-1, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return []*tensor.TensorNumeric[T]{dInput}, nil
+}
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*SwiGLU[float32])(nil)
+
+// Statically assert that SwiGLU participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*SwiGLU[float32])(nil)

@@ -1,0 +1,9 @@
+goos: linux
+goarch: amd64
+pkg: github.com/zerfoo/zerfoo/compute
+BenchmarkMatMul128-8        5000       250000 ns/op
+BenchmarkMatMul512-8         200     15000000 ns/op
+BenchmarkMatMul1024-8         30    120000000 ns/op
+BenchmarkSoftmax-8         10000       100000 ns/op
+BenchmarkAdd-8             50000        10000 ns/op
+PASS

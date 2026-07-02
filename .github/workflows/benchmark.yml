@@ -1,0 +1,101 @@
+name: benchmark
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # weekly Monday 6am UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: write
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+      - name: Cache Go build
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-bench-${{ hashFiles('**/go.sum') }}
+          restore-keys: ${{ runner.os }}-go-bench-
+      - name: Run benchmarks
+        run: ./scripts/bench.sh > bench-results.json 2>bench-stderr.txt || true
+      - name: Show results
+        run: cat bench-results.json
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: |
+            bench-results.json
+            bench-stderr.txt
+          retention-days: 90
+      - name: Download previous results
+        id: prev
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: benchmark-results-previous
+          path: prev/
+        continue-on-error: true
+      - name: Build comparison tool
+        run: go build -o bench-compare ./cmd/bench-compare/
+      - name: Check for regressions
+        if: steps.prev.outcome == 'success'
+        run: |
+          ./bench-compare prev/bench-results.json bench-results.json > regression-report.md || REGRESSED=true
+          cat regression-report.md
+          if [ "$REGRESSED" = "true" ] && [ "${{ github.event_name }}" = "pull_request" ]; then
+            gh pr comment ${{ github.event.pull_request.number }} --body-file regression-report.md
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Save as previous baseline
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: benchmark-results-previous
+          path: bench-results.json
+          overwrite: true
+          retention-days: 90
+  bench-gpu:
+    runs-on: [self-hosted, dgx-spark]
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Run GPU benchmarks
+        env:
+          PATH: /usr/local/cuda/bin:/usr/local/go/bin:${{ env.PATH }}
+          CGO_CFLAGS: -I/usr/local/cuda/include
+          CGO_LDFLAGS: -L/usr/local/cuda/lib64
+        run: |
+          go test -tags cuda -bench='BenchmarkGemmQ4F32_1024' -benchmem -count=1 -run='^$' \
+              -timeout 300s ./internal/cuda/kernels/ 2>&1 | \
+          awk '/BenchmarkGemmQ4F32_1024/ {
+              for (i=1; i<=NF; i++) {
+                  if ($(i+1) == "ns/op") ns=$i
+              }
+          } END {
+              if (ns) {
+                  flops = 2 * 1024 * 1024 * 1024
+                  gflops = flops / (ns * 1e-9) / 1e9
+                  printf "{\"metric\": \"cuda_q4_gemm_gflops_1024\", \"value\": %.2f, \"unit\": \"GFLOPS\"}\n", gflops
+              }
+          }' > gpu-bench-results.json
+          cat gpu-bench-results.json
+      - name: Upload GPU benchmark results
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gpu-benchmark-results-${{ github.sha }}
+          path: gpu-bench-results.json
+          retention-days: 90
