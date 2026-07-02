@@ -1,5 +1,46 @@
 # Updates
 
+## 2026-07-02: H2 strategy adopted — Trust, then Traction
+
+- **ADR-093 accepted**: A full product review (plan, devlog, benchmarks, ADRs 068–092, the issue tracker, and every satellite repo) concluded that engineering is ahead of the 10-year vision's Year-1 targets while distribution and trust lag. The response is a "Trust, then Traction" H2 roadmap. Details in [`docs/product-strategy-2026-H2.md`](product-strategy-2026-H2.md); it supersedes the priority ordering in `docs/plan.md` but not the 10-year thesis in `docs/VISION.md`.
+- **Plan reset to Phase 0** under the new strategy.
+- **Tracker hygiene**: ~40 stale/noise issues closed and a new `parked` label introduced to mark deferred-but-not-dead work, so the open tracker reflects what is actually in flight.
+- **Knowledge base**: `docs/lore.md` created as an append-only landmine/invariant register (seeded with 12 invariants); the ADR index was regenerated.
+- **Incoming**: a containment gate for the capture-replay gradient divergence tracked in [#878](https://github.com/zerfoo/zerfoo/issues/878) — see the capture-replay note below.
+
+## 2026-06-13 → 06-30: v1.50.x → v1.55.1 — capture-replay training runner + LTX-2 diffusion primitives
+
+Follow-up hardening after the June training-stack campaign, plus the first primitives for the LTX-2 diffusion inference epic (ADR-092, E127 started).
+
+- **CUDA-graph capture-replay training runner**: capture-safe cross-entropy loss and device-side Concat backward, with a device-resident loss seed so capture-on no longer host-copies inside the capture region ([#875](https://github.com/zerfoo/zerfoo/issues/875)).
+- **On-device AdamW**: optimizer step runs on-device when the engine and params are GPU-resident (ztensor v1.12.0 fused AdamW kernel).
+- **bf16 gradient accumulation**: device-resident bf16 accumulation now goes through the engine instead of a host round-trip.
+- **Engine-op Dropout**: capture-safe `WithEngineDropout` path.
+- **Diffusion primitives (E127, ADR-092)**: GroupNormalization layer and Conv3d / ConvTranspose3d forward primitives landed, with an LTX-2 VAE decoder skeleton.
+- **Known issue**: capture-replay can silently diverge gradients under a corrected 1.0 loss seed ([#878](https://github.com/zerfoo/zerfoo/issues/878), open) — a containment gate is being added.
+
+## 2026-06-11: GPU training-stack hardening campaign (ADR-091)
+
+Every op — used by any workload or not — now has to clear a per-op verification gate before merge: finite-difference gradcheck, GPU-vs-CPU parity under arena stress, and a PyTorch-oracle harness on GB10.
+
+- **Verification gates (ADR-091)**: gradcheck / OpInfo, parity-under-arena-stress, and PyTorch-oracle checks, wired as design.md §7.5.
+- **Lifetime + memory contracts**: `SaveForBackward` for backward-consumed caches across activations, attention, normalization, FFN/FiLM/TCE/VSN, and dropout masks (ADR-006); arena pinning; and a poison mode that surfaces stale-free / double-free bugs deterministically.
+- **Root causes were contract gaps, not numerics**: unordered host access to device gradients on GB10 unified memory (ztensor#137) and stale GC-finalizer frees after an arena Reset (ztensor#138), both fixed upstream (ztensor v1.11.0).
+- **Measured outcome**: two consecutive clean end-to-end GB10 f32 training runs — zero NaN, epoch loss 0.778373, accuracy within 0.05pp of the CPU baseline, ~390 samples/s. Requires ztensor v1.11+ and zerfoo v1.49+.
+
+## 2026-04-27 → 04-28: E124 layout cleanup + ADR-090 scope decision
+
+- **ADR-090**: decided that cloud, marketplace, and compliance code is out of scope for the open-source core and is extracted to the private enterprise repo. Zerfoo core stays a general-purpose ML inference/training framework.
+- **E124 package-layout cleanup**: the extraction was executed and verified across all subtrees; `docs/design.md` was realigned to mandate the post-E124 package layout and the GGUF-only doctrine.
+
+## 2026-04-13: v1.43.0 → v1.48.0 — Gemma 4 architecture support
+
+New architecture builders for the Gemma 4 family, released across v1.43.0–v1.48.0.
+
+- **Dense / MoE / edge builders**: a 31B dense builder, an MoE variant builder, and an edge variant with per-layer embeddings (PLE) and shared-KV attention (ADR-085, ADR-086).
+- **External-KV GQA path (ADR-087)**: `ResolveKVDonor` + a `kv_reuse_node` wire a donor layer's K/V into shared-KV attention, so edge layers can reuse a neighbor's KV cache. CUDA-graph capture support for the PLE combiner and LM head (ADR-088, ADR-089).
+- **Known defect — do not rely on Gemma 4 edge decode yet**: gemma4 edge (`gemma4e`) decode output is not yet correct ([#757](https://github.com/zerfoo/zerfoo/issues/757), open); the failure is isolated to Q4_K PLE gather tables. No performance claims are made for Gemma 4 at this time.
+
 ## 2026-04-06: v1.42.1 released + DGX benchmark infrastructure
 
 - **v1.42.1 released**: Merged release-please PR #340. Includes all E77-E84 composition phase 4 work.
