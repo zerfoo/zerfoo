@@ -1,0 +1,79 @@
+# PatchTST training benchmark pod manifest.
+#
+# Submit via scripts/bench-spark.sh, which substitutes ${RUN_ID}, ${SAMPLES},
+# ${CHANNELS}, ${EPOCHS} before POSTing to Spark's /api/v1/pods endpoint.
+#
+# Resource caps are enforced by Podman cgroups on the DGX host:
+#   - memory 32Gi       (host RAM cap; NOT VRAM — GB10 has unified memory, no MIG)
+#   - cpu "8"           (8 full cores out of the host's budget)
+#   - nvidia.com/gpu 1  (serialized via SPARK_GPU_MAX=1 on the host)
+#
+# The bench binary is built on the host and mounted read-only from
+# /var/lib/zerfoo/bin. CUDA 13 runtime libs are mounted read-only from
+# /usr/local/cuda (zerfoo loads them via purego/dlopen at runtime, so
+# the Ubuntu 24.04 base image needs no CUDA packages of its own — verified
+# 2026-04-07: ldd on bench_train shows only libc + ld-linux, no libcuda deps).
+#
+# Output files land in /var/lib/zerfoo/bench-out on the host and persist
+# after the pod terminates, so logs+artifacts can be inspected without
+# re-running the bench.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bench-patchtst-${RUN_ID}
+  labels:
+    app: bench
+    type: patchtst-train
+spec:
+  restartPolicy: Never
+  containers:
+    - name: bench
+      image: docker.io/library/ubuntu:24.04
+      command:
+        - /var/lib/zerfoo/bin/bench_train
+      args:
+        - "-samples"
+        - "${SAMPLES}"
+        - "-channels"
+        - "${CHANNELS}"
+        - "-epochs"
+        - "${EPOCHS}"
+        - "-out"
+        - "/var/lib/zerfoo/bench-out/${RUN_ID}.txt"
+      env:
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/cuda/lib64
+      resources:
+        limits:
+          memory: 32Gi
+          cpu: "8"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: zerfoo-bin
+          mountPath: /var/lib/zerfoo/bin
+          readOnly: true
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: bench-out
+          mountPath: /var/lib/zerfoo/bench-out
+  volumes:
+    - name: zerfoo-bin
+      hostPath:
+        path: /var/lib/zerfoo/bin
+        type: Directory
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: bench-out
+      hostPath:
+        path: /var/lib/zerfoo/bench-out
+        type: DirectoryOrCreate
