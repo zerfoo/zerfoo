@@ -2,6 +2,27 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-02: Tracker-hygiene pass complete -- open issues reduced to live engineering
+
+**Type:** finding
+**Tags:** tracker-hygiene, adr-093, phase-0, T128.5
+
+**Problem:** ~100 open issues, ~75% noise (retracted-E94 business fiction,
+"(COMPLETE)" epics, stale handovers, superseded DGX-validation residue).
+**Fix:** T128.1-T128.4 closed 42 issues and parked 31 under the new `parked`
+label; the T128.5 verification sweep found and closed 15 more ((COMPLETE)
+epics #506-#516/#555 that the first pass missed, plus verified-empty epics
+#654 E89, #645 E87, #546 E61) and parked #521. Dispositions:
+docs/product-strategy-2026-H2.md Appendix.
+**Result:** 60 issues remain open: 27 live engineering, 33 parked. Live set:
+capture cluster #878/#870/#865 + umbrella #847; gemma4 line #757/#766/#754/
+#751/#750/#742-#748/#694/#695/#440; LTX-2 #887/#888; E124 residue #767/#773/
+#774/#796/#799; E86 #572 + T86.5.8; E63 #556 + child; E54 #517.
+**Impact:** tracker legible for Phase 1 planning and external contributors.
+Over-closure check: all 2026-07-02 closures reconciled against dispositions;
+no live engineering bug was closed. Note: the sweep agent's devlog commit was
+lost (misattributed PR); this entry reconstructs it from the agent's report.
+
 ## 2026-07-02: Full product review -- Trust-then-Traction strategy adopted, plan.md reset to Phase 0
 
 **Type:** decision + finding
