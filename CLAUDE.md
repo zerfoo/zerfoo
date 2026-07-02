@@ -45,6 +45,8 @@ go test -run TestParity -count=1 ./tests/parity/...  # Model parity tests (requi
 
 GPU tests (`-tags cuda`, `bench_train`, and any benchmark that actually touches CUDA kernels) must run on DGX via Spark — see the Hardware section above. Do not run them via interactive SSH.
 
+**GPU validation (standing gate):** `scripts/dgx-validate.sh` is the one command for GPU-dependent acceptance — it builds zerfoo natively on the GB10 (purego cannot cross-compile darwin→linux/arm64) inside a Spark pod, runs cuda-tagged tests + the parity subset, and exits green/red on a JSON report. Use `-dry-run` to inspect without submitting. One GPU pod at a time; record run results in docs/devlog.md.
+
 ## Key Conventions
 
 - **Engine[T] is law**: All tensor arithmetic flows through `compute.Engine[T]`. Never operate on raw slices outside the engine — this enables transparent CPU/GPU switching and CUDA graph capture.
