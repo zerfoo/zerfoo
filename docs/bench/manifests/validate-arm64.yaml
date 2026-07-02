@@ -1,0 +1,159 @@
+# Native arm64 GPU-validation pod manifest for the DGX GB10 (via Spark).
+#
+# Why this exists: zerfoo's GPU bindings load CUDA + the custom kernels via
+# purego/dlopen, whose runtime.dlopen linknames need cgo. That makes a
+# darwin->linux/arm64 cross-compile impossible, so every GPU-touching build
+# and test MUST be produced NATIVELY on the GB10. This manifest institutionalizes
+# the workaround proven manually in E96: clone zerfoo at a ref inside an arm64
+# Go container on the host, build + vet + run the cuda-tagged tests there, and
+# emit a machine-readable pass/fail report.
+#
+# Submit via scripts/dgx-validate.sh, which fills in the pod name and git ref
+# before POSTing to Spark's /api/v1/pods endpoint. Do NOT submit by hand.
+#
+# Divergence from patchtst-train.yaml: that manifest runs a bench binary that
+# was pre-built on the host, so it uses a bare ubuntu:24.04 base. This job
+# builds from source in-pod, so it uses an arm64 golang image (which also
+# ships git). Everything else -- cgroup caps, the read-only CUDA + kernels
+# mounts, hostPath output persistence -- follows the same conventions.
+#
+# Resource caps are enforced by Podman cgroups on the DGX host:
+#   - memory 32Gi       (host RAM cap; NOT VRAM -- GB10 has unified memory, no MIG)
+#   - cpu "8"           (8 full cores out of the host's budget)
+#   - nvidia.com/gpu 1  (serialized via SPARK_GPU_MAX=1 on the host)
+#
+# Mounts (read-only unless noted):
+#   /usr/local/cuda        CUDA 13 runtime libs (loaded via purego/dlopen)
+#   /opt/zerfoo/lib        tanh-fixed sm_121 libkernels.so; resolved by
+#                          internal/cuda/purego.go kernelLibPaths[2]
+#   /var/lib/zerfoo/models GGUF model files for the parity subset (optional;
+#                          the job skips model parity cleanly when empty)
+#   /var/lib/zerfoo/go     writable Go build+module cache (speeds re-runs)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${POD_NAME}
+  labels:
+    app: validate
+    type: arm64-gpu-validation
+spec:
+  restartPolicy: Never
+  containers:
+    - name: validate
+      image: docker.io/library/golang:1.26-bookworm
+      command:
+        - /bin/bash
+        - -c
+      args:
+        - |
+          set -uo pipefail
+
+          REF="${REF:-main}"
+          REPO_URL="${REPO_URL:-https://github.com/zerfoo/zerfoo.git}"
+          MODELS_DIR="${MODELS_DIR:-/var/lib/zerfoo/models}"
+          CUDA_PKGS="${CUDA_PKGS:-./internal/cuda/... ./tabular/... ./tests/parity/...}"
+          SRC=/workspace/zerfoo
+
+          FAILS=""
+          add_fail() { FAILS="${FAILS:+$FAILS,}\"$1\""; }
+
+          # Emit the single-line JSON report as the final stdout line.
+          emit() {
+            printf '{"ref":"%s","build":"%s","vet":"%s","cuda_tests":"%s","parity":"%s","failures":[%s]}\n' \
+              "$REF" "$1" "$2" "$3" "$4" "$FAILS"
+          }
+
+          echo ">> zerfoo arm64 GPU validation: ref=$REF host=$(uname -m) go=$(go version)"
+
+          rm -rf "$SRC"
+          if ! git clone --quiet "$REPO_URL" "$SRC"; then
+            add_fail clone; emit fail skip skip skip; exit 1
+          fi
+          cd "$SRC" || { add_fail chdir; emit fail skip skip skip; exit 1; }
+          if ! git checkout --quiet "$REF"; then
+            add_fail checkout; emit fail skip skip skip; exit 1
+          fi
+          echo ">> HEAD $(git rev-parse HEAD)"
+
+          BUILD=pass
+          echo ">> go build ./..."
+          go build ./... || { BUILD=fail; add_fail build; }
+
+          VET=pass
+          echo ">> go vet ./..."
+          go vet ./... || { VET=fail; add_fail vet; }
+
+          CUDA=pass
+          echo ">> go test -tags cuda $CUDA_PKGS"
+          # shellcheck disable=SC2086
+          go test -tags cuda -count=1 -timeout 900s $CUDA_PKGS || { CUDA=fail; add_fail cuda_tests; }
+
+          # Model parity: only when GGUF files are mounted. Each model parity
+          # test skips itself when its ModelDirEnvVar is unset, so we discover
+          # those env-var names from the source and point them all at MODELS_DIR.
+          PARITY=skip
+          if [ -d "$MODELS_DIR" ] && [ -n "$(ls -A "$MODELS_DIR" 2>/dev/null)" ]; then
+            for v in $(grep -rhoE 'ModelDirEnvVar:[[:space:]]*"[A-Z0-9_]+"' tests/parity 2>/dev/null \
+                       | grep -oE '"[A-Z0-9_]+"' | tr -d '"' | sort -u); do
+              export "$v=$MODELS_DIR"
+            done
+            PARITY=pass
+            echo ">> go test -tags cuda ./tests/parity/... (models present)"
+            go test -tags cuda -count=1 -timeout 900s ./tests/parity/... || { PARITY=fail; add_fail parity; }
+          else
+            echo ">> model parity skipped (no files under $MODELS_DIR)"
+          fi
+
+          emit "$BUILD" "$VET" "$CUDA" "$PARITY"
+          [ -z "$FAILS" ] || exit 1
+      env:
+        - name: REF
+          value: "${REF}"
+        - name: REPO_URL
+          value: "https://github.com/zerfoo/zerfoo.git"
+        - name: MODELS_DIR
+          value: "/var/lib/zerfoo/models"
+        - name: CUDA_PKGS
+          value: "./internal/cuda/... ./tabular/... ./tests/parity/..."
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/cuda/lib64:/opt/zerfoo/lib"
+        - name: GOCACHE
+          value: "/var/lib/zerfoo/go/build"
+        - name: GOMODCACHE
+          value: "/var/lib/zerfoo/go/mod"
+        - name: GOFLAGS
+          value: "-mod=mod"
+      resources:
+        limits:
+          memory: 32Gi
+          cpu: "8"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+        - name: models
+          mountPath: /var/lib/zerfoo/models
+          readOnly: true
+        - name: go-cache
+          mountPath: /var/lib/zerfoo/go
+  volumes:
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+        type: Directory
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda
+        type: Directory
+    - name: models
+      hostPath:
+        path: /var/lib/zerfoo/models
+        type: DirectoryOrCreate
+    - name: go-cache
+      hostPath:
+        path: /var/lib/zerfoo/go
+        type: DirectoryOrCreate
