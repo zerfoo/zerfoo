@@ -1701,6 +1701,25 @@ Two upstream ztensor contracts make both paths safe:
   registered sync hooks (`tensor.RegisterHostAccessSync`), so a host read can
   never observe bytes from before a still-asynchronous kernel write.
 
+### 21.5 Capture-Replay Training (gated off)
+
+`training/capture_replay.go` provides a `CaptureReplayRunner` that records a
+training step's forward + loss + backward + gradient-accumulation walk into a
+CUDA graph (on engines implementing `compute.GraphCapturer`) and replays it,
+replacing the per-step kernel-launch sequence with a single graph launch.
+
+This path is currently **gated off**. Enabling CUDA-graph capture on the
+training walk silently produces wrong gradients (losses ascend while the
+identical eager configuration converges), tracked as zerfoo#878. Until the
+root-cause fix lands, `NewCaptureReplayRunner` refuses to construct a
+capture-enabled runner: when the engine is a `GraphCapturer` and capture is not
+disabled via `ZERFOO_DISABLE_CUDA_GRAPH`, construction returns an error unless
+`ZERFOO_UNSAFE_CAPTURE_TRAINING=1` is set to acknowledge the hazard. The gate is
+containment only, decided once at construction (not per-step). Eager/passthrough
+construction (no `GraphCapturer` engine, or capture disabled) is unaffected and
+needs no override. Inference-side CUDA-graph capture (see 10.3) is a separate,
+unaffected path.
+
 ---
 
 ## 22. Time-Series ML Platform
