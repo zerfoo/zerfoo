@@ -52,7 +52,7 @@ POLL_INTERVAL="${POLL_INTERVAL:-5}"
 
 usage() {
   cat >&2 <<USAGE
-Usage: $0 [-ref <git-ref>] [-timeout <seconds>] [-dry-run] [-keep] [-no-pull]
+Usage: $0 [-ref <git-ref>] [-timeout <seconds>] [-dry-run] [-keep] [-no-pull] [-delete <pod-name>]
 
 Submits docs/bench/manifests/validate-arm64.yaml to Spark at \${SPARK}
 (currently ${SPARK}), polls until the pod terminates, streams logs, extracts
@@ -66,6 +66,7 @@ USAGE
 
 KEEP=0
 PREPULL=1
+DELETE_POD=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -ref)      [ $# -ge 2 ] || usage; REF="$2"; shift 2 ;;
@@ -73,6 +74,7 @@ while [ $# -gt 0 ]; do
     -dry-run)  DRY_RUN=1; shift ;;
     -keep)     KEEP=1; shift ;;
     -no-pull)  PREPULL=0; shift ;;
+    -delete)   [ $# -ge 2 ] || usage; DELETE_POD="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "unknown arg: $1" >&2; usage ;;
   esac
@@ -161,6 +163,17 @@ extract_phase() {
     | tr -d '"' \
     | head -1
 }
+
+# --- delete-only mode ----------------------------------------------------------
+
+if [ -n "$DELETE_POD" ]; then
+  if http_req DELETE "${SPARK}/api/v1/pods/${DELETE_POD}"; then
+    echo "dgx-validate: deleted pod ${DELETE_POD}"
+    exit 0
+  fi
+  echo "dgx-validate: delete failed for ${DELETE_POD} (HTTP ${HTTP_CODE})" >&2
+  exit 5
+fi
 
 # --- dry-run -----------------------------------------------------------------
 
