@@ -1,0 +1,35 @@
+package inference
+
+// This file registers all built-in architectures with the architecture registry.
+// New architectures should add a RegisterArchitecture call here.
+func init() {
+	RegisterArchitecture("llama", buildLlamaGraph)
+	RegisterArchitecture("gemma", buildGemmaGraph)
+	RegisterArchitecture("gemma3", buildGemmaGraph)
+	RegisterArchitecture("gemma4", buildGemma4Graph)
+	RegisterArchitecture("gemma4moe", buildGemma4MoEGraph)
+	RegisterArchitecture("gemma4e", buildGemma4EdgeGraph)
+	RegisterArchitecture("qwen2", buildQwenGraph)
+	RegisterArchitecture("mistral", buildMistralGraph)
+	RegisterArchitecture("phi", buildPhiGraph)
+	RegisterArchitecture("phi3", buildPhiGraph)
+	RegisterArchitecture("deepseek_v3", buildDeepSeekGraph)
+	RegisterArchitecture("deepseek2", buildDeepSeekGraph)
+	RegisterArchitecture("mamba", buildMambaGraph)
+	RegisterArchitecture("mamba3", buildMamba3Graph)
+	RegisterArchitecture("jamba", buildJambaGraph)
+	RegisterArchitecture("granite", buildGraniteGraph)
+	RegisterArchitecture("whisper", buildWhisperGraph)
+	RegisterArchitecture("bert", buildBertGraph)
+	RegisterArchitecture("gpt2", buildGPT2Graph)
+	RegisterArchitecture("nemotron_h", buildNemotronHGraph)
+	RegisterArchitecture("nemotron_h_moe", buildNemotronHMoEGraph)
+	RegisterArchitecture("minimax-m2", buildMiniMaxM2Graph)
+	RegisterArchitecture("starcoder2", buildStarCoder2Graph)
+	RegisterArchitecture("internlm2", buildInternLM2Graph)
+	RegisterArchitecture("exaone", buildExaoneGraph)
+	RegisterArchitecture("exaone4", buildExaoneGraph)
+	RegisterArchitecture("dbrx", buildDBRXGraph)
+	RegisterArchitecture("olmo2", buildOLMo2Graph)
+	RegisterArchitecture("voxtral", buildVoxtralGraph)
+}

@@ -1,0 +1,100 @@
+version: 2
+
+builds:
+  - id: zerfoo
+    main: ./cmd/zerfoo
+    binary: zerfoo
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+  - id: zerfoo-tokenize
+    main: ./cmd/zerfoo-tokenize
+    binary: zerfoo-tokenize
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+  - id: zerfoo-predict
+    main: ./cmd/zerfoo-predict
+    binary: zerfoo-predict
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore\\(deps\\):"
+  groups:
+    - title: "Breaking Changes"
+      regexp: '^.*?!:.+$'
+      order: 0
+    - title: "Features"
+      regexp: '^feat.*'
+      order: 1
+    - title: "Bug Fixes"
+      regexp: '^fix.*'
+      order: 2
+    - title: "Performance"
+      regexp: '^perf.*'
+      order: 3
+    - title: "Other"
+      order: 999
+
+homebrew_casks:
+  - name: zerfoo
+    binaries:
+      - zerfoo
+      - zerfoo-tokenize
+      - zerfoo-predict
+    repository:
+      owner: zerfoo
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    homepage: "https://github.com/zerfoo/zerfoo"
+    description: "Production-grade ML inference framework for Go"
+
+release:
+  github:
+    owner: zerfoo
+    name: zerfoo
+  prerelease: auto
+  make_latest: true

@@ -1,0 +1,284 @@
+package inference
+
+import (
+	"context"
+	"math"
+	"testing"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/zerfoo/model/gguf"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+)
+
+func glm4TestConfig() *gguf.ModelConfig {
+	return &gguf.ModelConfig{
+		Architecture:     "glm4",
+		VocabSize:        32,
+		HiddenSize:       16,
+		NumLayers:        2,
+		NumHeads:         4,
+		NumKVHeads:       2,
+		IntermediateSize: 32,
+		MaxSeqLen:        64,
+		RopeTheta:        10000.0,
+	}
+}
+
+func glm4MoETestConfig(numExperts, topK int) *gguf.ModelConfig {
+	return &gguf.ModelConfig{
+		Architecture:       "glm4moe",
+		VocabSize:          32,
+		HiddenSize:         16,
+		NumLayers:          2,
+		NumHeads:           4,
+		NumKVHeads:         2,
+		IntermediateSize:   32,
+		MaxSeqLen:          64,
+		RopeTheta:          10000.0,
+		NumExperts:         numExperts,
+		NumExpertsPerToken: topK,
+	}
+}
+
+// makeGLM4MoETestTensors creates tensors for GLM4-MoE testing.
+func makeGLM4MoETestTensors(cfg *gguf.ModelConfig) map[string]*tensor.TensorNumeric[float32] {
+	tensors := make(map[string]*tensor.TensorNumeric[float32])
+
+	hidden := cfg.HiddenSize
+	inter := cfg.IntermediateSize
+	vocab := cfg.VocabSize
+	numExperts := cfg.NumExperts
+	if numExperts == 0 {
+		numExperts = 8
+	}
+	kvDim := (hidden / cfg.NumHeads) * cfg.NumKVHeads
+
+	fill := func(shape []int, scale float32) *tensor.TensorNumeric[float32] {
+		size := 1
+		for _, d := range shape {
+			size *= d
+		}
+		data := make([]float32, size)
+		for i := range data {
+			data[i] = scale * float32(math.Sin(float64(i)*0.01))
+		}
+		t, _ := tensor.New(shape, data)
+		return t
+	}
+	ones := func(shape []int) *tensor.TensorNumeric[float32] {
+		size := 1
+		for _, d := range shape {
+			size *= d
+		}
+		data := make([]float32, size)
+		for i := range data {
+			data[i] = 1.0
+		}
+		t, _ := tensor.New(shape, data)
+		return t
+	}
+
+	tensors["model.embed_tokens.weight"] = fill([]int{vocab, hidden}, 0.02)
+	tensors["model.norm.weight"] = ones([]int{hidden})
+	tensors["lm_head.weight"] = fill([]int{vocab, hidden}, 0.02)
+
+	for i := 0; i < cfg.NumLayers; i++ {
+		prefix := "model.layers." + itoa(i) + "."
+		blk := "blk." + itoa(i) + "."
+
+		tensors[prefix+"input_layernorm.weight"] = ones([]int{hidden})
+		tensors[prefix+"post_attention_layernorm.weight"] = ones([]int{hidden})
+		tensors[prefix+"self_attn.q_proj.weight"] = fill([]int{hidden, hidden}, 0.02)
+		tensors[prefix+"self_attn.k_proj.weight"] = fill([]int{kvDim, hidden}, 0.02)
+		tensors[prefix+"self_attn.v_proj.weight"] = fill([]int{kvDim, hidden}, 0.02)
+		tensors[prefix+"self_attn.o_proj.weight"] = fill([]int{hidden, hidden}, 0.02)
+
+		tensors[blk+"ffn_gate_inp.weight"] = fill([]int{numExperts, hidden}, 0.02)
+		tensors[blk+"ffn_gate_exps.weight"] = fill([]int{numExperts, inter, hidden}, 0.02)
+		tensors[blk+"ffn_up_exps.weight"] = fill([]int{numExperts, inter, hidden}, 0.02)
+		tensors[blk+"ffn_down_exps.weight"] = fill([]int{numExperts, hidden, inter}, 0.02)
+	}
+
+	return tensors
+}
+
+func TestBuildGLM4Graph_Builds(t *testing.T) {
+	cfg := glm4TestConfig()
+	tensors := makeLlamaTestTensors(cfg)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	g, emb, err := buildGLM4Graph(tensors, cfg, engine)
+	if err != nil {
+		t.Fatalf("buildGLM4Graph: %v", err)
+	}
+	if g == nil {
+		t.Fatal("graph is nil")
+	}
+	if emb == nil {
+		t.Fatal("embedding is nil")
+	}
+}
+
+func TestBuildGLM4Graph_ForwardNonNaN(t *testing.T) {
+	cfg := glm4TestConfig()
+	tensors := makeLlamaTestTensors(cfg)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	g, _, err := buildGLM4Graph(tensors, cfg, engine)
+	if err != nil {
+		t.Fatalf("buildGLM4Graph: %v", err)
+	}
+
+	assertGraphForwardNonNaN(t, g, cfg.VocabSize)
+}
+
+func TestBuildGLM4Graph_MissingTensor(t *testing.T) {
+	cfg := glm4TestConfig()
+	tensors := make(map[string]*tensor.TensorNumeric[float32])
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	_, _, err := buildGLM4Graph(tensors, cfg, engine)
+	if err == nil {
+		t.Fatal("expected error for missing tensors")
+	}
+}
+
+func TestBuildGLM4MoEGraph_Builds(t *testing.T) {
+	tests := []struct {
+		name       string
+		numExperts int
+		topK       int
+	}{
+		{"8_experts_top2", 8, 2},
+		{"4_experts_top1", 4, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := glm4MoETestConfig(tt.numExperts, tt.topK)
+			tensors := makeGLM4MoETestTensors(cfg)
+			engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+			g, emb, err := buildGLM4MoEGraph(tensors, cfg, engine)
+			if err != nil {
+				t.Fatalf("buildGLM4MoEGraph: %v", err)
+			}
+			if g == nil {
+				t.Fatal("graph is nil")
+			}
+			if emb == nil {
+				t.Fatal("embedding is nil")
+			}
+		})
+	}
+}
+
+func TestBuildGLM4MoEGraph_ForwardNonNaN(t *testing.T) {
+	cfg := glm4MoETestConfig(4, 2)
+	tensors := makeGLM4MoETestTensors(cfg)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	g, _, err := buildGLM4MoEGraph(tensors, cfg, engine)
+	if err != nil {
+		t.Fatalf("buildGLM4MoEGraph: %v", err)
+	}
+
+	assertGraphForwardNonNaN(t, g, cfg.VocabSize)
+}
+
+func TestBuildGLM4MoEGraph_MissingTensor(t *testing.T) {
+	cfg := glm4MoETestConfig(8, 2)
+	tensors := make(map[string]*tensor.TensorNumeric[float32])
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	_, _, err := buildGLM4MoEGraph(tensors, cfg, engine)
+	if err == nil {
+		t.Fatal("expected error for missing tensors")
+	}
+}
+
+func TestBuildArchGraph_GLM4Dispatches(t *testing.T) {
+	tests := []struct {
+		name string
+		arch string
+	}{
+		{"chatglm", "chatglm"},
+		{"glm4", "glm4"},
+		{"glm-dsa", "glm-dsa"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := glm4TestConfig()
+			cfg.Architecture = tt.arch
+			tensors := makeLlamaTestTensors(cfg)
+			engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+			g, emb, err := buildArchGraph(tt.arch, tensors, cfg, engine)
+			if err != nil {
+				t.Fatalf("buildArchGraph(%s): %v", tt.arch, err)
+			}
+			if g == nil {
+				t.Fatal("graph is nil")
+			}
+			if emb == nil {
+				t.Fatal("embedding is nil")
+			}
+		})
+	}
+}
+
+func TestBuildArchGraph_GLM4MoEDispatches(t *testing.T) {
+	cfg := glm4MoETestConfig(4, 2)
+	tensors := makeGLM4MoETestTensors(cfg)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	g, emb, err := buildArchGraph("glm4moe", tensors, cfg, engine)
+	if err != nil {
+		t.Fatalf("buildArchGraph(glm4moe): %v", err)
+	}
+	if g == nil {
+		t.Fatal("graph is nil")
+	}
+	if emb == nil {
+		t.Fatal("embedding is nil")
+	}
+}
+
+func TestGLM4Forward_DifferentInputsDifferentOutputs(t *testing.T) {
+	cfg := glm4TestConfig()
+	tensors := makeLlamaTestTensors(cfg)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+
+	g, _, err := buildGLM4Graph(tensors, cfg, engine)
+	if err != nil {
+		t.Fatalf("buildGLM4Graph: %v", err)
+	}
+
+	ctx := context.Background()
+	input1, _ := tensor.New([]int{1, 3}, []float32{1, 2, 3})
+	input2, _ := tensor.New([]int{1, 3}, []float32{4, 5, 6})
+
+	out1, err := g.Forward(ctx, input1)
+	if err != nil {
+		t.Fatalf("forward input1: %v", err)
+	}
+	out2, err := g.Forward(ctx, input2)
+	if err != nil {
+		t.Fatalf("forward input2: %v", err)
+	}
+
+	d1 := out1.Data()
+	d2 := out2.Data()
+	identical := true
+	for i := range d1 {
+		if d1[i] != d2[i] {
+			identical = false
+			break
+		}
+	}
+	if identical {
+		t.Fatal("different inputs produced identical output")
+	}
+}
