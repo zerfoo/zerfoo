@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@7987652d64b4581673a76e33ad5e98e3dd56832f # v4
+        id: release
+        with:
+          # No release-type here: passing it makes the action ignore
+          # release-please-config.json (which pins release-as 1.49.0 and
+          # anchors last-release-sha). Manifest mode reads the repo config.
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Checkout code
+        if: ${{ steps.release.outputs.release_created }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Generate SBOM
+        if: ${{ steps.release.outputs.release_created }}
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          format: cyclonedx-json
+          output-file: sbom-cyclonedx.json
+      - name: Upload SBOM to release
+        if: ${{ steps.release.outputs.release_created }}
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag_name }}
+          files: sbom-cyclonedx.json

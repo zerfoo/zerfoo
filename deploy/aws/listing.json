@@ -1,0 +1,85 @@
+{
+  "title": "Zerfoo ML Inference Engine for Go",
+  "shortDescription": "Production-grade ML inference for transformer models — embedded in Go applications, no CGo required.",
+  "longDescription": "Zerfoo is a high-performance ML inference and training framework written entirely in Go. Deploy large language models (Llama 3, Gemma 3, Mistral, Qwen 2, Phi 3/4, DeepSeek V3) directly in your Go services without Python dependencies or CGo build complexity.\n\nKey capabilities:\n- OpenAI-compatible REST API with SSE streaming\n- GGUF model format (llama.cpp compatible)\n- GPU acceleration via CUDA, ROCm, and OpenCL — loaded at runtime, no special build required\n- Quantized inference: Q4_K_M, Q8_0, FP16, BF16\n- KV caching, speculative decoding, continuous batching\n- Prometheus metrics, structured logging, health checks\n- Embeddable as a Go library: import github.com/zerfoo/zerfoo\n\nPerformance: Gemma 3 1B Q4_K_M at 234 tok/s decode, exceeding Ollama by 14%.",
+  "productCode": "PLACEHOLDER_PRODUCT_CODE",
+  "categories": [
+    "Machine Learning",
+    "Generative AI",
+    "Developer Tools"
+  ],
+  "highlights": [
+    "Go-native, zero CGo by default — go build ./... compiles everywhere",
+    "OpenAI-compatible API — drop-in replacement for existing integrations",
+    "Competitive with C++ runtimes — 234 tok/s on Gemma 3 1B Q4_K_M"
+  ],
+  "pricingModel": "saas",
+  "pricingDimensions": [
+    {
+      "key": "inference-requests",
+      "name": "Inference Requests",
+      "description": "Number of inference requests processed.",
+      "unit": "requests",
+      "rateCard": [
+        { "range": { "from": 0, "to": 1000000 }, "price": "0.000001" },
+        { "range": { "from": 1000000 }, "price": "0.0000008" }
+      ]
+    },
+    {
+      "key": "tokens-processed",
+      "name": "Tokens Processed",
+      "description": "Total number of input + output tokens processed.",
+      "unit": "tokens",
+      "rateCard": [
+        { "range": { "from": 0, "to": 1000000000 }, "price": "0.000000002" },
+        { "range": { "from": 1000000000 }, "price": "0.0000000015" }
+      ]
+    },
+    {
+      "key": "gpu-hours",
+      "name": "GPU Hours",
+      "description": "GPU compute hours consumed by inference tasks.",
+      "unit": "hours",
+      "rateCard": [
+        { "range": { "from": 0 }, "price": "0.50" }
+      ]
+    }
+  ],
+  "supportedRegions": [
+    "us-east-1",
+    "us-west-2",
+    "eu-west-1",
+    "ap-southeast-1",
+    "ap-northeast-1"
+  ],
+  "deploymentOptions": [
+    {
+      "type": "saas",
+      "description": "SaaS deployment on ECS Fargate with ALB and autoscaling via the provided CloudFormation template."
+    }
+  ],
+  "logoUrl": "https://feza.ai/assets/zerfoo-logo-256x256.png",
+  "productUrl": "https://github.com/zerfoo/zerfoo",
+  "documentationUrl": "https://github.com/zerfoo/zerfoo/blob/main/deploy/aws/README.md",
+  "supportUrl": "https://github.com/zerfoo/zerfoo/issues",
+  "version": "1.0.0",
+  "eula": "standard-eula-v1",
+  "fulfillmentOptions": {
+    "containerImage": {
+      "description": "Pre-built container image available in AWS Marketplace ECR.",
+      "containerPort": 8080,
+      "healthCheckPath": "/health"
+    }
+  },
+  "tags": [
+    "llm",
+    "inference",
+    "go",
+    "golang",
+    "transformer",
+    "gguf",
+    "llama",
+    "gemma",
+    "generative-ai"
+  ]
+}

@@ -1,0 +1,88 @@
+// Package core provides core layer implementations for the Zerfoo ML framework.
+package core
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
+)
+
+// Mul is a layer that performs element-wise multiplication of two tensors.
+type Mul[T tensor.Numeric] struct {
+	engine      compute.Engine[T]
+	outputShape []int
+}
+
+// NewMul creates a new Mul layer.
+func NewMul[T tensor.Numeric](engine compute.Engine[T]) *Mul[T] {
+	return &Mul[T]{
+		engine: engine,
+	}
+}
+
+// OutputShape returns the output shape of the Mul layer.
+func (m *Mul[T]) OutputShape() []int {
+	return m.outputShape
+}
+
+// Parameters returns no trainable parameters for the Mul layer.
+func (m *Mul[T]) Parameters() []*graph.Parameter[T] {
+	return nil
+}
+
+// Forward computes the element-wise multiplication of two input tensors.
+func (m *Mul[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 2 {
+		return nil, fmt.Errorf("Mul layer requires exactly 2 inputs, got %d", len(inputs))
+	}
+
+	a := inputs[0]
+	b := inputs[1]
+
+	// The output shape should be the broadcasted shape of the two inputs
+	// For simplicity, we'll assume they have compatible shapes
+	m.outputShape = a.Shape()
+
+	return m.engine.Mul(ctx, a, b)
+}
+
+// Backward computes the gradients for the Mul layer.
+func (m *Mul[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 2 {
+		return nil, fmt.Errorf("Mul layer requires exactly 2 inputs, got %d", len(inputs))
+	}
+
+	a := inputs[0]
+	b := inputs[1]
+
+	// Gradient w.r.t. a: outputGradient * b
+	gradA, err := m.engine.Mul(ctx, outputGradient, b)
+	if err != nil {
+		return nil, err
+	}
+
+	// Gradient w.r.t. b: outputGradient * a
+	gradB, err := m.engine.Mul(ctx, outputGradient, a)
+	if err != nil {
+		return nil, err
+	}
+
+	return []*tensor.TensorNumeric[T]{gradA, gradB}, nil
+}
+
+// OpType returns the operation type of the Mul layer.
+func (m *Mul[T]) OpType() string {
+	return "Mul"
+}
+
+// Attributes returns nil for the Mul layer.
+func (m *Mul[T]) Attributes() map[string]interface{} {
+	return nil
+}
+
+// Statically assert that the type implements the graph.Node interface.
+var _ graph.Node[float32] = (*Mul[float32])(nil)
