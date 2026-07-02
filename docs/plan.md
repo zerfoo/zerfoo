@@ -101,16 +101,16 @@ Discovery was performed as a four-agent deep review on 2026 07 02 (plan state, d
 
 Component: operations. Acceptance: open-issue set equals the "live engineering" list in the strategy doc appendix; every closure has a comment linking docs/product-strategy-2026-H2.md.
 
-- [ ] T128.1 Bulk-close E94 org-fiction issues  Owner: TBD  Est: 1h  delivers: [tracker: business-fiction cluster closed]  kind: agent
+- [x] T128.1 Bulk-close E94 org-fiction issues  2026 07 02  (DONE: 16 closed; #714 spared as real engineering and parked instead)  Owner: TBD  Est: 1h  delivers: [tracker: business-fiction cluster closed]  kind: agent
   - Close #697, #698, #699, #700, #707, #708, #714, #715, #716, #718, #719, #720, #721, #722, #723, #724, #725 with comment: "Closed per ADR-093 / docs/product-strategy-2026-H2.md Appendix: aspirational business planning lives in strategy docs, not the tracker. The parent epic E94 was retracted 2026-04-13."
   - Acceptance: all listed issues closed with the comment; none referenced by live code or plan.
-- [ ] T128.2 Close stale "(COMPLETE)" epics and handover notes  Owner: TBD  Est: 1h  delivers: [tracker: completed-epic bookkeeping closed]  kind: agent
+- [x] T128.2 Close stale "(COMPLETE)" epics and handover notes  2026 07 02  (DONE: 18 closed incl. #839, #696; 3 spot-checks confirmed genuinely complete)  Owner: TBD  Est: 1h  delivers: [tracker: completed-epic bookkeeping closed]  kind: agent
   - Close #540, #544, #545, #558, #559, #560, #561, #562, #563, #564, #565, #566, #567, #568, #569, #571 (epics whose titles state COMPLETE), #839 (April session handover, superseded by devlog), #696 (archived E94 epic). Comment: "Closing completed/archived epic bookkeeping per ADR-093 tracker-hygiene pass; history preserved in the issue itself and docs/devlog.md."
   - Acceptance: all listed issues closed; spot-check 3 for genuinely-complete status before closing (if any is NOT complete, leave open and flag in T128.5).
-- [ ] T128.3 Close won't-fix and superseded issues  Owner: TBD  Est: 45m  delivers: [tracker: impossible/superseded items closed]  kind: agent
+- [x] T128.3 Close won't-fix and superseded issues  2026 07 02  (DONE: 8 closed -- #711 won't-fix; #727/#730/#731/#543/#692 superseded by E131 job; parent epics #541/#679 closed as emptied)  Owner: TBD  Est: 45m  delivers: [tracker: impossible/superseded items closed]  kind: agent
   - Close #711 (500+ tok/s: physically impossible on GB10, roofline ~257 tok/s, devlog 2026 03 19). Close stale DGX-validation residue superseded by the E131 standing job: #727 (T61.3.2), #730/#731 (T63.2.x). Close E58/E90 residuals if their issues exist. Comment cites the superseding mechanism (E131 job) or the physical limit.
   - Acceptance: closures commented; anything ambiguous left open and flagged in T128.5.
-- [ ] T128.4 Apply `parked` label to deferred-by-design issues  Owner: TBD  Est: 45m  delivers: [tracker: parked work labeled, not deleted]  kind: agent
+- [x] T128.4 Apply `parked` label to deferred-by-design issues  2026 07 02  (DONE: label created; 31 parked incl. E55 epic #522+tasks, #520 T54.3.1, #714; PJRT search had 0 open hits)  Owner: TBD  Est: 45m  delivers: [tracker: parked work labeled, not deleted]  kind: agent
   - Create label `parked` (grey). Apply to: ROCm suite #701-#706, #712 (multi-GPU), #709/#710 (RPi/Jetson), #726 (FP8 E5M2), E125 #802, E126/PJRT issues, E55-related, perf micro-opts #524-#539, #543, #557, #606, #640, #692. Add one comment per issue: "Parked per docs/product-strategy-2026-H2.md (hardware/partner/user-demand gated). Not scheduled for H2 2026."
   - Acceptance: label exists and applied; parked issues excluded from live-count in T128.5.
 - [ ] T128.5 Verification sweep and devlog record  Owner: TBD  Est: 45m  delivers: [devlog entry: final tracker state]  kind: agent  blocked-by: [T128.1, T128.2, T128.3, T128.4]
