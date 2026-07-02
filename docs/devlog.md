@@ -2,6 +2,52 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-02: Full product review -- Trust-then-Traction strategy adopted, plan.md reset to Phase 0
+
+**Type:** decision + finding
+**Tags:** strategy, product, roadmap, plan-reset, adr-093, #878, #870, #865, #757, #766, #847
+
+**Context:** Product-direction review of the entire project state (plan.md,
+devlog Apr-Jun, benchmarks.md, ADRs 068-092, all 100 open issues, code-level
+capability inventory, satellite repos, GTM collateral). Outputs:
+docs/product-strategy-2026-H2.md (strategy + H2 roadmap), ADR-093 (decision
+record), and a rewritten docs/plan.md scoped to Phase 0 only.
+
+**Key findings (evidence in the strategy doc, Part 1-2):**
+- Capability is ahead of the vision's Year-1 targets; adoption is zero
+  (6 stars, empty website, launch posts drafted since March never posted).
+  The March 2026 report's diagnosis ("bottleneck is accessibility, not
+  capability") was correct and not acted on.
+- Verified-vs-built gap: ~45 arch builders, ~5 with benchmark-verified
+  generate. Gemma 4 edge decode still degenerate (#757); fix candidate
+  T99.2.2.9 (#766) specified 2026-04-21, never executed.
+- Worst open bug: #878 -- capture-replay training silently produces wrong
+  gradients (losses ascend 10-20x) on v1.50.2+ while eager mode converges.
+  Same lifetime/stream-ordering class as #870/#865; the June hardening
+  campaign closed this class for eager mode but not the capture path.
+- Tracker: ~75 of 100 open issues are noise (E94 org-fiction: S-1, $150M
+  ARR, FedRAMP "Est: 4h"; ~18 "(COMPLETE)" epics still open). Dispositions
+  listed in the strategy doc appendix.
+- Chronic "code done, DGX validation pending" (E58/E61/E63/E86/E90) rooted
+  in the purego darwin->linux/arm64 cross-compile blocker; the proven
+  workaround (native arm64 build on the DGX via Spark) was never made a
+  standing job.
+- docs/lore.md does not exist despite hard-won invariants scattered across
+  devlog entries and ADRs 088-092.
+
+**Decision:** Trust, then Traction (ADR-093). Phase 0 (stabilize: tracker
+hygiene, #878 loud-fail containment, docs/plan hygiene, DGX arm64 validation
+job) -> Phase 1 (Trust: fix capture cluster, time-boxed gemma4e fix,
+kernel-numerics tail, verified-model matrix) -> Phase 2 (Traction: site,
+examples, launch) -> Phase 3 (Moat: E125 mmap, LTX-2 DiT milestone).
+
+**Plan trim:** the previous 4,472-line plan.md (last content update
+2026-06-17) is preserved in git history at commit 0dc963ca. Completed-epic
+knowledge already lives in devlog.md, benchmarks.md, and ADRs; the E127
+handover notes were carried forward into the new plan's Carried-Forward
+section. The new plan covers Phase 0 only and ends with a task to plan
+Phase 1.
+
 ## 2026-06-16: LTX-2 (E127) Phase-0 de-risk -- fp8 = F8_E4M3, ADR-091 oracle harness is op-generic (lives in ztensor)
 
 **Type:** finding
