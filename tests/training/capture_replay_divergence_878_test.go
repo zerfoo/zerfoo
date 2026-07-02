@@ -232,7 +232,10 @@ func run878Trajectory(
 	} else {
 		t.Setenv(training.DisableCUDAGraphEnv, "1")
 	}
-	runner := training.NewCaptureReplayRunner[float32](strategy, engine, warmup)
+	runner, rerr := training.NewCaptureReplayRunner[float32](strategy, engine, warmup)
+	if rerr != nil {
+		t.Fatalf("NewCaptureReplayRunner (captureEnabled=%v): %v", captureEnabled, rerr)
+	}
 
 	batch := training.Batch[float32]{
 		Inputs:  map[graph.Node[float32]]*tensor.TensorNumeric[float32]{input: inputT},
