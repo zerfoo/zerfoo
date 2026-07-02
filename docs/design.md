@@ -1138,6 +1138,23 @@ Direct (go.mod):
 - Parity tests (currently non-blocking, gated by env vars).
 - Nightly toy training pipeline.
 
+### 8.5 GPU Validation (standing DGX arm64 gate)
+
+GitHub CI has no GPU, and the purego GPU bindings cannot cross-compile
+darwin->linux/arm64 (`runtime.dlopen` linknames require cgo), so all
+GPU-dependent acceptance runs natively on the DGX GB10 through one command:
+
+```bash
+scripts/dgx-validate.sh [-ref <git-ref>] [-timeout <seconds>] [-dry-run]
+```
+
+The script submits `docs/bench/manifests/validate-arm64.yaml` as a Spark pod
+that clones the ref, builds and vets from source on arm64, runs the
+cuda-tagged unit tests, and runs the model-parity subset when GGUF files are
+mounted; it exits 0 only on a clean JSON report. One GPU pod runs at a time
+on the host; interactive SSH remains debugging-only. Results are recorded in
+docs/devlog.md per run.
+
 ---
 
 ## 9. Troubleshooting

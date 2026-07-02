@@ -121,7 +121,7 @@ Component: operations. Acceptance: open-issue set equals the "live engineering" 
 
 Component: training. Acceptance: on the released version, no user can silently train with wrong gradients via capture-replay; eager path untouched. Root-cause fix is Phase 1, NOT here. Decision rationale: docs/adr/093-h2-2026-trust-then-traction-strategy.md (silent-wrong-answer classes are contained immediately, fixed at contract level next).
 
-- [ ] T129.1 Reproduce #878 divergence as a small fixture  Owner: TBD  Est: 1.5h  verifies: [UC-H2-001]  kind: agent
+- [x] T129.1 Reproduce #878 divergence as a small fixture  2026 07 02  (DONE PR #916: env-gated GPU fixture tests/training/capture_replay_divergence_878_test.go; #878 commented; surfaced pre-existing darwin dlopen crash -> ztensor#171)  Owner: TBD  Est: 1.5h  verifies: [UC-H2-001]  kind: agent
   - Build a minimal training loop (synthetic graph, shapes from the issue: [ns,3] logits) that demonstrates capture-on loss ascent vs eager convergence, OR confirm and document the existing repro from the issue. GPU-gated portions t.Skip on non-GPU; the GPU variant runs via the E131 job when available. This fixture becomes the Phase 1 red/green regression proof.
   - Acceptance: fixture committed with a comment linking #878; divergence characterized in the issue.
 - [ ] T129.2 Loud-failure gate on capture-replay training  Owner: TBD  Est: 1.5h  verifies: [UC-H2-001]  kind: agent  blocked-by: [T129.1]
@@ -137,7 +137,7 @@ Component: training. Acceptance: on the released version, no user can silently t
 
 Component: docs. Acceptance: no known contradiction between docs and reality remains from the 2026 07 02 review list.
 
-- [ ] T130.1 Refresh docs/updates.md  Owner: TBD  Est: 1h  delivers: [user-facing changelog current through v1.55.1]  kind: agent
+- [x] T130.1 Refresh docs/updates.md  2026 07 02  (DONE PR #918: 5 entries Apr-Jul, all claims verified, no Gemma 4 perf numbers)  Owner: TBD  Est: 1h  delivers: [user-facing changelog current through v1.55.1]  kind: agent
   - Append entries (newest first) covering 2026 04 07 -> 2026 07 02: Gemma 4 architecture support landing (with the explicit decode-correctness caveat), E124 layout cleanup + ADR-090 enterprise extraction decision, GPU training hardening campaign outcome (clean GB10 f32 runs, ADR-091 gates), capture-replay training containment (E129), LTX-2 epic start (ADR-092), release cadence v1.43 -> v1.55.1. Source: git log, docs/devlog.md, release notes.
   - Acceptance: updates.md current; no claim exceeds verified reality (no Gemma 4 performance claims).
 - [x] T130.2 Create docs/lore.md  2026 07 02  (DONE PR #914: L-0001..L-0012, all sources verified; noted #766 native-Q4_K path now exists behind env flag but lossy default remains)  Owner: TBD  Est: 1.5h  delivers: [greppable landmine/invariant register]  kind: agent
@@ -160,12 +160,12 @@ Component: docs. Acceptance: no known contradiction between docs and reality rem
 
 Component: infrastructure. Acceptance: one command submits a Spark pod that builds zerfoo natively on the GB10 and runs the GPU validation suite; one green run recorded; T86.5.8 closed. Root cause being retired: purego darwin->linux/arm64 cross-compile is impossible without cgo, so all GPU validation must build ON the DGX -- proven manually in E96, never scripted.
 
-- [ ] T131.1 Spark pod manifest + native build/test script  Owner: TBD  Est: 3h  verifies: [UC-H2-002]  kind: agent
+- [x] T131.1 Spark pod manifest + native build/test script  2026 07 02  (DONE PR #915: validate-arm64.yaml + dgx-validate.sh; 6 verification points recorded for T131.3)  Owner: TBD  Est: 3h  verifies: [UC-H2-002]  kind: agent
   - Add docs/bench/manifests/validate-arm64.yaml (pattern: existing patchtst-train.yaml; cgroup limits memory 32Gi, cpu 8, nvidia.com/gpu 1) and scripts/dgx-validate.sh which: fetches the repo at a given ref inside the pod, builds natively (go build ./...), runs the GPU test subset (-tags cuda unit tests + the GPU-capable tests/parity subset when model files are present), emits a JSON pass/fail report to pod logs, and exits nonzero on failure. Unique pod names including the git SHA. Follow CLAUDE.md Spark API conventions; sm_121 kernels dir noted in docs/plan-gpu-training-hardening.md Hand-Off Note 4.
   - Acceptance: script submits, polls to completion, streams logs, propagates exit code; manifest enforces limits.
-- [ ] S131.1.1 Lint + dry-run tests for the script  Owner: TBD  Est: 45m  verifies: [UC-H2-002]  kind: agent  blocked-by: [T131.1]
+- [x] S131.1.1 Lint + dry-run tests for the script  2026 07 02  (DONE: coordinator re-verified on merged main -- bash -n OK, shellcheck CLEAN, -dry-run exit 0; no Go-side parsing to unit-test)  Owner: TBD  Est: 45m  verifies: [UC-H2-002]  kind: agent  blocked-by: [T131.1]
   - shellcheck clean; a -dry-run flag prints the manifest and API calls without submitting; unit-test any Go-side report parsing.
-- [ ] T131.2 Document the job as the standing GPU validation gate  Owner: TBD  Est: 45m  verifies: [infrastructure]  kind: agent  blocked-by: [T131.1]
+- [x] T131.2 Document the job as the standing GPU validation gate  2026 07 02  (DONE: CLAUDE.md Build & Test + design.md 8.5)  Owner: TBD  Est: 45m  verifies: [infrastructure]  kind: agent  blocked-by: [T131.1]
   - Add a "GPU validation" subsection to CLAUDE.md Build & Test and to the design.md CI section: all GPU-dependent acceptance runs through scripts/dgx-validate.sh; interactive SSH remains debugging-only. Note the one-GPU-pod-at-a-time rule.
   - Acceptance: docs merged; contradictory stale guidance removed.
 - [ ] T131.3 First green run; close the stalled-validation backlog  Owner: TBD  Est: 1.5h  verifies: [UC-H2-002]  kind: agent  blocked-by: [S131.1.1]
