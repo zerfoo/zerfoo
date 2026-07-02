@@ -12,8 +12,9 @@
     "expected_outcome": "Wolf's train-crossasset CLI and internal/model/crossasset.go import from wolf's own crossasset package.",
     "priority": "P0",
     "tags": ["extraction", "module-boundary"],
-    "wiring_status": "PLANNED",
-    "coverage": {"interfaces_found": ["library"], "has_tests": false}
+    "wiring_status": "WIRED",
+    "coverage": {"interfaces_found": ["library"], "has_tests": false},
+    "note": "Completed via E91 (2026-04-13, ADR-084). Retained for history."
   },
   {
     "id": "UC-EXT-02",
@@ -28,8 +29,9 @@
     "expected_outcome": "Training completes, model saved, loss decreases.",
     "priority": "P0",
     "tags": ["training", "cli"],
-    "wiring_status": "PLANNED",
-    "coverage": {"interfaces_found": ["cli"], "has_tests": true}
+    "wiring_status": "WIRED",
+    "coverage": {"interfaces_found": ["cli"], "has_tests": true},
+    "note": "Completed via E91 (2026-04-13, ADR-084). Retained for history."
   },
   {
     "id": "UC-EXT-03",
@@ -44,7 +46,42 @@
     "expected_outcome": "go build ./... and go test ./... pass with no crossasset references.",
     "priority": "P0",
     "tags": ["extraction", "build"],
+    "wiring_status": "WIRED",
+    "coverage": {"interfaces_found": ["library"], "has_tests": true},
+    "note": "Completed via E91 (2026-04-13, ADR-084). Retained for history."
+  },
+  {
+    "id": "UC-H2-001",
+    "domain": "training-correctness",
+    "name": "Capture-replay training fails loudly when unsafe",
+    "description": "A user who enables CUDA-graph capture-replay training on a version where #878 (silent gradient divergence) is unfixed gets an explicit error or documented hard gate at Trainer construction, never silently-wrong gradients.",
+    "actor": "zerfoo_developer",
+    "preconditions": ["GPU engine active", "capture-replay training requested"],
+    "interfaces": [
+      {"type": "library", "path": "training/capture_replay.go"}
+    ],
+    "expected_outcome": "Capture-replay training refuses to run (clear error naming #878 and the opt-out env var) until the divergence bug is fixed; eager training is unaffected.",
+    "test_data": {"model": "small synthetic graph, [ns,3] logits shape from #878 repro"},
+    "priority": "P0",
+    "tags": ["correctness", "cuda-graph", "phase-0"],
     "wiring_status": "PLANNED",
-    "coverage": {"interfaces_found": ["library"], "has_tests": true}
+    "coverage": {"interfaces_found": ["library"], "has_tests": false}
+  },
+  {
+    "id": "UC-H2-002",
+    "domain": "validation-infrastructure",
+    "name": "One-command DGX arm64 validation run",
+    "description": "A developer (or CI trigger) runs a single script that builds zerfoo natively on the GB10 (arm64, real CUDA) via a Spark pod and executes the GPU test + parity suite, producing a pass/fail report. Eliminates the purego darwin-to-linux cross-compile blocker class permanently.",
+    "actor": "zerfoo_developer",
+    "preconditions": ["Spark reachable at http://192.168.86.250:8080", "GB10 free (SPARK_GPU_MAX=1)"],
+    "interfaces": [
+      {"type": "cli", "command": "scripts/dgx-validate.sh"}
+    ],
+    "expected_outcome": "Pod builds natively on the DGX, runs the suite, exits with pass/fail and a JSON report; results recorded in devlog. Closes the T86.5.8 class of stalled validation tasks.",
+    "test_data": {"suite": "tests/parity GPU subset + -tags cuda unit tests"},
+    "priority": "P0",
+    "tags": ["infrastructure", "dgx", "spark", "phase-0"],
+    "wiring_status": "PLANNED",
+    "coverage": {"interfaces_found": ["cli"], "has_tests": false}
   }
 ]
