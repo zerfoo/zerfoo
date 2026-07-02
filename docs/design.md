@@ -9,13 +9,16 @@ unified compute engine interface. All layers, models, and training loops
 delegate computation to the Engine[T] interface, enabling transparent hardware
 acceleration without modifying application code.
 
+> Product direction and roadmap live in [docs/product-strategy-2026-H2.md](product-strategy-2026-H2.md) ([ADR-093](adr/093-h2-2026-trust-then-traction-strategy.md)).
+
 ### 1.1 What Zerfoo Is
 
 A general-purpose ML framework with three production-ready capabilities:
 
 1. **Inference engine.** Load and run open-weights transformer models (text,
-   vision, vision-language) via GGUF, the sole model format. Models are
-   converted from ONNX using zonnx (which now outputs GGUF).
+   vision, vision-language) via GGUF, the sole model format. ONNX and
+   safetensors checkpoints are converted to GGUF at build time using zonnx;
+   there is no runtime ONNX execution path.
    Supports autoregressive decoding with KV cache, sampling (temperature,
    top-k, top-p, repetition penalty), and streaming.
 
@@ -124,7 +127,6 @@ Each sub-package carries a stability label: **stable**, **beta**, or **alpha**.
 | `serve/batcher/` | beta | Continuous batching scheduler |
 | `serve/agent/` | alpha | Agentic loop HTTP adapter |
 | `serve/registry/` | beta | bbolt-backed model version registry |
-| `serve/cloud/` | alpha | Multi-tenant namespace isolation, GPU eviction, metering |
 | `serve/disaggregated/` | alpha | Disaggregated prefill/decode serving |
 | `config/` | stable | JSON config loader with env var overrides |
 | `health/` | stable | HTTP health check endpoints (/healthz, /readyz, /debug/pprof/) |
@@ -279,8 +281,9 @@ sdk/                  External adapters
 The pre-E124 root contained ~47 top-level Go directories. The target
 above keeps the count under 20 (excluding `cmd/`, `docs/`, `examples/`,
 `scripts/`, `benchmarks/`, `bin/`, `deploy/`, `infra/`). Open-core
-placement of `cloud/`, `marketplace/`, and `compliance/` is deferred to
-the ADR produced by T124.7.1.
+placement of `cloud/`, `marketplace/`, and `compliance/` was resolved by
+[ADR-090](adr/090-zerfoo-oss-scope-cloud-marketplace-compliance.md): all three
+are extracted to the private `feza-ai/zerfoo-enterprise` repository.
 
 ### 2.2 Dependency Graph
 
@@ -1037,7 +1040,7 @@ Documented exceptions (unreachable `tensor.New` error paths):
 - CLI pull command tests (16 cases: error paths, nil registry, cached output).
 - Model parity on DGX Spark: 8 PASS (Llama3, Qwen25, FlashAttentionGQA),
   13 SKIP (no GGUF: Mistral, Phi4, Gemma3, DeepSeek, SigLIP; 1 device: MultiGPU).
-  Multiple ONNX compatibility fixes applied. See [ADR-018](adr/018-model-parity-testing.md).
+  Multiple ONNX-to-GGUF conversion compatibility fixes applied. See [ADR-018](adr/018-model-parity-testing.md).
 
 ### 7.3 Excluded from Coverage Target
 
@@ -1226,9 +1229,9 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
    sequence lengths. cuBLAS SDPA is faster for GQA models. The kernel is
    retained in .cu for future optimization.
 
-### 10.3 ONNX Execution Path
+### 10.3 Graph Execution and CUDA Capture
 
-8. **ONNX CUDA graph capture is limited.** Decomposed ops (Pow, ReduceMean,
+8. **CUDA graph capture is limited by decomposed ops.** Decomposed ops (Pow, ReduceMean,
    Gather, Slice) break the contiguous capture region. Static Reshape ops
    (1 input, target shape from attributes) are capture-safe and no longer
    break the region; only dynamic Reshape (2+ inputs reading shape from a
@@ -1238,7 +1241,7 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 9. **RMSNorm fusion not yet runtime-correct.** Pattern matching works but
    the fused Forward function produces numerically wrong results due to
    input slot resolution. See docs/devlog.md for investigation status.
-10. **ONNX output diverges from ORT after initial tokens.** Float32 precision
+10. **Float32 output is sensitive to GEMM accumulation order.** Float32 precision
     accumulation drift compounds through transformer layers. This is inherent
     to float32 with different GEMM accumulation orders, not a bug.
 
@@ -1265,10 +1268,13 @@ curl http://localhost:8081/debug/pprof/goroutine?debug=2
 
 ### 11.1 Companion Repositories
 
-- **zonnx** (`github.com/zerfoo/zonnx`): ONNX-to-GGUF converter.
+- **ztensor** (`github.com/zerfoo/ztensor`): tensor, compute engine, and computation graph.
+- **ztoken** (`github.com/zerfoo/ztoken`): BPE tokenizer loading.
+- **zonnx** (`github.com/zerfoo/zonnx`): converts ONNX/safetensors checkpoints to GGUF at build time.
 - **float16** (`github.com/zerfoo/float16`): IEEE 754 float16 and bfloat16 types for Go.
 - **float8** (`github.com/zerfoo/float8`): E4M3 float8 type for Go.
 - **gemma3** (`github.com/zerfoo/gemma3`): Gemma 3 model support and conversion scripts.
+- **zmf**: removed. GGUF is the sole model format; the former ZMF format is deprecated.
 
 ### 11.2 Inference Pipeline
 
@@ -1844,19 +1850,15 @@ See [ADR-052](adr/052-online-learning-safety-framework.md).
 
 ## 29. Cloud Product
 
-Multi-tenant inference-as-a-service with per-tenant isolation and metering.
+The multi-tenant inference-as-a-service layer -- formerly the `cloud/`,
+`marketplace/`, and `compliance/` packages -- has been extracted from this
+repository to the private `feza-ai/zerfoo-enterprise` repository. Zerfoo
+remains a general-purpose, Apache-2.0 framework; the SaaS serving,
+cloud-marketplace billing, and compliance tooling live in the enterprise repo.
 
-- `serve/cloud/tenant.go` -- TenantRegistry with per-API-key quotas,
-  concurrency + rate limiting, model allowlist, HTTP middleware
-- `serve/cloud/billing.go` -- Token metering middleware counting prompt+completion
-  tokens; NDJSON usage recorder (Kafka adapter configurable)
-- `serve/cloud/resource_manager.go` -- GPU model LRU eviction with VRAM budget tracking
-- `infra/terraform/zerfoo-cloud/` -- GKE cluster with GPU node pool, Cloud Run API
-  gateway, GCS model artifact bucket
-
-Note: ADR-056 status is Proposed; requires founder approval before production deployment.
-
-See [ADR-056](adr/056-zerfoo-cloud-product.md).
+See [ADR-090](adr/090-zerfoo-oss-scope-cloud-marketplace-compliance.md) for the
+extraction rationale and [ADR-056](adr/056-zerfoo-cloud-product.md) for the
+original cloud product proposal.
 
 ---
 
