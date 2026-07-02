@@ -146,10 +146,10 @@ Component: docs. Acceptance: no known contradiction between docs and reality rem
 - [x] T130.3 Regenerate docs/adr/README.md  2026 07 02  (DONE PR #913: 93 ADRs indexed, 89 Accepted / 3 Proposed / 1 revised; follow-up: ADR-089's own Status field is stale)  Owner: TBD  Est: 1h  delivers: [complete ADR index 001-093 with status]  kind: agent
   - Index all 93 ADR files with number, title, date, and Status (read from each file). Note superseded chains where present. Currently the index stops at 037 and has no status column.
   - Acceptance: index lists every file in docs/adr/; statuses match the files.
-- [ ] T130.4 Repair dangling ecosystem references  Owner: TBD  Est: 30m  delivers: [no dangling doc references]  kind: agent
+- [x] T130.4 Repair dangling ecosystem references  2026 07 02  (DONE d2b78450: created /Users/dndungu/Code/zerfoo/CLAUDE.md ecosystem map; fixed in-repo reference; parent docs/ marked archived)  Owner: TBD  Est: 30m  delivers: [no dangling doc references]  kind: agent
   - zerfoo/CLAUDE.md says "See ../CLAUDE.md for the full ecosystem vision and project map (covers 7 repos)" but that file does not exist. Either write a minimal /Users/dndungu/Code/zerfoo/CLAUDE.md (repo map + one-paragraph ecosystem summary pointing at zerfoo/docs/VISION.md and docs/product-strategy-2026-H2.md) or fix the reference in zerfoo/CLAUDE.md. Note the stale parent-level docs/ folder (Aug 2025 era, pre-extraction) as archived in whichever file is written.
   - Acceptance: every reference in CLAUDE.md resolves.
-- [ ] T130.5 Decide and record E76 disposition  Owner: TBD  Est: 30m  delivers: [E76 disposition recorded]  kind: agent
+- [x] T130.5 Decide and record E76 disposition  2026 07 02  (DONE: #570/#733/#734 parked with revive trigger recorded)  Owner: TBD  Est: 30m  delivers: [E76 disposition recorded]  kind: agent
   - E76 (architecture-test allowlist cleanup, #733/#734, #570) is blocked on a bridge-elimination epic that was never filed (88 .Data() calls in timeseries backward bridges). Decision per strategy: park it. Label `parked`, comment with the rationale and the trigger to revive (a timeseries-refactor epic or external contributor interest).
   - Acceptance: issues labeled and commented; no phantom blocker remains in the plan.
 - [x] T130.6 design.md consistency pass  2026 07 02  (DONE PR #912: ONNX wording, companion repos incl. ztensor/ztoken, ADR-090 extraction note, strategy pointer; also fixed 1.6 table + 2.3 note)  Owner: TBD  Est: 1.5h  delivers: [design.md matches current doctrine]  kind: agent
