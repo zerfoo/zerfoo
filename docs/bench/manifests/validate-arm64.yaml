@@ -22,13 +22,17 @@
 #   - cpu "8"           (8 full cores out of the host's budget)
 #   - nvidia.com/gpu 1  (serialized via SPARK_GPU_MAX=1 on the host)
 #
-# Mounts (read-only unless noted):
+# Mounts (read-only; ONLY host paths that exist -- Spark's Podman backend does
+# not honor DirectoryOrCreate and fails the container with "statfs ...: no such
+# file or directory" for any missing hostPath, observed live 2026-07-02):
 #   /usr/local/cuda        CUDA 13 runtime libs (loaded via purego/dlopen)
 #   /opt/zerfoo/lib        tanh-fixed sm_121 libkernels.so; resolved by
 #                          internal/cuda/purego.go kernelLibPaths[2]
-#   /var/lib/zerfoo/models GGUF model files for the parity subset (optional;
-#                          the job skips model parity cleanly when empty)
-#   /var/lib/zerfoo/go     writable Go build+module cache (speeds re-runs)
+# Model parity: MODELS_DIR points at an in-container path that is absent by
+# default, so the parity stage skips cleanly. To run parity, provision GGUF
+# files on the host and re-add a models hostPath mount (path must pre-exist).
+# Go build/module cache: intentionally NOT mounted (host dir not provisioned);
+# every run is a cold build until /var/lib/zerfoo/go exists on the host.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -117,10 +121,6 @@ spec:
           value: "./internal/cuda/... ./tabular/... ./tests/parity/..."
         - name: LD_LIBRARY_PATH
           value: "/usr/local/cuda/lib64:/opt/zerfoo/lib"
-        - name: GOCACHE
-          value: "/var/lib/zerfoo/go/build"
-        - name: GOMODCACHE
-          value: "/var/lib/zerfoo/go/mod"
         - name: GOFLAGS
           value: "-mod=mod"
       resources:
@@ -135,11 +135,6 @@ spec:
         - name: cuda
           mountPath: /usr/local/cuda
           readOnly: true
-        - name: models
-          mountPath: /var/lib/zerfoo/models
-          readOnly: true
-        - name: go-cache
-          mountPath: /var/lib/zerfoo/go
   volumes:
     - name: zerfoo-lib
       hostPath:
@@ -149,11 +144,3 @@ spec:
       hostPath:
         path: /usr/local/cuda
         type: Directory
-    - name: models
-      hostPath:
-        path: /var/lib/zerfoo/models
-        type: DirectoryOrCreate
-    - name: go-cache
-      hostPath:
-        path: /var/lib/zerfoo/go
-        type: DirectoryOrCreate
