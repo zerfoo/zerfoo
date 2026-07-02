@@ -1,0 +1,233 @@
+# .golangci.yml
+# Strict, fix-forward config: enable auto-fixing linters and strong correctness linters.
+# Run with: golangci-lint run --fix ./...
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+output:
+  formats:
+    text:
+      path: stdout
+
+# Curated set: prefer fixable formatters + essential correctness & security linters.
+linters:
+  default: standard
+
+  enable:
+    # Auto-fixable formatters / organizers
+    - misspell         # spelling; supports --fix
+
+    # Correctness, readability, and maintainability
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - gocritic
+    - nolintlint
+    - lll
+    - gosec
+
+    # API, error, and return-shape hygiene
+    - errorlint
+    - errname
+
+    # Complexity/structure
+    - dupl
+
+    # Testing quality
+    - tparallel
+
+    # Tags and struct initialization
+    - tagalign
+
+    # Context and net/http usage
+    - noctx
+    - nosprintfhostport
+
+    # Codebase policy
+    - depguard
+    - forbidigo
+    - copyloopvar
+
+  # Per-linter settings.
+  settings:
+    misspell:
+      locale: US
+
+    govet:
+      enable-all: false
+      enable:
+        - printf
+        - lostcancel
+        - nilness
+        - stringintconv
+        - structtag
+        - testinggoroutine
+        - sortslice
+        - waitgroup
+
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: errorf
+        - name: error-naming
+        - name: error-return
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: optimize-operands-order
+        - name: receiver-naming
+        - name: unexported-return
+        - name: var-naming
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: unnecessary-stmt
+        - name: use-any
+        - name: time-equal
+        - name: redefines-builtin-id
+        - name: early-return
+        - name: empty-lines
+        - name: package-comments
+        - name: useless-break
+
+    gocritic:
+      enable-all: false
+      enabled-checks:
+        - appendCombine
+        - boolExprSimplify
+        - emptyStringTest
+        - importShadow
+        - preferFilepathJoin
+        - preferFprint
+        - preferWriteByte
+        - rangeExprCopy
+        - rangeValCopy
+        - redundantSprint
+        - sprintfQuotedString
+        - timeExprSimplify
+      disabled-checks:
+        - captLocal
+      settings:
+        rangeExprCopy:
+          sizeThreshold: 512
+        rangeValCopy:
+          sizeThreshold: 128
+
+    lll:
+      line-length: 320
+      tab-width: 1
+
+    gocyclo:
+      min-complexity: 12
+    cyclop:
+      max-complexity: 12
+      package-average: 0.0
+    gocognit:
+      min-complexity: 10
+    funlen:
+      lines: 100
+      statements: 60
+
+    staticcheck:
+      checks:
+        - "all"
+        - "-SA1019"  # Deprecated API usage — tracked separately, not a lint gate
+        - "-ST1000"  # Package comments — add incrementally, not a lint gate
+        - "-ST1003"  # Underscore names — some match C/CUDA API naming conventions
+        - "-ST1021"  # Comment form — add incrementally
+
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+
+    depguard:
+      rules:
+        main:
+          list-mode: lax
+          files:
+            - $all
+          allow:
+            - $gostd
+          deny:
+            - pkg: "github.com/stretchr/testify"
+              desc: "Use the standard library testing and require no third-party test frameworks."
+            - pkg: "github.com/pkg/errors"
+              desc: "Use errors, fmt.Errorf with %w, and stdlib wrapping."
+            - pkg: "github.com/sirupsen/logrus"
+              desc: "Prefer slog or std log."
+            - pkg: "io/ioutil$"
+              desc: "Deprecated since Go 1.16. Use os or io packages instead."
+            - pkg: "math/rand$"
+              desc: "Use math/rand/v2."
+
+    gosec:
+      severity: medium
+      confidence: medium
+      excludes:
+        - G404   # Allow math/rand in tests
+        - G115   # Int conv false positives in generics-heavy code
+        - G704   # SSRF taint false positives on internal API/CDN URLs
+        - G705   # XSS taint false positives on %q-escaped SSE error responses
+
+    forbidigo:
+      forbid:
+        - pattern: '^print(ln)?$'
+        - pattern: '^fmt\.Print.*$'
+      exclude-godoc-examples: true
+      analyze-types: true
+
+    copyloopvar:
+      check-alias: true
+
+  # So useful linters do not spam in tests, examples, and generated code.
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocyclo
+          - cyclop
+          - dupl
+          - lll
+          - wrapcheck
+          - ireturn
+          - gocognit
+          - gosec
+          - errcheck
+          - noctx
+          - gocritic
+
+      - path: ^cmd/
+        linters:
+          - gosec
+          - forbidigo
+          - gocritic
+
+      - path: ^examples/
+        linters:
+          - errcheck
+          - gocritic
+          - gosec
+          - forbidigo
+
+      - path: ".*_generated\\.go"
+        linters:
+          - all
+
+      # Allow long lines for URLs and comments.
+      - linters:
+          - lll
+        text: "https?://"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "zerfoo.fullname" . }}
+  labels:
+    {{- include "zerfoo.labels" . | nindent 4 }}
+data:
+  ZERFOO_PORT: {{ .Values.server.port | quote }}
+  {{- if .Values.model.name }}
+  ZERFOO_MODEL: {{ .Values.model.name | quote }}
+  {{- end }}
+  {{- if .Values.model.quantization }}
+  ZERFOO_QUANTIZATION: {{ .Values.model.quantization | quote }}
+  {{- end }}
+  ZERFOO_CACHE_DIR: {{ .Values.model.cacheDir | quote }}

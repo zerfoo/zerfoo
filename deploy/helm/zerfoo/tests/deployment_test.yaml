@@ -1,0 +1,79 @@
+suite: deployment tests
+templates:
+  - templates/deployment.yaml
+values:
+  - ../values.yaml
+tests:
+  - it: should render deployment with defaults
+    set:
+      model.name: "gemma-3-1b"
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.template.spec.containers[0].name
+          value: zerfoo
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].containerPort
+          value: 8080
+
+  - it: should set custom replica count
+    set:
+      replicaCount: 3
+      model.name: "gemma-3-1b"
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: should not set replicas when autoscaling is enabled
+    set:
+      autoscaling.enabled: true
+      model.name: "gemma-3-1b"
+    asserts:
+      - notExists:
+          path: spec.replicas
+
+  - it: should set resource limits
+    set:
+      model.name: "gemma-3-1b"
+      resources:
+        limits:
+          cpu: "8"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.nvidia\.com/gpu
+          value: "1"
+
+  - it: should include model name in args
+    set:
+      model.name: "llama-3-8b"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "llama-3-8b"
+
+  - it: should use custom image
+    set:
+      image.repository: myregistry.io/zerfoo
+      image.tag: "v1.2.3"
+      model.name: "gemma-3-1b"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "myregistry.io/zerfoo:v1.2.3"
+
+  - it: should set environment variables
+    set:
+      model.name: "gemma-3-1b"
+      env:
+        - name: ZERFOO_LOG_LEVEL
+          value: debug
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ZERFOO_LOG_LEVEL
+            value: debug

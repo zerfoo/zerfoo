@@ -1,0 +1,205 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
+	"github.com/zerfoo/ztensor/numeric"
+	"github.com/zerfoo/ztensor/tensor"
+	"github.com/zerfoo/ztensor/types"
+)
+
+// FiLM (Feature-wise Linear Modulation) layer.
+// It takes a feature tensor and a context tensor as input.
+// It generates scale and bias vectors from the context tensor and applies them to the feature tensor.
+// Output = (feature * scale) + bias
+type FiLM[T tensor.Numeric] struct {
+	engine   compute.Engine[T]
+	scaleGen *Linear[T]
+	biasGen  *Linear[T]
+	// lastScale is the scale generated from the context; recomputing it in
+	// Backward would re-run the scale generator, so it is registered with
+	// the save-for-backward contract (ztensor ADR 006). The feature tensor
+	// is read from the live `inputs ...` in Backward.
+	lastScale   *tensor.TensorNumeric[T]
+	saver       graph.Saver[T] // wired by graph Builder (graph.SaverAware); nil outside a Graph
+	outputShape []int
+	contextDim  int
+	featureDim  int
+}
+
+// NewFiLM creates a new FiLM layer.
+func NewFiLM[T tensor.Numeric](
+	name string,
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	contextDim, featureDim int,
+) (*FiLM[T], error) {
+	if name == "" {
+		return nil, errors.New("layer name cannot be empty")
+	}
+
+	scaleGen, err := NewLinear[T](name+"_scale_generator", engine, ops, contextDim, featureDim)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create scale generator: %w", err)
+	}
+
+	biasGen, err := NewLinear[T](name+"_bias_generator", engine, ops, contextDim, featureDim)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bias generator: %w", err)
+	}
+
+	return &FiLM[T]{
+		engine:      engine,
+		scaleGen:    scaleGen,
+		biasGen:     biasGen,
+		contextDim:  contextDim,
+		featureDim:  featureDim,
+		outputShape: []int{1, featureDim}, // Assuming batch size of 1 for now
+	}, nil
+}
+
+// OutputShape returns the output shape of the FiLM layer.
+func (f *FiLM[T]) OutputShape() []int {
+	return f.outputShape
+}
+
+// Forward performs the forward pass for the FiLM layer.
+// It expects two inputs: inputs[0] is the feature tensor, inputs[1] is the context tensor.
+func (f *FiLM[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 2 {
+		return nil, fmt.Errorf("FiLM: %w, expected %d, got %d", graph.ErrInvalidInputCount, 2, len(inputs))
+	}
+
+	feature, ctxInput := inputs[0], inputs[1]
+
+	// Generate scale and bias from the context
+	scale, err := f.scaleGen.Forward(ctx, ctxInput)
+	if err != nil {
+		return nil, fmt.Errorf("FiLM scale generation failed: %w", err)
+	}
+	f.lastScale = scale
+	if f.saver != nil {
+		f.saver.SaveForBackward(scale)
+	}
+
+	bias, err := f.biasGen.Forward(ctx, ctxInput)
+	if err != nil {
+		return nil, fmt.Errorf("FiLM bias generation failed: %w", err)
+	}
+
+	// Apply FiLM: (feature * scale) + bias
+	scaledFeature, err := f.engine.Mul(ctx, feature, scale)
+	if err != nil {
+		return nil, fmt.Errorf("FiLM scaling failed: %w", err)
+	}
+
+	output, err := f.engine.Add(ctx, scaledFeature, bias)
+	if err != nil {
+		return nil, fmt.Errorf("FiLM bias addition failed: %w", err)
+	}
+
+	f.outputShape = output.Shape()
+	return output, nil
+}
+
+// Backward computes the gradients for the FiLM layer.
+func (f *FiLM[T]) Backward(ctx context.Context, mode types.BackwardMode, outputGradient *tensor.TensorNumeric[T], inputs ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+	if len(inputs) != 2 {
+		return nil, fmt.Errorf("FiLM: %w, expected %d, got %d", graph.ErrInvalidInputCount, 2, len(inputs))
+	}
+
+	ctxInput := inputs[1]
+
+	// Gradient of the bias is just the output gradient
+	dBias, err := f.biasGen.Backward(ctx, mode, outputGradient, ctxInput)
+	if err != nil {
+		return nil, fmt.Errorf("FiLM bias backward pass failed: %w", err)
+	}
+
+	// Gradient for the scaled feature is also the output gradient
+	dScaledFeature := outputGradient
+
+	// Gradient for the scale is dScaledFeature * feature
+	dScale, err := f.engine.Mul(ctx, dScaledFeature, inputs[0])
+	if err != nil {
+		return nil, fmt.Errorf("FiLM dScale calculation failed: %w", err)
+	}
+
+	dScaleContext, err := f.scaleGen.Backward(ctx, mode, dScale, ctxInput)
+	if err != nil {
+		return nil, fmt.Errorf("FiLM scale backward pass failed: %w", err)
+	}
+
+	// Gradient for the feature is dScaledFeature * scale
+	dFeature, err := f.engine.Mul(ctx, dScaledFeature, f.lastScale)
+	if err != nil {
+		return nil, fmt.Errorf("FiLM dFeature calculation failed: %w", err)
+	}
+
+	// The context gradient is the sum of the gradients from the scale and bias generators.
+	dContext, err := f.engine.Add(ctx, dScaleContext[0], dBias[0])
+	if err != nil {
+		return nil, fmt.Errorf("FiLM dContext calculation failed: %w", err)
+	}
+
+	return []*tensor.TensorNumeric[T]{dFeature, dContext}, nil
+}
+
+// Parameters returns the parameters of the FiLM layer.
+func (f *FiLM[T]) Parameters() []*graph.Parameter[T] {
+	params := f.scaleGen.Parameters()
+	params = append(params, f.biasGen.Parameters()...)
+	return params
+}
+
+// OpType returns the operation type of the FiLM layer.
+func (f *FiLM[T]) OpType() string {
+	return "FiLM"
+}
+
+// Attributes returns the attributes of the FiLM layer.
+func (f *FiLM[T]) Attributes() map[string]interface{} {
+	return map[string]interface{}{
+		"context_dim": f.contextDim,
+		"feature_dim": f.featureDim,
+	}
+}
+
+// BuildFiLM constructs a FiLM node from attributes.
+// Required attributes:
+// - "context_dim" (int): dimension of the context input
+// - "feature_dim" (int): dimension of the feature input
+func BuildFiLM[T tensor.Numeric](
+	engine compute.Engine[T],
+	ops numeric.Arithmetic[T],
+	name string,
+	_ map[string]*graph.Parameter[T],
+	attributes map[string]interface{},
+) (graph.Node[T], error) {
+	contextDim, ok := attributes["context_dim"].(int)
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid attribute 'context_dim' for FiLM")
+	}
+
+	featureDim, ok := attributes["feature_dim"].(int)
+	if !ok {
+		return nil, fmt.Errorf("missing or invalid attribute 'feature_dim' for FiLM")
+	}
+
+	return NewFiLM[T](name, engine, ops, contextDim, featureDim)
+}
+
+// Statically assert with a concrete type to avoid using generic constraints in assertions.
+var _ graph.Node[float32] = (*FiLM[float32])(nil)
+
+// Statically assert that FiLM participates in the save-for-backward contract.
+var _ graph.SaverAware[float32] = (*FiLM[float32])(nil)
+
+// SetSaver implements graph.SaverAware (ztensor ADR 006).
+func (f *FiLM[T]) SetSaver(sv graph.Saver[T]) {
+	f.saver = sv
+}
