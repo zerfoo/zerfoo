@@ -52,6 +52,12 @@ func TestAvailableReturnsFalseWithoutCUDA(t *testing.T) {
 }
 
 func TestDlsymImplFailsOnInvalidHandle(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		// On glibc, handle 0 is RTLD_DEFAULT: dlsym searches the global
+		// namespace and can resolve real symbols, so the invalid-handle
+		// expectation below only holds on darwin.
+		t.Skip("dlsym(0) is RTLD_DEFAULT on glibc and may resolve symbols")
+	}
 	// dlsym with handle 0 should return 0.
 	addr := dlsymImpl(0, "cudaMalloc")
 	if addr != 0 {
