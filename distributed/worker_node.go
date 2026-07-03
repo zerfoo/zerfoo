@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 
 	"github.com/zerfoo/zerfoo/serve/health"
@@ -21,6 +22,11 @@ type WorkerNodeConfig struct {
 	Logger             log.Logger
 	Collector          metrics.Collector
 	HealthServer       *health.Server
+	// TLS, when set, secures the worker's own gRPC server (mutual TLS via
+	// TLSConfig.ServerCredentials) and the worker's outbound connection to
+	// the coordinator (via TLSConfig.ClientCredentials). When nil, Start
+	// refuses to bind any non-loopback WorkerAddress -- see isLoopback.
+	TLS *TLSConfig
 }
 
 // WorkerNode encapsulates a distributed training worker. It manages
@@ -61,7 +67,18 @@ func (wn *WorkerNode) Start(_ context.Context) error {
 		return errors.New("worker node already started")
 	}
 
-	srv := grpc.NewServer()
+	var opts []grpc.ServerOption
+	if wn.config.TLS != nil {
+		creds, err := wn.config.TLS.ServerCredentials()
+		if err != nil {
+			return fmt.Errorf("worker tls: %w", err)
+		}
+		opts = append(opts, grpc.Creds(creds))
+	} else if !isLoopback(wn.config.WorkerAddress) {
+		return errors.New("worker: refusing non-loopback bind without TLS; set TLS or bind 127.0.0.1")
+	}
+
+	srv := grpc.NewServer(opts...)
 	sm := NewServerManager(srv, nil)
 	nm := NewNetworkManager(nil, nil)
 
@@ -71,6 +88,7 @@ func (wn *WorkerNode) Start(_ context.Context) error {
 		NetworkManager: nm,
 		Logger:         wn.config.Logger,
 		Collector:      wn.config.Collector,
+		TLS:            wn.config.TLS,
 	})
 
 	if err := strategy.Init(0, wn.config.WorldSize, wn.config.CoordinatorAddress); err != nil {
@@ -161,3 +179,35 @@ var _ InternalStrategy[float32] = (*GrpcStrategy[float32])(nil)
 
 // Generic type alias for external use.
 type NumericStrategy[T tensor.Numeric] = InternalStrategy[T]
+
+// isLoopback reports whether addr's host is restricted to the local loopback
+// interface (127.0.0.0/8 or ::1), including the "localhost" hostname. Any
+// other host -- a routable IP, a non-loopback hostname, or an empty host
+// (e.g. ":9001", which binds all interfaces) -- is treated as non-loopback
+// and fails closed by returning false.
+func isLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// No "host:port" structure found (e.g. a bare host); fall back to
+		// treating the whole string as the host.
+		host = addr
+	}
+
+	if host == "" {
+		// ":PORT" binds every interface, which is not loopback.
+		return false
+	}
+
+	if host == "localhost" {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Unresolved/non-IP hostname: fail closed rather than guess whether
+		// it resolves to loopback.
+		return false
+	}
+
+	return ip.IsLoopback()
+}
