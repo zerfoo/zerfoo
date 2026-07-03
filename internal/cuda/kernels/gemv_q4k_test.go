@@ -253,27 +253,7 @@ func TestGemvQ4KF32_Parity(t *testing.T) {
 		t.Fatalf("Memcpy y: %v", err)
 	}
 
-	maxRelErr := 0.0
-	for i := range got {
-		absRef := math.Abs(float64(ref[i]))
-		diff := math.Abs(float64(got[i] - ref[i]))
-		var relErr float64
-		if absRef > 1e-6 {
-			relErr = diff / absRef
-		} else {
-			relErr = diff
-		}
-		if relErr > maxRelErr {
-			maxRelErr = relErr
-		}
-		if relErr > gemvReductionRelTol {
-			t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
-			if t.Failed() {
-				break
-			}
-		}
-	}
-	t.Logf("max relative error: %e", maxRelErr)
+	checkGemvRelError(t, got, ref, gemvReductionRelTol)
 }
 
 func TestGemvQ4KF32_LargerMatrix(t *testing.T) {
@@ -328,27 +308,7 @@ func TestGemvQ4KF32_LargerMatrix(t *testing.T) {
 		t.Fatalf("Memcpy y: %v", err)
 	}
 
-	maxRelErr := 0.0
-	for i := range got {
-		absRef := math.Abs(float64(ref[i]))
-		diff := math.Abs(float64(got[i] - ref[i]))
-		var relErr float64
-		if absRef > 1e-6 {
-			relErr = diff / absRef
-		} else {
-			relErr = diff
-		}
-		if relErr > maxRelErr {
-			maxRelErr = relErr
-		}
-		if relErr > gemvReductionRelTol {
-			t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
-			if t.Failed() {
-				break
-			}
-		}
-	}
-	t.Logf("max relative error: %e", maxRelErr)
+	checkGemvRelError(t, got, ref, gemvReductionRelTol)
 }
 
 func TestGemvQ4KF32_MultipleSizes(t *testing.T) {
@@ -416,27 +376,7 @@ func TestGemvQ4KF32_MultipleSizes(t *testing.T) {
 				t.Fatalf("Memcpy y: %v", err)
 			}
 
-			maxRelErr := 0.0
-			for i := range got {
-				absRef := math.Abs(float64(ref[i]))
-				diff := math.Abs(float64(got[i] - ref[i]))
-				var relErr float64
-				if absRef > 1e-6 {
-					relErr = diff / absRef
-				} else {
-					relErr = diff
-				}
-				if relErr > maxRelErr {
-					maxRelErr = relErr
-				}
-				if relErr > gemvReductionRelTol {
-					t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
-					if t.Failed() {
-						break
-					}
-				}
-			}
-			t.Logf("max relative error: %e", maxRelErr)
+			checkGemvRelError(t, got, ref, gemvReductionRelTol)
 		})
 	}
 }
