@@ -2,7 +2,20 @@
 //
 // Usage:
 //
-//	bench_train [-samples 28000] [-channels 20] [-epochs 10]
+//	bench_train [-samples 28000] [-channels 20] [-epochs 10] [-seed 42]
+//
+// Seeding (T135.5 / plan-gpu-training-hardening.md T4.1): -seed governs BOTH
+// weight initialization (via timeseries.SeedWeightInit, called before the
+// model is constructed) and synthetic data generation, so two invocations
+// with the same -seed are the reproducible baseline the
+// ZTENSOR_DETERMINISTIC=1 bitwise-identity proof depends on.
+//
+// Weight init specifically needed its own seeding hook: timeseries/*.go's
+// Xavier/He init and PatchTST's positional embedding call math/rand/v2's
+// top-level convenience functions, which v2 deliberately made unseedable (no
+// global Seed function exists in math/rand/v2, unlike classic math/rand) --
+// so every model construction was non-reproducible regardless of any other
+// seeding, until timeseries.SeedWeightInit existed.
 package main
 
 import (
@@ -26,9 +39,17 @@ func main() {
 	epochs := flag.Int("epochs", 10, "training epochs")
 	batchSize := flag.Int("batch-size", 64, "batch size")
 	lr := flag.Float64("lr", 1e-3, "learning rate")
+	seed := flag.Int64("seed", 42, "seed for weight init and synthetic data generation")
 	cpuOnly := flag.Bool("cpu", false, "force CPU engine")
 	outFile := flag.String("out", "", "write results to file (unbuffered)")
 	flag.Parse()
+
+	// Reseed weight init BEFORE constructing the model (timeseries.NewPatchTST
+	// below draws from this generator during Xavier/He init and positional-
+	// embedding init). Two uint64s from the same seed: NewPCG takes a 128-bit
+	// seed; the exact expansion doesn't matter for reproducibility, only that
+	// it's a pure function of -seed.
+	ts.SeedWeightInit(uint64(*seed), uint64(*seed)<<32|uint64(*seed))
 
 	// If -out specified, tee all output to the file (unbuffered).
 	if *outFile != "" {
@@ -78,8 +99,11 @@ func main() {
 		log.Fatalf("NewPatchTST: %v", err)
 	}
 
-	// Generate synthetic data: random walk per channel.
-	rng := rand.New(rand.NewSource(42))
+	// Generate synthetic data: random walk per channel. A separate,
+	// explicitly-seeded generator (not the global source rand.Seed just
+	// configured above) so data generation is reproducible independent of
+	// how many global-source draws weight init happens to consume.
+	rng := rand.New(rand.NewSource(*seed))
 	windows := make([][][]float64, *nSamples)
 	labels := make([]float64, *nSamples*config.OutputDim)
 	for s := 0; s < *nSamples; s++ {
@@ -123,7 +147,11 @@ func main() {
 		if math.IsNaN(l) || math.IsInf(l, 0) {
 			finite = "NOT FINITE"
 		}
-		fmt.Printf("epoch %2d: loss=%.6f %s\n", i+1, l, finite)
+		// Print the exact IEEE-754 bit pattern alongside the rounded decimal:
+		// a ZTENSOR_DETERMINISTIC double-run bitwise-identity proof must diff
+		// bits, not %.6f-rounded text, which would hide any divergence below
+		// the printed precision (plan-gpu-training-hardening.md T4.1).
+		fmt.Printf("epoch %2d: loss=%.6f bits=0x%016x %s\n", i+1, l, math.Float64bits(l), finite)
 	}
 
 	if len(result.LossHistory) >= 2 {
