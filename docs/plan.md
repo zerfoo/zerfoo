@@ -262,7 +262,7 @@ Component: serve/. Acceptance: SERVE-1/2 closed (High/conditional-High); SERVE-3
 
 Component: .github/workflows, deploy/. Acceptance: CICD-1/2 closed (this phase, per Objectives); CICD-3/4/5/6 closed or tracked. Decision rationale: match the least-privilege pattern already used correctly by `benchmark.yml`, `codeql.yml`, `release-please.yml`.
 
-- [ ] T144.1 Fix CICD-1: add permissions blocks to PR-triggered workflows  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+- [x] T144.1 Fix CICD-1: add permissions blocks to PR-triggered workflows  Owner: agent  Est: 1h  verifies: [UC-H2-012]  kind: agent  (done 2026-07-03, PR #938: contents:read added to ci.yml/arm64-build.yml/golden-staleness.yml; no job in any of the three needed a broader scope)
   - `ci.yml`, `arm64-build.yml`, `golden-staleness.yml` run on `pull_request` (build/run PR code) with no `permissions:` block, so jobs inherit the repo/org default `GITHUB_TOKEN` scope. Fix: add `permissions: contents: read` to all three, matching the workflows that already do this correctly.
 - [ ] T144.2 Fix CICD-2: pin mutable tool/package installs in CI  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
   - `ci.yml:38` installs `govulncheck@latest`; `golden-staleness.yml:15` installs unpinned `torch`/`numpy` via pip. Fix: pin exact versions (or hash-checked installs) for both.
@@ -352,7 +352,7 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 - [ ] T142.2 fix CONC-H2 delete TOCTOU  verifies: [UC-H2-010]
 - [ ] T143.1 fix SERVE-2 adapter traversal  verifies: [UC-H2-011]
 - [ ] T143.2 fix SERVE-1 metric cardinality  verifies: [UC-H2-011]
-- [ ] T144.1 fix CICD-1 permissions blocks  verifies: [UC-H2-012]
+- [x] T144.1 fix CICD-1 permissions blocks  verifies: [UC-H2-012] -- DONE 2026-07-03 (PR #938)
 - [ ] T144.2 fix CICD-2 pin installs  verifies: [UC-H2-012]
 
 ### Wave Sec-2: Security fixes, tier 2 remainder + tier 3 start (10 agents)
