@@ -3,6 +3,8 @@ package kernels
 import (
 	"testing"
 	"unsafe"
+
+	"github.com/zerfoo/zerfoo/internal/cuda"
 )
 
 // TestFP16SignaturesCompile verifies that the FP16 purego wrappers have
@@ -34,6 +36,17 @@ func TestFP16SignaturesCompile(t *testing.T) {
 // TestFP16GracefulWithoutCUDA verifies that all FP16 kernel functions
 // return an error (not panic) when CUDA is not available.
 func TestFP16GracefulWithoutCUDA(t *testing.T) {
+	// When CUDA IS available, klib() is non-nil and these wrappers launch the
+	// real FP16 kernels with the nil device pointers below -- a null-pointer
+	// kernel launch that triggers an illegal memory access and poisons the
+	// CUDA context for every subsequent test in the package (zerfoo#922).
+	// Every other *GracefulWithoutCUDA test guards on this for the same reason;
+	// this one must too. The graceful path is only meaningful when CUDA is
+	// absent.
+	if cuda.Available() {
+		t.Skip("CUDA available, skipping graceful-failure test")
+	}
+
 	tests := []struct {
 		name string
 		fn   func() error
