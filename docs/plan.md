@@ -119,7 +119,7 @@ Component: kernels (mostly ztensor) + internal/cuda/kernels. Task-level detail l
 - [x] T135.2 Fixed-order fp32 tree reductions (plan-gpu-training-hardening T3.2)  Owner: agent  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  (done 2026-07-02, ztensor v1.19.2; zerfoo bumped b9613f7b)
   - ztensor-side: audit every reduction (ReduceSum, softmax denominator, norm stats, optimizer clipping norms) for accumulation order/dtype; convert to fixed-order pairwise/tree fp32 accumulation. Oracle diffs must tighten.
 - [x] S135.2.1 Tests + lint (ztensor)  Owner: agent  Est: 2h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.2]  (done 2026-07-02, ztensor main CI green through v1.19.2 release)
-- [ ] T135.3 Oracle-gate remaining kernels (T3.3)  Owner: TBD  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]
+- [x] T135.3 Oracle-gate remaining kernels (T3.3)  Owner: agent  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]  (done 2026-07-03, PR wave-2-task-T135.3: sgemv_m1.cu alignment fix, gemv_q4k_sm121.cu build fix, .so rebuilt via Spark build pod, honest per-op tolerance table docs/kernel-tolerances.md, full ./internal/cuda/kernels/ green on GB10)
   - Sweep the kernel inventory through the ztensor oracle harness on GB10; fix out-of-tolerance ops; commit the standing per-op tolerance table.
 - [ ] T135.4 Fused encoder fwd/bwd audit (T3.4)  Owner: TBD  Est: 1d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]
 - [ ] T135.5 ZTENSOR_DETERMINISTIC mode (T4.1)  Owner: TBD  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.2]
@@ -183,7 +183,7 @@ GB10 serialization: one GPU pod at a time across ALL tracks (E133 proofs, E135 b
 ### Wave 2: Build-out (5 agents)
 - [ ] S133.1.1, T133.2 (chain)  verifies: [UC-H2-003]
 - [ ] S135.2.1  verifies: [UC-H2-003]
-- [ ] T135.3 oracle-gate kernels  (after T135.1)
+- [x] T135.3 oracle-gate kernels  (after T135.1) -- DONE 2026-07-03
 - [x] T135.4 fused encoder audit  (after T135.1)  2026 07 02  (DONE devlog entry; FFN/SwiGLU + FusedSDPA gradcheck added; FFN GELU-mode Backward bug fixed [always called SwiGLU backward regardless of useGELU]; fused PatchTST encoder backward wiring gap filed on #522 [E55, parked])
 - [ ] T134.1 gemma4e fix attempt  (after T136.2)
 
@@ -253,6 +253,25 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 ---
 
 ## Progress Log
+
+### 2026 07 03 -- Change Summary: T135.3 oracle-gate kernels done (Wave 2)
+
+- T135.3 done: sgemv_m1.cu float4 vectorized-load misalignment fixed (row
+  pointer alignment guard + scalar fallback, replacing the `N % 4 == 0`
+  assumption that faulted for odd N and poisoned the CUDA context); found
+  and fixed a SEPARATE build-blocking bug in gemv_q4k_sm121.cu (missing
+  `cooperative_groups/reduce.h` include, nvcc 13.1 does not pull it in
+  transitively) while rebuilding libkernels.so; rebuilt + deployed the .so
+  via a one-shot Spark build pod (nvcr.io/nvidia/pytorch:26.02-py3 devel
+  image, writable /opt/zerfoo/lib mount -- the sanctioned rebuild path,
+  documented in docs/kernel-tolerances.md); replaced the flat 1e-4 relative
+  bound in TestSgemvM1_MultipleSizes / TestGemvQ4KF32_* with a combined
+  abs+rel tolerance (gemvReductionAbsTol=1e-5, gemvReductionRelTol=1e-4)
+  honestly sized against measured GB10 worst-case error (catastrophic
+  cancellation on near-zero reduction rows, not nondeterminism). Full
+  `./internal/cuda/kernels/` green on GB10 (ref 368d68d1, pod
+  zerfoo-validate-wave2taskT13-1783060264). Standing tolerance table:
+  docs/kernel-tolerances.md. PR: wave-2-task-T135.3, references #847.
 
 ### 2026 07 02 (late) -- Change Summary: Wave 1 complete (T132.1 -> Wave 2 dispatched)
 

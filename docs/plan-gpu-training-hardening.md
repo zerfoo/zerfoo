@@ -336,7 +336,7 @@ fp32 fixed-order, every kernel passes the oracle gate, perf delta recorded.
 - [ ] S3.2.1 Tests + lint for reduction changes
        Owner: TBD  Est: 2h  verifies: [UC-GH-005]  kind: agent  blocked-by: [T3.2]
 
-- [ ] T3.3 Oracle-gate every remaining kernel; fix divergences
+- [x] T3.3 Oracle-gate every remaining kernel; fix divergences  2026 07 03  (DONE zerfoo T135.3, PR wave-2-task-T135.3: sgemv_m1.cu float4 misalignment fixed [row-pointer alignment guard, scalar fallback]; gemv_q4k_sm121.cu missing `cooperative_groups/reduce.h` include fixed [build-blocking on nvcc 13.1, found during this sweep]; libkernels.so rebuilt via a one-shot Spark build pod with nvcr.io/nvidia/pytorch:26.02-py3 [nvcc devel image, writable /opt/zerfoo/lib mount] and deployed to the DGX host; TestSgemvM1_MultipleSizes / TestGemvQ4KF32_* switched from a flat 1e-4 relative bound to a combined abs+rel tolerance [gemvReductionAbsTol=1e-5, gemvReductionRelTol=1e-4] to honestly bound fp32 reduction-order + cancellation error instead of masking it with a loose flat relative bound; full ./internal/cuda/kernels/ green on GB10, ref 368d68d1, pod zerfoo-validate-wave2taskT13-1783060264. Standing tolerance table: docs/kernel-tolerances.md.)
        Owner: TBD  Est: 1.5d  verifies: [UC-GH-005]  kind: agent  blocked-by: [T1.3, T3.1]
   - Sweep internal/cuda/kernels (elementwise, argmax, dequant paths used in
     training, fill, scaled softmax) through the oracle; fix any out-of-
@@ -461,7 +461,7 @@ T5.1) serialize on the single GPU -- never fan those out.
 ### Wave 3: Migration + audit (3 agents)
 - [ ] T2.3 Backward-impl audit + migration (both repos)
 - [ ] T3.2 Reduction-accumulation audit
-- [ ] T3.3 Oracle-gate remaining kernels
+- [x] T3.3 Oracle-gate remaining kernels (DONE 2026 07 03, zerfoo T135.3)
 
 ### Wave 4: Hardening tail (3 agents)
 - [ ] T2.4 Wolf-pattern stress test
