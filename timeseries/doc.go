@@ -6,7 +6,6 @@ package timeseries
 
 import (
 	"math"
-	"math/rand/v2"
 
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -28,7 +27,7 @@ func newLinearLayer(in, out int) (linearLayer, error) {
 	scale := float32(math.Sqrt(2.0 / float64(in)))
 	wData := make([]float32, in*out)
 	for i := range wData {
-		wData[i] = float32(rand.NormFloat64()) * scale
+		wData[i] = float32(weightInitNormFloat64()) * scale
 	}
 	w, err := tensor.New[float32]([]int{in, out}, wData)
 	if err != nil {
@@ -49,7 +48,7 @@ func newLinearXavier(in, out int) (linearLayer, error) {
 	scale := float32(math.Sqrt(2.0 / float64(in+out)))
 	wData := make([]float32, in*out)
 	for i := range wData {
-		wData[i] = float32(rand.NormFloat64()) * scale
+		wData[i] = float32(weightInitNormFloat64()) * scale
 	}
 	w, err := tensor.New[float32]([]int{in, out}, wData)
 	if err != nil {
