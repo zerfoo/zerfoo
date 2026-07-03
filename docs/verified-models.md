@@ -25,7 +25,7 @@ here; until then the "Status" column is authoritative.
 |--------|---------|
 | `verified` | Has at least one existing, checked evidence link (parity test that exists and/or a `benchmarks.md` row). GPU-verified only if the GPU-Verified column says yes. |
 | `pending` | Architecture is registered in Zerfoo (`inference.ListArchitectures()`), but no parity/benchmark evidence has been recorded yet. Evidence cells intentionally empty until T136.3/T136.4. |
-| `arch-unconfirmed` | Zerfoo has no confirmed architecture builder for this model. Kept in the candidate list per the plan, but must not be claimed as supported. |
+| `arch-unconfirmed` | Zerfoo has no GGUF-registered architecture builder for this model (it is absent from `inference.ListArchitectures()`), so gate check 1 fails. Kept in the candidate list per the plan, but must not be claimed as supported. |
 
 ## Matrix
 
@@ -40,7 +40,7 @@ here; until then the "Status" column is authoritative.
 | Phi-4 | `phi` / `phi3` alias | `microsoft/phi-4-gguf` (exact file pinned at provisioning, T136.2) | Q4_K_M (intended) | `TestPhi4ForwardPass` / `TestPhi4GreedyDecode` / `TestPhi4Generation` (`tests/parity/phi4_test.go`) — require `PHI4_MODEL_DIR`; not yet run | — (pending T136.4) | No | pending |
 | DeepSeek-R1-Distill 1.5B | `qwen2` (the 1.5B distill is a Qwen2-architecture model; see note below) | `bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M | No dedicated parity test; `tests/parity/deepseek_test.go` (`TestDeepSeekV3*`) targets the `deepseek_v3` architecture, **not** this Qwen2 distill. Parity via the `qwen2` path pending T136.3 | 186 tok/s (1.11x Ollama 168), `docs/benchmarks.md` "Throughput vs Ollama" row ("DeepSeek-R1 1.5B"), 2026-03-30, v1.38.4; per-model reproduction manifest pending T136.4 | Yes (2026-03-30) | verified |
 | MiniMax-M2 229B (CPU / over-RAM) | MoE; loaded via the GGUF path on CPU (over-RAM mmap). Builder not in the `arch_registry_test` expected list — see note below | MiniMaxAI MiniMax-M2 GGUF (229B MoE, 3 shards, 128.8 GB Q4_K_M; exact repo/file pinned at provisioning, T136.2) | Q4_K_M | No GPU parity test (CPU-only over-RAM path); load + decode demonstrated in `docs/devlog.md` 2026-03-29 entry ("MiniMax-M2 229B inference verified on 128 GB DGX Spark") | 0.06 tok/s CPU over-RAM, `docs/benchmarks.md` "Over-RAM Inference" row, 2026-03-29 (NVMe-bound; Ollama failed to load with a 500 error on same hardware) | No (CPU-only; no GPU over-RAM path yet) | verified |
-| Chronos-2 (timeseries, non-LLM) | none — no `chronos` builder found in the repo | Amazon `amazon/chronos-2` (not currently distributed as GGUF; conversion path unconfirmed) | — | None. No architecture builder and no parity test exist for Chronos-2 today | — | No | arch-unconfirmed |
+| Chronos-2 (timeseries, non-LLM) | `BuildChronos` T5 graph builder exists (`inference/timeseries/arch_chronos.go`, with a weight converter in `convert_chronos.go`) but is not registered in the GGUF architecture registry (`inference.ListArchitectures()`) — gate check 1 fails | Amazon `amazon/chronos-2` (not currently distributed as GGUF; conversion path unconfirmed) | — | Structural/shape tests only (`timeseries/chronos_test.go`, `inference/timeseries/arch_chronos_test.go`); no numeric parity test in `tests/parity/` | — | No | arch-unconfirmed |
 
 ### Notes
 
@@ -56,11 +56,15 @@ here; until then the "Status" column is authoritative.
   `tests/parity/arch_registry_test.go`; the row is evidenced by the recorded
   load+generate run, not by the architecture-registry test. GPU acceleration for
   the over-RAM path does not exist yet, so GPU-verified is `No`.
-- **Chronos-2 (the required non-LLM entry).** Zerfoo has no Chronos-2
-  architecture builder (grep for `chronos` across the repo returns nothing), and
-  Chronos-2 is not distributed as GGUF, so no GGUF-path evidence can exist today.
-  Per the plan's deviation rule this candidate is kept but marked
-  `arch-unconfirmed`; it must not be claimed as supported. **The framework does
+- **Chronos-2 (the required non-LLM entry).** Zerfoo carries a Chronos-2 T5
+  graph builder (`inference/timeseries.BuildChronos`) and a weight converter,
+  with structural/shape tests — but the architecture is not registered in the
+  GGUF registry (`inference.ListArchitectures()` does not include it), Chronos-2
+  is not distributed as GGUF, and no numeric parity test exists in
+  `tests/parity/`, so no GGUF-path evidence can exist today. Per the plan's
+  deviation rule this candidate is kept but marked `arch-unconfirmed`; it must
+  not be claimed as supported. Registering the builder + a GGUF conversion path
+  would be the route to a claimable row. **The framework does
   have real non-LLM (timeseries) parity coverage** — e.g. `TestParity_PatchTST`,
   `TestParity_DLinear`, `TestParity_NBEATS`, `TestParity_ITransformer`,
   `TestParity_TFT_Structural`, `TestParity_CfC`, `TestParity_FreTS`,
@@ -125,7 +129,7 @@ it stays `pending` or `arch-unconfirmed` with empty evidence cells.
 | Phi-4 | pending | `phi`/`phi3` builder registered; `TestPhi4*` present but not run |
 | DeepSeek-R1-Distill 1.5B | verified (GPU) | `benchmarks.md` 186 tok/s row (2026-03-30); loads via `qwen2` builder |
 | MiniMax-M2 229B (CPU) | verified (CPU) | `benchmarks.md` Over-RAM row + `devlog.md` 2026-03-29 |
-| Chronos-2 (timeseries) | arch-unconfirmed | no `chronos` builder; kept per plan, must not be claimed |
+| Chronos-2 (timeseries) | arch-unconfirmed | `BuildChronos` exists but is not GGUF-registered; kept per plan, must not be claimed |
 
 ## Known documentation discrepancy
 
