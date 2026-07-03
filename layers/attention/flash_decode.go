@@ -30,11 +30,23 @@ import (
 // same cross-stream race fixed for prefill in #866, tracked for decode in
 // zerfoo#865 (docs/lore.md L-0006). When nil, a temporary stream is used
 // (standalone use with synchronous inputs).
+//
+// out, partialO, and partialLSE are the caller-owned persistent scratch
+// caches (zerfoo#870, docs/lore.md L-0006): the output and split-KV scratch
+// buffers are allocated once (lazily, on first use) and reused across calls
+// instead of being malloc'd and defer-freed per call, which is what made
+// replay under training.CaptureReplayRunner dereference freed memory. Callers
+// pass nil only when they know CUDA is unavailable (the function bails before
+// touching any of them in that case); production callers (SDPA.Forward) pass
+// buffers cached on the owning node so their lifetime spans the whole
+// capture-replay life of the graph.
 func tryFlashDecode[T tensor.Numeric](
 	q, k, v *tensor.TensorNumeric[T],
 	headDim int,
 	numQueryHeads, numKVHeads int,
 	engStream unsafe.Pointer,
+	out, partialO *gpuScratchBuffer[T],
+	partialLSE *gpuScratchBuffer[float32],
 ) (*tensor.TensorNumeric[T], error) {
 	if !cuda.Available() {
 		return nil, nil
@@ -74,31 +86,33 @@ func tryFlashDecode[T tensor.Numeric](
 	numBH := q.Shape()[0] // batch * numQueryHeads
 	kvLen := k.Shape()[1] // KV sequence length
 
-	// Allocate output GPU storage: [batch*numQueryHeads, headDim].
-	oGPU, err := tensor.NewGPUStorage[T](numBH*headDim, qGPU.DeviceID())
+	// Output GPU storage: [batch*numQueryHeads, headDim]. Persistent (cached on
+	// the caller-owned scratch buffer) so its device address survives across
+	// CUDA-graph replays -- see the gpuScratchBuffer doc comment and zerfoo#870.
+	oGPU, err := out.view(numBH*headDim, qGPU.DeviceID())
 	if err != nil {
 		return nil, err
 	}
 
-	// Split-KV scratch buffers.
+	// Split-KV scratch buffers. Also persistent: these were previously
+	// malloc'd and defer-freed per call, which is exactly the "per-call
+	// scratch with defer-frees inside the captured region" landmine
+	// (docs/lore.md L-0006) that crashed replay ~#141/511 under
+	// training.CaptureReplayRunner (zerfoo#870).
 	const chunkSize = 256
 	numSplits := (kvLen + chunkSize - 1) / chunkSize
 
-	partialOGPU, err := tensor.NewGPUStorage[T](numBH*numSplits*headDim, qGPU.DeviceID())
+	partialOGPU, err := partialO.view(numBH*numSplits*headDim, qGPU.DeviceID())
 	if err != nil {
-		oGPU.Free() //nolint:errcheck
 		return nil, err
 	}
-	defer partialOGPU.Free() //nolint:errcheck
 
 	// partialLSE stores 2 floats (max, sum) per (bh, split) pair.
 	// Allocate as float32 regardless of T — the kernel always uses f32 for LSE.
-	partialLSEGPU, err := tensor.NewGPUStorage[float32](2*numBH*numSplits, qGPU.DeviceID())
+	partialLSEGPU, err := partialLSE.view(2*numBH*numSplits, qGPU.DeviceID())
 	if err != nil {
-		oGPU.Free() //nolint:errcheck
 		return nil, err
 	}
-	defer partialLSEGPU.Free() //nolint:errcheck
 
 	// Resolve the stream to launch on. With an engine stream, launch
 	// stream-ordered after the Q/K/V producers (fixes the cross-stream race,
@@ -127,15 +141,17 @@ func tryFlashDecode[T tensor.Numeric](
 		return nil, err
 	}
 
-	// The split-KV scratch (partialO/partialLSE) is per-call and defer-freed on
-	// return; it must not be reclaimed while the kernel is still reading and
-	// writing it. There is no in-tree stream-ordered free, so synchronize the
-	// launch stream before the scratch frees fire. Unlike prefill (#866), decode
-	// keeps this one host sync: it is single-token / latency-bound, the sync
-	// matches the legacy cost, and it also orders the output for the synchronous
-	// caller. Capture-replay decode -- where a mid-graph sync is illegal and the
-	// per-call scratch is itself the hazard -- is out of scope here and tracked
-	// in the #865->#870->#878 cluster (docs/lore.md L-0006).
+	// Synchronize before returning so the output is ready for the synchronous
+	// caller (single-token / latency-bound; matches the legacy cost). The
+	// output and split-KV scratch are now persistent (zerfoo#870) so this sync
+	// is no longer protecting a defer-free race -- but it is still a genuine
+	// host-blocking call on the launch stream, which is illegal mid-capture.
+	// Capture-replay decode therefore remains out of scope (tracked in the
+	// #865->#870->#878 cluster, docs/lore.md L-0006): decode is an
+	// inference-time (KV-cache) path CaptureReplayRunner's training walk does
+	// not exercise, so this is a pre-existing, documented limitation, not a
+	// regression -- callers that DO reach this under capture get a loud
+	// EndCapture error instead of a silent replay corruption.
 	if err := cuda.StreamFromPtr(launchStream).Synchronize(); err != nil {
 		oGPU.Free() //nolint:errcheck
 		return nil, err

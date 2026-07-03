@@ -17,7 +17,7 @@ func TestTryFlashForwardFallback(t *testing.T) {
 	k, _ := tensor.New([]int{2, 4, 8}, make([]float32, 2*4*8))
 	v, _ := tensor.New([]int{2, 4, 8}, make([]float32, 2*4*8))
 
-	result, err := tryFlashForward(q, k, v, 8, false, nil)
+	result, err := tryFlashForward(q, k, v, 8, false, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestTryFlashForwardSeqLenMismatch(t *testing.T) {
 	k, _ := tensor.New([]int{4, 10, headDim}, make([]float32, 4*10*headDim))
 	v, _ := tensor.New([]int{4, 10, headDim}, make([]float32, 4*10*headDim))
 
-	result, err := tryFlashForward(q, k, v, headDim, false, nil)
+	result, err := tryFlashForward(q, k, v, headDim, false, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestTryFlashForwardBatchMismatch(t *testing.T) {
 	k, _ := tensor.New([]int{1, 8, headDim}, make([]float32, 1*8*headDim))
 	v, _ := tensor.New([]int{1, 8, headDim}, make([]float32, 1*8*headDim))
 
-	result, err := tryFlashForward(q, k, v, headDim, false, nil)
+	result, err := tryFlashForward(q, k, v, headDim, false, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestTryFlashForwardMatchingDims(t *testing.T) {
 	k, _ := tensor.New([]int{4, 8, headDim}, make([]float32, 4*8*headDim))
 	v, _ := tensor.New([]int{4, 8, headDim}, make([]float32, 4*8*headDim))
 
-	result, err := tryFlashForward(q, k, v, headDim, false, nil)
+	result, err := tryFlashForward(q, k, v, headDim, false, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

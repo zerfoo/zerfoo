@@ -46,6 +46,24 @@ type ScaledDotProductAttention[T tensor.Numeric] struct {
 	v                *tensor.TensorNumeric[T]
 	attentionWeights *tensor.TensorNumeric[T]
 	saver            graph.Saver[T] // fanned in by the owning attention node; nil outside a Graph
+
+	// Persistent flash-kernel scratch (zerfoo#870, docs/lore.md L-0006).
+	// tryFlashForward and tryFlashDecode allocate GPU buffers directly via
+	// tensor.NewGPUStorage (bypassing the engine arena, since they operate on
+	// bare device pointers below the engine abstraction). A per-call
+	// malloc+free of those buffers is safe in eager execution but corrupts
+	// training under training.CaptureReplayRunner: a CUDA graph bakes in the
+	// literal device address a kernel launch reads/writes, so freeing that
+	// address (via defer or GC finalizer) lets an unrelated later allocation
+	// reuse it while the graph still replays against it -- observed as an
+	// illegal memory access around replay #141/511. Caching the buffers here,
+	// keyed to this SDPA node's lifetime (which spans the whole capture-replay
+	// life of the graph it belongs to), means they are allocated once and
+	// reused for every call instead of being freed per call.
+	flashFwdOut        gpuScratchBuffer[T]
+	flashDecOut        gpuScratchBuffer[T]
+	flashDecPartialO   gpuScratchBuffer[T]
+	flashDecPartialLSE gpuScratchBuffer[float32]
 }
 
 // SetSaver implements graph.SaverAware. Owning nodes (AttentionHead,
@@ -151,8 +169,13 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 
 	// Try split-KV flash decode for single-query autoregressive decode.
 	// This path handles the seqLen_Q==1 case that tryFlashForward rejects.
+	// Scratch buffers are cached on sdpa (zerfoo#870) so they are
+	// replay-stable under CUDA-graph capture instead of being freed per call.
 	if mask == nil && sdpa.numQueryHeads > 0 && sdpa.numKVHeads > 0 {
-		if result, err := tryFlashDecode(q, k, v, int(sdpa.headDim), sdpa.numQueryHeads, sdpa.numKVHeads, engStream); result != nil || err != nil {
+		if result, err := tryFlashDecode(
+			q, k, v, int(sdpa.headDim), sdpa.numQueryHeads, sdpa.numKVHeads, engStream,
+			&sdpa.flashDecOut, &sdpa.flashDecPartialO, &sdpa.flashDecPartialLSE,
+		); result != nil || err != nil {
 			return result, err
 		}
 	}
@@ -160,7 +183,7 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 	// Try fused flash attention when no arbitrary mask is provided.
 	// Flash attention handles causal masking internally via the causal flag.
 	if mask == nil {
-		if result, err := tryFlashForward(q, k, v, int(sdpa.headDim), sdpa.causal, engStream); result != nil || err != nil {
+		if result, err := tryFlashForward(q, k, v, int(sdpa.headDim), sdpa.causal, engStream, &sdpa.flashFwdOut); result != nil || err != nil {
 			return result, err
 		}
 	}
