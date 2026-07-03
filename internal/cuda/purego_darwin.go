@@ -7,13 +7,21 @@ import (
 	_ "unsafe"
 )
 
-// On Darwin, we use syscall.syscall6 and syscall.syscall9 to call C
-// library functions via libSystem. These do NOT go through runtime.cgocall
-// so they are true zero-CGo calls.
+// On Darwin, we call C library functions in libSystem via syscall.syscall6
+// and syscall.syscall9. These do NOT go through runtime.cgocall, so they are
+// true zero-CGo calls.
 //
-// For dlopen/dlsym, we import them dynamically from libSystem.B.dylib
-// and call through assembly trampolines (defined in purego_darwin_amd64.s
-// or purego_darwin_arm64.s).
+// dlopen/dlsym/dlclose/dlerror are imported dynamically from libSystem.B.dylib
+// and reached through assembly JMP trampolines. Crucially, syscall.syscall6
+// must be handed the raw ABI0 entry point of each trampoline. We obtain that
+// address from an assembly DATA directive (see purego_darwin_{amd64,arm64}.s),
+// mirroring the golang.org/x/sys/unix darwin idiom.
+//
+// The previous implementation derived the trampoline address by taking the
+// trampoline as a func() value and double-dereferencing it (funcPC). On
+// darwin/amd64 that yields the compiler-generated ABIInternal wrapper, not the
+// ABI0 trampoline, so syscall.syscall6 transferred control to a bad PC and the
+// process SIGSEGV'd inside dlopen during package init (zerfoo T137.1, #171).
 
 //go:linkname syscall_syscall6 syscall.syscall6
 func syscall_syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err uintptr)
@@ -21,27 +29,25 @@ func syscall_syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err u
 //go:linkname syscall_syscall9 syscall.syscall9
 func syscall_syscall9(fn, a1, a2, a3, a4, a5, a6, a7, a8, a9 uintptr) (r1, r2 uintptr, err uintptr)
 
-// Assembly trampolines for dlopen/dlsym/dlclose/dlerror.
-// These are JMP stubs to the dynamically imported symbols.
-func libc_dlopen_trampoline()
-func libc_dlsym_trampoline()
-func libc_dlclose_trampoline()
-func libc_dlerror_trampoline()
+// Raw ABI0 entry points of the assembly JMP trampolines. Each is populated by
+// a DATA directive in the matching per-arch assembly file. These must be the
+// trampoline addresses themselves, not func-value PCs.
+var (
+	libc_dlopen_trampoline_addr  uintptr
+	libc_dlsym_trampoline_addr   uintptr
+	libc_dlclose_trampoline_addr uintptr
+	libc_dlerror_trampoline_addr uintptr
+)
 
 //go:cgo_import_dynamic libc_dlopen dlopen "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_dlsym dlsym "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_dlclose dlclose "/usr/lib/libSystem.B.dylib"
 //go:cgo_import_dynamic libc_dlerror dlerror "/usr/lib/libSystem.B.dylib"
 
-//go:nosplit
-func funcPC(fn func()) uintptr {
-	return **(**uintptr)(unsafe.Pointer(&fn))
-}
-
 func dlopenImpl(path string, mode int) uintptr {
 	p := append([]byte(path), 0)
 	r1, _, _ := syscall_syscall6(
-		funcPC(libc_dlopen_trampoline),
+		libc_dlopen_trampoline_addr,
 		uintptr(unsafe.Pointer(&p[0])),
 		uintptr(mode), 0, 0, 0, 0,
 	)
@@ -51,7 +57,7 @@ func dlopenImpl(path string, mode int) uintptr {
 func dlsymImpl(handle uintptr, name string) uintptr {
 	n := append([]byte(name), 0)
 	r1, _, _ := syscall_syscall6(
-		funcPC(libc_dlsym_trampoline),
+		libc_dlsym_trampoline_addr,
 		handle,
 		uintptr(unsafe.Pointer(&n[0])),
 		0, 0, 0, 0,
@@ -61,7 +67,7 @@ func dlsymImpl(handle uintptr, name string) uintptr {
 
 func dlcloseImpl(handle uintptr) int {
 	r1, _, _ := syscall_syscall6(
-		funcPC(libc_dlclose_trampoline),
+		libc_dlclose_trampoline_addr,
 		handle, 0, 0, 0, 0, 0,
 	)
 	return int(r1)
@@ -69,7 +75,7 @@ func dlcloseImpl(handle uintptr) int {
 
 func dlerrorImpl() string {
 	r1, _, _ := syscall_syscall6(
-		funcPC(libc_dlerror_trampoline),
+		libc_dlerror_trampoline_addr,
 		0, 0, 0, 0, 0, 0,
 	)
 	if r1 == 0 {
