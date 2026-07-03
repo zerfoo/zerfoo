@@ -255,6 +255,98 @@ func TestServerMetrics_RecordError(t *testing.T) {
 	}
 }
 
+// TestNormalizeRoute pins the bounded set of metric labels normalizeRoute
+// produces. Every registered server route (serve/server.go's mux setup) must
+// map to its own label; anything else -- including path-traversal attempts
+// and probes under /v1/models/{id...} -- must collapse into a fixed,
+// non-attacker-controlled label (SERVE-1).
+func TestNormalizeRoute(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/v1/chat/completions", "/v1/chat/completions"},
+		{"/v1/completions", "/v1/completions"},
+		{"/v1/embeddings", "/v1/embeddings"},
+		{"/v1/audio/transcriptions", "/v1/audio/transcriptions"},
+		{"/v1/classify", "/v1/classify"},
+		{"/v1/guard", "/v1/guard"},
+		{"/v1/guard/batch", "/v1/guard/batch"},
+		{"/v1/guard/scan", "/v1/guard/scan"},
+		{"/v1/models", "/v1/models"},
+		{"/v1/models/some-id", "/v1/models/{id}"},
+		{"/v1/models/another-id", "/v1/models/{id}"},
+		{"/healthz", "/healthz"},
+		{"/readyz", "/readyz"},
+		{"/openapi.yaml", "/openapi.yaml"},
+		{"/metrics", "/metrics"},
+		{"/v1/aaaa", "other"},
+		{"/v1/aaab", "other"},
+		{"/v1/guardx", "other"},
+		{"/nonexistent", "other"},
+		{"", "other"},
+	}
+	for _, tc := range tests {
+		if got := normalizeRoute(tc.path); got != tc.want {
+			t.Errorf("normalizeRoute(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestLogMiddleware_ErrorMetricCardinalityBounded is the regression test for
+// SERVE-1: logMiddleware runs before authMiddleware, so an unauthenticated
+// attacker hitting many distinct nonexistent paths must not create one
+// permanent counter entry per path. It should collapse into a single
+// "other" label, while a legitimate registered route keeps its own label.
+func TestLogMiddleware_ErrorMetricCardinalityBounded(t *testing.T) {
+	mdl := buildTestModel(t)
+	c := runtime.NewInMemory()
+	srv := NewServer(mdl, WithMetrics(c))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Unauthenticated attacker probes many distinct nonexistent /v1/* paths.
+	for i := 0; i < 25; i++ {
+		resp := doGet(t, ts.URL+"/v1/"+strings.Repeat("a", i+1))
+		_ = resp.Body.Close()
+	}
+	// ...and many distinct nonexistent paths outside /v1/ entirely.
+	for i := 0; i < 25; i++ {
+		resp := doGet(t, ts.URL+"/"+strings.Repeat("x", i+1))
+		_ = resp.Body.Close()
+	}
+
+	// A legitimate route hit with a bad payload should still get its own
+	// distinct label rather than being folded into "other".
+	resp := doPost(t, ts.URL+"/v1/completions", "application/json", `not json`)
+	_ = resp.Body.Close()
+
+	snap := c.Snapshot()
+
+	otherCount := 0
+	for name := range snap.Counters {
+		if strings.HasPrefix(name, `errors_total{endpoint="other"`) {
+			otherCount++
+		}
+	}
+	if otherCount != 1 {
+		t.Errorf("distinct errors_total counter entries with endpoint=\"other\" = %d, want 1 (bounded regardless of how many distinct attacker paths were probed)", otherCount)
+	}
+
+	completionsKey := `errors_total{endpoint="/v1/completions",status_code="400"}`
+	if got := snap.Counters[completionsKey]; got != 1 {
+		t.Errorf("%s = %d, want 1 (legitimate routes must keep their own distinct label)", completionsKey, got)
+	}
+
+	// No raw attacker-controlled path should ever have leaked into a counter
+	// name; only the bounded route/other labels are permitted.
+	for name := range snap.Counters {
+		if strings.Contains(name, "aaaaaaaaaaaaaaaaaaaaaaaaa") || strings.Contains(name, "xxxxxxxxxxxxxxxxxxxxxxxxx") {
+			t.Errorf("counter name %q leaked a raw attacker-controlled path", name)
+		}
+	}
+}
+
 func TestServerMetrics_ActiveRequests(t *testing.T) {
 	c := runtime.NewInMemory()
 	m := NewServerMetrics(c)

@@ -366,9 +366,13 @@ func (s *Server) logMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 		latency := time.Since(start).Milliseconds()
 
-		// Record error metrics for non-2xx responses.
+		// Record error metrics for non-2xx responses. The path is normalized
+		// to a bounded label set before recording: logMiddleware runs before
+		// authMiddleware, so an unauthenticated caller must never be able to
+		// mint an unbounded number of permanent counter entries by probing
+		// distinct paths (SERVE-1).
 		if rec.status >= 400 {
-			s.metrics.RecordError(r.URL.Path, rec.status)
+			s.metrics.RecordError(normalizeRoute(r.URL.Path), rec.status)
 		}
 
 		modelID := ""

@@ -90,9 +90,51 @@ func (m *ServerMetrics) RecordRequest(tokens int, latency time.Duration) {
 // RecordError increments the errors_total counter for the given endpoint and
 // HTTP status code. Labels are encoded in the counter name so that the
 // Prometheus exposition can emit them as {endpoint="...",status_code="..."}.
+//
+// Callers MUST pass an already-bounded endpoint label (e.g. the output of
+// normalizeRoute), never a raw, attacker-controlled request path: RecordError
+// is invoked from logMiddleware, which runs before authMiddleware, so an
+// unauthenticated caller could otherwise mint one permanent counter entry per
+// distinct path it sends (SERVE-1: metric label cardinality DoS).
 func (m *ServerMetrics) RecordError(endpoint string, statusCode int) {
 	name := "errors_total{endpoint=\"" + endpoint + "\",status_code=\"" + strconv.Itoa(statusCode) + "\"}"
 	m.collector.Counter(name).Inc()
+}
+
+// knownRoutes is the fixed set of registered route paths that get their own
+// metric label. It MUST be kept in sync with the routes registered on s.mux
+// in server.go's newServer setup. Anything not in this set (including
+// nonexistent paths probed pre-auth) collapses to the single "other" label.
+var knownRoutes = map[string]struct{}{
+	"/v1/chat/completions":     {},
+	"/v1/completions":          {},
+	"/v1/embeddings":           {},
+	"/v1/audio/transcriptions": {},
+	"/v1/classify":             {},
+	"/v1/guard":                {},
+	"/v1/guard/batch":          {},
+	"/v1/guard/scan":           {},
+	"/v1/models":               {},
+	"/healthz":                 {},
+	"/readyz":                  {},
+	"/openapi.yaml":            {},
+	"/metrics":                 {},
+}
+
+// normalizeRoute maps a request path to a bounded, fixed set of metric
+// labels. This prevents pre-auth requests to arbitrary or nonexistent paths
+// from creating unbounded permanent counter entries (SERVE-1): every path
+// that is not one of the server's registered routes collapses to "other",
+// and the parameterized /v1/models/{id...} route collapses to a single
+// "/v1/models/{id}" label rather than echoing the attacker-chosen id.
+func normalizeRoute(p string) string {
+	if _, ok := knownRoutes[p]; ok {
+		return p
+	}
+	if strings.HasPrefix(p, "/v1/models/") {
+		return "/v1/models/{id}"
+	}
+	return "other"
 }
 
 // IncActiveRequests increments the active request count and updates the gauge.
