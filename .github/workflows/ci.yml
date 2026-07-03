@@ -37,7 +37,7 @@ jobs:
       - name: Vulnerability check
         continue-on-error: true  # bbolt GO-2026-4923 has no fix (v1.4.3 is latest); re-enable when fixed
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
           govulncheck ./...
       - name: Unit tests
         run: go test -short ./... -race -timeout 300s

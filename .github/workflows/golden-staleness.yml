@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install PyTorch + numpy
-        run: pip install torch numpy --index-url https://download.pytorch.org/whl/cpu
+        run: pip install torch==2.12.1 numpy==2.5.0 --index-url https://download.pytorch.org/whl/cpu
       - name: Regenerate golden files
         run: python3 tests/golden/generate_golden.py
       - name: Check for drift
