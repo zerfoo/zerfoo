@@ -16,8 +16,12 @@ import (
 // --- Handlers ---
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	s.inflight.Add(1)
-	defer s.inflight.Done()
+	s.modelMu.RLock()
+	defer s.modelMu.RUnlock()
+	if s.unloaded.Load() {
+		writeError(w, http.StatusNotFound, "model not available")
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req ChatCompletionRequest
@@ -169,8 +173,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
-	s.inflight.Add(1)
-	defer s.inflight.Done()
+	s.modelMu.RLock()
+	defer s.modelMu.RUnlock()
+	if s.unloaded.Load() {
+		writeError(w, http.StatusNotFound, "model not available")
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req CompletionRequest
@@ -327,9 +335,24 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject new requests, drain in-flight ones, then close.
+	// Take the write side of modelMu: this blocks until every handler
+	// currently holding RLock (i.e. every in-flight request that already
+	// passed its unloaded check) has released it, then excludes any new
+	// RLock acquisition until unloaded is set and the model is closed. This
+	// closes both CONC-H2 races structurally: no handler can observe a model
+	// that Close() is concurrently tearing down, and there is no
+	// WaitGroup-style counter for a request to race against.
+	s.modelMu.Lock()
+	defer s.modelMu.Unlock()
+
+	// Re-check under the lock: a concurrent delete may have already won the
+	// race between the initial unloaded.Load() above and acquiring the lock.
+	if s.unloaded.Load() {
+		writeError(w, http.StatusNotFound, "model '"+id+"' not found")
+		return
+	}
+
 	s.unloaded.Store(true)
-	s.inflight.Wait()
 	_ = s.model.Close()
 
 	writeJSON(w, http.StatusOK, ModelDeleteResponse{
@@ -340,8 +363,12 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
-	s.inflight.Add(1)
-	defer s.inflight.Done()
+	s.modelMu.RLock()
+	defer s.modelMu.RUnlock()
+	if s.unloaded.Load() {
+		writeError(w, http.StatusNotFound, "model not available")
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20) // 10 MB
 	var req EmbeddingRequest
