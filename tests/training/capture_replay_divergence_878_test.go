@@ -60,17 +60,16 @@ import (
 //     the capture runner is a transparent passthrough, so there is nothing to
 //     diverge and the fixture would be meaningless -- we skip.
 //   - ZERFOO_RUN_878_FIXTURE=1 must be set. The fixture trains 3x40 steps on
-//     the GPU and requires the ZERFOO_UNSAFE_CAPTURE_TRAINING override, so it
-//     stays opt-in rather than part of the standing gate's default sweep.
-//     (Historically it was also expected RED until the #878 root-cause fix --
-//     the allocation-stable loss seed, training/grad_accum.go buildOnesSeed --
-//     landed; it is GREEN on GB10 since that fix and now serves as the
-//     regression gate for it.)
+//     the GPU, so it stays an opt-in long-running/GPU-only test rather than
+//     part of the standing gate's default sweep.
 //
-// The test also sets ZERFOO_UNSAFE_CAPTURE_TRAINING=1: once E129's loud-fail
-// gate (T129.2) lands, constructing a capture-replay training runner will error
-// unless that override is set. Setting it here keeps the fixture runnable
-// through the gate so it can still serve as the Phase 1 red/green proof.
+// The T129.2 ZERFOO_UNSAFE_CAPTURE_TRAINING containment gate that used to sit
+// in front of capture-enabled construction is gone (T133.4): the root cause
+// (training/grad_accum.go buildOnesSeed allocating the cached loss seed from
+// the arena pool instead of allocation-stable storage) is fixed, T133.3, so
+// the fixture no longer needs to set an override to run under capture. It was
+// expected RED until that fix landed; it is GREEN on GB10 since and now
+// serves as the regression gate for it.
 func TestCaptureReplayGradientDivergence878(t *testing.T) {
 	if os.Getenv("ZERFOO_RUN_878_FIXTURE") != "1" {
 		t.Skip("zerfoo#878 regression fixture is opt-in (GPU training run); set ZERFOO_RUN_878_FIXTURE=1 to run it")
@@ -82,10 +81,6 @@ func TestCaptureReplayGradientDivergence878(t *testing.T) {
 		t.Skipf("zerfoo#878 fixture requires a CUDA GPU engine (GraphCapturer); none available: %v", err)
 	}
 	defer func() { _ = engine.Close() }()
-
-	// Once the T129.2 loud-fail gate lands, capture-replay training refuses to
-	// run without this override. Set it so the red proof keeps working.
-	t.Setenv("ZERFOO_UNSAFE_CAPTURE_TRAINING", "1")
 
 	const (
 		ns       = 8 // number of "samples" -> logits [ns, 3]
