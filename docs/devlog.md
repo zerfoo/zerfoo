@@ -2,6 +2,98 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-03: #878 root-caused and fixed -- the cached loss seed was arena-backed; capture-replay training now trajectory-identical to eager (T133.3)
+
+**Type:** fix + finding
+**Tags:** training, capture-replay, cuda-graph, arena, loss-seed, gb10, T133.3, #878, #875, #870, #865, L-0006
+
+**Confirmed root cause (red-proofed on GB10, not hypothesis):** the cached
+d(loss)/d(loss)=1 seed (#875, `training/grad_accum.go`) was built via
+`engine.Fill`, whose GPU path allocates the seed's storage from the engine's
+ARENA pool (`gpuFill` -> `pool.Alloc` + `SetStorage`). The seed is cached on
+the strategy and read by every subsequent step's loss.Backward, but a
+consumer's per-sample/per-epoch `engine.ResetPool` recycles that arena block
+to a later step's intermediates. In eager mode this silently re-scales every
+gradient by whatever value lands in the recycled block (AdamW's approximate
+scale invariance can hide it -- training still "converges", on wrong
+gradients). Under CUDA-graph capture-replay it is structural: the captured
+graph bakes the seed's device address, the SAME address is later assigned to
+an in-graph per-step intermediate, and every replay computes gradients from
+the aliased value -- correct counters (captures=1, replays=N-warmup),
+silently drifting loss: the exact #878 signature. Every OTHER piece of
+cross-step training state was already allocation-stable (persistent gradient
+accumulators are nil-pool `NewGPUStorageFromSlice`; ztensor's fused-AdamW
+moments are raw `runtime.Malloc`; uploaded weights are bulk buffers) -- the
+seed was the one arena-backed hole.
+
+**Fix (contract level):** `buildOnesSeed` now writes the ones host-side and
+re-homes them into a raw nil-pool `GPUStorage` (`NewGPUStorageFromSlice`) on
+the loss tensor's device -- the same allocation-stability guarantee as
+`newPersistentGradTensor`. The one-time H2D upload happens on the first
+`ComputeGradients` call (an eager warmup step, outside any capture region),
+preserving #875's no-host-copy-under-capture property. CPU/engine-less paths
+are byte-identical to before. No consumer special-casing; the rule is the one
+L-0006 already states: everything a captured graph touches -- and everything
+a strategy caches across steps -- must be allocation-stable.
+
+**Fixture hardening (the old fixture could not see the bug):** three
+pre-existing gaps in `tests/training/capture_replay_divergence_878_test.go`
+(T129.1) were closed on the way to the red proof:
+1. Its ReLU went through `BaseActivation` -> `engine.UnaryOp`, which
+   GPUEngine delegates to the CPU engine -- host math mid-graph, capture-
+   illegal ("operation would make the legacy stream depend on a capturing
+   blocking stream" live on GB10). Swapped for Sigmoid (engine-primitive
+   composition: Exp/AddScalar/Div), making the walk device-pure.
+2. It never called `engine.ResetPool`, so it could not trigger arena reuse at
+   all -- with no resets, capture-on vs eager is bit-identical on GB10.
+   Added the consumer-realistic per-step reset (legal under a live captured
+   graph since ztensor#167's arena reset floor).
+3. Its ascend/3x assertion was too coarse: with the bug present, eager and
+   capture both still converge at fixture scale, just along silently
+   different trajectories. Since all trajectories run identical
+   deterministic math on identical data, the fixture now asserts per-step
+   loss-trajectory EQUALITY (tol 1e-4) of eager+reset and capture+reset
+   against a no-reset baseline, keeping the coarse assertion for its
+   diagnostic message.
+
+**GB10 evidence (branch `wave-3-task-T133.3`, via `scripts/dgx-validate.sh`
+with the new `-env` flag plumbing the fixture's env gates):**
+- RED (fixture sharpened, fix absent; commit 2eadff69, pod
+  `zerfoo-validate-wave3taskT13-1783115552`): baseline 1.1656->0.8951,
+  capture-on diverged, max per-step |diff| 0.024751 at step 6, counters
+  correct -- silent wrong gradients reproduced.
+- GREEN (fix applied; commit 22691515, pod
+  `zerfoo-validate-wave3taskT13-1783116105`): baseline, eager+reset, and
+  capture+reset all bit-identical (1.1656->0.8951, captures=1 replays=37).
+- Regression sweeps, all green: standing-gate default scope
+  (`internal/cuda`, `internal/cuda/kernels`, `internal/xblas`, `tabular`; pod
+  `...1783116265`), full `./layers/attention/...` with `-failfast` (pod
+  `...1783116385`), and the full CPU suite locally.
+
+**Blocking regression found and fixed on the way (fork drift, same class as
+the T135.3 flash_decode port):** the T135.3 from-scratch `.so` rebuild was
+the first ever produced from zerfoo's own kernel-fork Makefile, and it
+silently dropped FIVE symbols ztensor v1.19.2's loader treats as REQUIRED
+(`launch_transpose_2d_bf16`, `launch_transpose_nd_bf16`, `dropout_f32`,
+`fused_adamw_f32`, `tiny_batched_gemm_f32`). One missing required symbol
+fails ztensor's dlsym loop wholesale, so EVERY `compute.GPUEngine` op
+reported "kernels not available" -- the deployed `.so` broke all
+ztensor-engine consumers (tabular, the training fixtures) while zerfoo's own
+fork-loader tests stayed green, which is why T135.3's verification missed
+it. Ported the four kernel sources verbatim from ztensor@v1.19.2 into
+`internal/cuda/kernels/` (+Makefile SRCS; the SRCS set now satisfies the
+required-symbol lists of BOTH loaders, verified by script), rebuilt and
+deployed per the T135.3 build-pod protocol: pod
+`zerfoo-build-libkernels-t1333-f4fb4505`, source ref `f4fb4505`, sha256
+`f77a1edca7da8e3d02fdaf7d280b3e027b53665c775b3231b1f48f2bdd0a1989`, prior
+`.so` kept as `/opt/zerfoo/lib/libkernels.so.bak-20260703213619-pre-t1333`.
+Follow-up worth automating: a fork-parity check (ztensor required-syms vs
+zerfoo SRCS) so the next drift is caught at build time, not on the host.
+
+**Deliberately NOT done here:** the T129.2 loud-fail gate
+(`ErrCaptureTrainingDisabled`) stays in place and #878 stays open -- removal
+is T133.4 after coordinator review. Wolf-scale re-validation of capture-on
+training is the consumer's re-bench, tracked on the issue.
 ## 2026-07-03: ZTENSOR_DETERMINISTIC mode -- GB10 bitwise double-run proof (T135.5 / T4.1)
 
 **Type:** feature + GB10 proof
