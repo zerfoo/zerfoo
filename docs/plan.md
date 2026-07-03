@@ -88,10 +88,10 @@ Component: training/attention + ztensor boundary. Acceptance: all three issues c
   - layers/attention/flash_decode.go launches FlashDecodeSplitKV on a private stream with no ordering against the engine stream that produced Q/K/V, and defer-frees scratch (partialO, partialLSE) non-stream-ordered. Fix: accept the engine stream (compute.StreamProvider pattern, mirroring the flash-forward fix in PR #866) + pool/epoch-managed or event-ordered frees. Add a parity-harness fixture reproducing the race shape.
   - Acceptance: fixture red on pre-fix behavior, green after; decode SDPA path exercised via the standing gate.
 - [x] S133.1.1 Tests + lint  Owner: agent  Est: 1h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.1]  (done 2026-07-02, in PR #928: flash_decode_race_test.go + CI green)
-- [ ] T133.2 Fix #870: FusedSDPA replay-stable scratch  Owner: TBD  Est: 4h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.1]
+- [x] T133.2 Fix #870: FusedSDPA replay-stable scratch  Owner: agent  Est: 4h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.1]  (done 2026-07-03, PR #933: persistent gpuScratchBuffer on the node; 511/511 replays green on GB10)
   - Illegal memory access on replay ~#141/511 with FusedSDPA under CaptureReplayRunner: per-call scratch freed/reused between replays. Fix: graph-owned/persistent scratch keyed to the captured graph's lifetime, or make FusedSDPA return ErrCaptureIncompatible and fall back to the discrete chain (which is clean under replay). Prefer the persistent-scratch fix; the error fallback is the floor.
   - Acceptance: capture-replay with FusedSDPA=true completes 511 replays on GB10 without IMA (or is cleanly refused); ADR-091 fixture committed.
-- [ ] S133.2.1 Tests + lint  Owner: TBD  Est: 1h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.2]
+- [x] S133.2.1 Tests + lint  Owner: agent  Est: 1h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.2]  (done 2026-07-03, in PR #933: flash_capture_replay_test.go ADR-091 fixture + CI green)
 - [ ] T133.3 Fix #878: captured training-state aliasing  Owner: TBD  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.2]
   - Root-cause the silent gradient divergence: suspect gradAccumulator.seeds / device-resident loss seed built via engine.Fill being captured with stale or aliased state across replays. Fix at the CONTRACT level (allocation-stable captured operands; SaveForBackward-style pinning for captured state), not consumer special-casing. Localize with ZTENSOR_ARENA_POISON=1 if needed.
   - Acceptance: tests/training/capture_replay_divergence_878_test.go (ZERFOO_RUN_878_FIXTURE=1) GREEN on GB10 via `scripts/dgx-validate.sh -pkgs "-v -run TestCaptureReplayGradientDivergence878 ./tests/training/"`; capture-on and eager trajectories converge alike.
@@ -181,8 +181,8 @@ GB10 serialization: one GPU pod at a time across ALL tracks (E133 proofs, E135 b
 - [ ] T136.2 model provisioning  kind: human  (ask David at wave start; everything in Tracks B/D waits on it) -- STILL OPEN, blocking T134.1/T136.3/T136.4
 
 ### Wave 2: Build-out (5 agents)
-- [ ] S133.1.1, T133.2 (chain)  verifies: [UC-H2-003]
-- [ ] S135.2.1  verifies: [UC-H2-003]
+- [x] S133.1.1, T133.2 (chain)  verifies: [UC-H2-003] -- DONE 2026-07-03 (PR #933)
+- [x] S135.2.1  verifies: [UC-H2-003] -- DONE 2026-07-02 (ztensor v1.19.2 CI)
 - [x] T135.3 oracle-gate kernels  (after T135.1) -- DONE 2026-07-03
 - [x] T135.4 fused encoder audit  (after T135.1)  2026 07 02  (DONE devlog entry; FFN/SwiGLU + FusedSDPA gradcheck added; FFN GELU-mode Backward bug fixed [always called SwiGLU backward regardless of useGELU]; fused PatchTST encoder backward wiring gap filed on #522 [E55, parked])
 - [ ] T134.1 gemma4e fix attempt  (after T136.2)
