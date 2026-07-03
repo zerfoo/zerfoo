@@ -5,15 +5,29 @@
     "name": "Import crossasset model from wolf",
     "description": "Wolf imports crossasset as a first-party package instead of reaching into zerfoo/crossasset.",
     "actor": "wolf_developer",
-    "preconditions": ["crossasset package exists in wolf repo", "wolf go.mod imports it"],
+    "preconditions": [
+      "crossasset package exists in wolf repo",
+      "wolf go.mod imports it"
+    ],
     "interfaces": [
-      {"type": "library", "path": "github.com/feza-ai/wolf/crossasset"}
+      {
+        "type": "library",
+        "path": "github.com/feza-ai/wolf/crossasset"
+      }
     ],
     "expected_outcome": "Wolf's train-crossasset CLI and internal/model/crossasset.go import from wolf's own crossasset package.",
     "priority": "P0",
-    "tags": ["extraction", "module-boundary"],
+    "tags": [
+      "extraction",
+      "module-boundary"
+    ],
     "wiring_status": "WIRED",
-    "coverage": {"interfaces_found": ["library"], "has_tests": false},
+    "coverage": {
+      "interfaces_found": [
+        "library"
+      ],
+      "has_tests": false
+    },
     "note": "Completed via E91 (2026-04-13, ADR-084). Retained for history."
   },
   {
@@ -22,15 +36,29 @@
     "name": "Train crossasset model via wolf CLI",
     "description": "Wolf's train-crossasset command trains a crossasset model using the extracted package.",
     "actor": "wolf_developer",
-    "preconditions": ["crossasset package in wolf", "training data available"],
+    "preconditions": [
+      "crossasset package in wolf",
+      "training data available"
+    ],
     "interfaces": [
-      {"type": "cli", "command": "go run ./cmd/train-crossasset ..."}
+      {
+        "type": "cli",
+        "command": "go run ./cmd/train-crossasset ..."
+      }
     ],
     "expected_outcome": "Training completes, model saved, loss decreases.",
     "priority": "P0",
-    "tags": ["training", "cli"],
+    "tags": [
+      "training",
+      "cli"
+    ],
     "wiring_status": "WIRED",
-    "coverage": {"interfaces_found": ["cli"], "has_tests": true},
+    "coverage": {
+      "interfaces_found": [
+        "cli"
+      ],
+      "has_tests": true
+    },
     "note": "Completed via E91 (2026-04-13, ADR-084). Retained for history."
   },
   {
@@ -39,15 +67,28 @@
     "name": "Zerfoo builds without crossasset",
     "description": "After extraction, zerfoo compiles and all non-crossasset tests pass.",
     "actor": "zerfoo_developer",
-    "preconditions": ["crossasset/ removed from zerfoo"],
+    "preconditions": [
+      "crossasset/ removed from zerfoo"
+    ],
     "interfaces": [
-      {"type": "library", "path": "github.com/zerfoo/zerfoo"}
+      {
+        "type": "library",
+        "path": "github.com/zerfoo/zerfoo"
+      }
     ],
     "expected_outcome": "go build ./... and go test ./... pass with no crossasset references.",
     "priority": "P0",
-    "tags": ["extraction", "build"],
+    "tags": [
+      "extraction",
+      "build"
+    ],
     "wiring_status": "WIRED",
-    "coverage": {"interfaces_found": ["library"], "has_tests": true},
+    "coverage": {
+      "interfaces_found": [
+        "library"
+      ],
+      "has_tests": true
+    },
     "note": "Completed via E91 (2026-04-13, ADR-084). Retained for history."
   },
   {
@@ -56,16 +97,34 @@
     "name": "Capture-replay training fails loudly when unsafe",
     "description": "A user who enables CUDA-graph capture-replay training on a version where #878 (silent gradient divergence) is unfixed gets an explicit error or documented hard gate at Trainer construction, never silently-wrong gradients.",
     "actor": "zerfoo_developer",
-    "preconditions": ["GPU engine active", "capture-replay training requested"],
+    "preconditions": [
+      "GPU engine active",
+      "capture-replay training requested"
+    ],
     "interfaces": [
-      {"type": "library", "path": "training/capture_replay.go"}
+      {
+        "type": "library",
+        "path": "training/capture_replay.go"
+      }
     ],
     "expected_outcome": "Capture-replay training refuses to run (clear error naming #878 and the opt-out env var) until the divergence bug is fixed; eager training is unaffected.",
-    "test_data": {"model": "small synthetic graph, [ns,3] logits shape from #878 repro"},
+    "test_data": {
+      "model": "small synthetic graph, [ns,3] logits shape from #878 repro"
+    },
     "priority": "P0",
-    "tags": ["correctness", "cuda-graph", "phase-0"],
-    "wiring_status": "PLANNED",
-    "coverage": {"interfaces_found": ["library"], "has_tests": false}
+    "tags": [
+      "correctness",
+      "cuda-graph",
+      "phase-0"
+    ],
+    "wiring_status": "WIRED",
+    "coverage": {
+      "interfaces_found": [
+        "library"
+      ],
+      "has_tests": true
+    },
+    "note": "Completed in Phase 0 (2026-07-02): UC-H2-001 via PR #920 gate (v1.56.0); UC-H2-002 via PR #915 + hardening (see devlog)."
   },
   {
     "id": "UC-H2-002",
@@ -73,15 +132,152 @@
     "name": "One-command DGX arm64 validation run",
     "description": "A developer (or CI trigger) runs a single script that builds zerfoo natively on the GB10 (arm64, real CUDA) via a Spark pod and executes the GPU test + parity suite, producing a pass/fail report. Eliminates the purego darwin-to-linux cross-compile blocker class permanently.",
     "actor": "zerfoo_developer",
-    "preconditions": ["Spark reachable at http://192.168.86.250:8080", "GB10 free (SPARK_GPU_MAX=1)"],
+    "preconditions": [
+      "Spark reachable at http://192.168.86.250:8080",
+      "GB10 free (SPARK_GPU_MAX=1)"
+    ],
     "interfaces": [
-      {"type": "cli", "command": "scripts/dgx-validate.sh"}
+      {
+        "type": "cli",
+        "command": "scripts/dgx-validate.sh"
+      }
     ],
     "expected_outcome": "Pod builds natively on the DGX, runs the suite, exits with pass/fail and a JSON report; results recorded in devlog. Closes the T86.5.8 class of stalled validation tasks.",
-    "test_data": {"suite": "tests/parity GPU subset + -tags cuda unit tests"},
+    "test_data": {
+      "suite": "tests/parity GPU subset + -tags cuda unit tests"
+    },
     "priority": "P0",
-    "tags": ["infrastructure", "dgx", "spark", "phase-0"],
+    "tags": [
+      "infrastructure",
+      "dgx",
+      "spark",
+      "phase-0"
+    ],
+    "wiring_status": "WIRED",
+    "coverage": {
+      "interfaces_found": [
+        "cli"
+      ],
+      "has_tests": true
+    },
+    "note": "Completed in Phase 0 (2026-07-02): UC-H2-001 via PR #920 gate (v1.56.0); UC-H2-002 via PR #915 + hardening (see devlog)."
+  },
+  {
+    "id": "UC-H2-003",
+    "domain": "training-correctness",
+    "name": "Capture-replay training trains correctly",
+    "description": "With CUDA-graph capture-replay enabled, training converges identically to eager mode; the #878 fixture is green on GB10 and the containment gate is removed.",
+    "actor": "zerfoo_developer",
+    "preconditions": [
+      "GB10 via standing gate"
+    ],
+    "interfaces": [
+      {
+        "type": "library",
+        "path": "training/capture_replay.go"
+      }
+    ],
+    "expected_outcome": "tests/training/capture_replay_divergence_878_test.go GREEN on GB10; #865/#870/#878 closed.",
+    "priority": "P0",
+    "tags": [
+      "correctness",
+      "cuda-graph",
+      "phase-1"
+    ],
     "wiring_status": "PLANNED",
-    "coverage": {"interfaces_found": ["cli"], "has_tests": false}
+    "coverage": {
+      "interfaces_found": [
+        "library"
+      ],
+      "has_tests": true
+    }
+  },
+  {
+    "id": "UC-H2-004",
+    "domain": "trust-evidence",
+    "name": "Verified-model matrix published with evidence",
+    "description": "docs/verified-models.md lists ~10 flagship models each with parity + benchmark + GPU evidence; marketing claims may not exceed it; Ollama comparison reproducible via manifests.",
+    "actor": "prospective_user",
+    "preconditions": [
+      "models provisioned on DGX host (T136.2, human)"
+    ],
+    "interfaces": [
+      {
+        "type": "docs",
+        "path": "docs/verified-models.md"
+      }
+    ],
+    "expected_outcome": "Matrix live; benchmarks.md refreshed; T86.5.8 closed.",
+    "priority": "P0",
+    "tags": [
+      "benchmarks",
+      "launch-prereq",
+      "phase-1"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "docs"
+      ],
+      "has_tests": false
+    }
+  },
+  {
+    "id": "UC-H2-005",
+    "domain": "model-honesty",
+    "name": "gemma4e decode correct or honestly demoted",
+    "description": "The #766 native-Q4_K fix is executed once; decode verified on GB10, or gemma4 edge is marked experimental everywhere.",
+    "actor": "zerfoo_user",
+    "preconditions": [
+      "gemma4e GGUF on DGX host"
+    ],
+    "interfaces": [
+      {
+        "type": "cli",
+        "command": "zerfoo run gemma4e ..."
+      }
+    ],
+    "expected_outcome": "#757/#766 closed either way; no public Gemma 4 claims unless fixed.",
+    "priority": "P1",
+    "tags": [
+      "gguf",
+      "correctness",
+      "phase-1"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "cli"
+      ],
+      "has_tests": false
+    }
+  },
+  {
+    "id": "UC-H2-006",
+    "domain": "dev-experience",
+    "name": "darwin dev hosts can run the test suite",
+    "description": "ztensor device.init no longer SIGSEGVs on darwin; GPU-importing test packages skip cleanly on macs.",
+    "actor": "contributor",
+    "preconditions": [],
+    "interfaces": [
+      {
+        "type": "library",
+        "path": "github.com/zerfoo/ztensor device init"
+      }
+    ],
+    "expected_outcome": "go test ./tests/training/ skips (not crashes) on darwin; ztensor#171 closed.",
+    "priority": "P1",
+    "tags": [
+      "dx",
+      "phase-1",
+      "contributor-prereq"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "library"
+      ],
+      "has_tests": false
+    }
   }
 ]
