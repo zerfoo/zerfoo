@@ -60,7 +60,7 @@ func TestTryFlashDecodeBailouts(t *testing.T) {
 				t.Fatalf("tensor V: %v", err)
 			}
 
-			result, err := tryFlashDecode(q, k, v, tt.headDim, tt.numQueryHeads, tt.numKVHeads)
+			result, err := tryFlashDecode(q, k, v, tt.headDim, tt.numQueryHeads, tt.numKVHeads, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

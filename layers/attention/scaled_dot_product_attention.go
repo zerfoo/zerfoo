@@ -135,29 +135,31 @@ func (sdpa *ScaledDotProductAttention[T]) Forward(ctx context.Context, q, k, v, 
 		sdpa.saver.SaveForBackward(q, k, v)
 	}
 
+	// Resolve the engine's GPU stream (compute.StreamProvider, proxy-unwrapped)
+	// once, so both the flash-decode and flash-forward kernels launch
+	// stream-ordered after the engine ops that produced Q/K/V. Launching on a
+	// private stream races with in-flight producers and was observed to silently
+	// corrupt training (Wolf CrossAsset GB10; zerfoo#865/#866).
+	var engStream unsafe.Pointer
+	realEng := compute.Engine[T](sdpa.engine)
+	if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
+		realEng = proxy.Real()
+	}
+	if sp, ok := realEng.(compute.StreamProvider); ok {
+		engStream = sp.Stream()
+	}
+
 	// Try split-KV flash decode for single-query autoregressive decode.
 	// This path handles the seqLen_Q==1 case that tryFlashForward rejects.
 	if mask == nil && sdpa.numQueryHeads > 0 && sdpa.numKVHeads > 0 {
-		if result, err := tryFlashDecode(q, k, v, int(sdpa.headDim), sdpa.numQueryHeads, sdpa.numKVHeads); result != nil || err != nil {
+		if result, err := tryFlashDecode(q, k, v, int(sdpa.headDim), sdpa.numQueryHeads, sdpa.numKVHeads, engStream); result != nil || err != nil {
 			return result, err
 		}
 	}
 
 	// Try fused flash attention when no arbitrary mask is provided.
 	// Flash attention handles causal masking internally via the causal flag.
-	// Resolve the engine's GPU stream (compute.StreamProvider) so the kernel
-	// launch is stream-ordered after the engine ops that produced Q/K/V --
-	// launching on a private stream races with in-flight producers and was
-	// observed to silently corrupt training (Wolf CrossAsset GB10).
 	if mask == nil {
-		var engStream unsafe.Pointer
-		realEng := compute.Engine[T](sdpa.engine)
-		if proxy, ok := sdpa.engine.(*compute.EngineProxy[T]); ok {
-			realEng = proxy.Real()
-		}
-		if sp, ok := realEng.(compute.StreamProvider); ok {
-			engStream = sp.Stream()
-		}
 		if result, err := tryFlashForward(q, k, v, int(sdpa.headDim), sdpa.causal, engStream); result != nil || err != nil {
 			return result, err
 		}
