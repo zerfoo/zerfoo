@@ -2,6 +2,51 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-02: Fused encoder fwd/bwd audit -- FFN GELU-backward bug + zero gradcheck coverage on FusedSDPA/FFN closed (T135.4)
+
+**Type:** audit + bugfix + coverage
+**Tags:** gradcheck, opinfo, fused, sdpa, ffn, swiglu, gelu, patchtst, T135.4, ADR-091, #522
+
+**Scope.** docs/plan-gpu-training-hardening.md T3.4 names `fused_encoder_fwd.cu`
+/ `fused_encoder_bwd.cu` directly -- those live in ztensor, not zerfoo, and
+`fused_encoder_fwd.cu`'s header already carries a fast-math-removal note
+citing "the T3.4 fused-encoder numerics audit" (ztensor v1.19.2, currently
+pinned): `-use_fast_math` is gone globally per T3.1 and `rsqrtf`/accurate
+`expf`/`tanhf` are required. That half of T3.4 is upstream-complete. This pass
+audited zerfoo's OWN fused-op wiring and coverage: FusedAddRMSNorm (inference
+nodes), FusedSDPA (trainable attention), FFN's SwiGLU/GELU fused activation
+path (the closest real op to the task's "FusedSiluGate" -- no such literal
+name exists in-tree), the PatchTST fused encoder (`timeseries/patchtst_fused_encoder.go`),
+and the megakernel/codegen path (`internal/codegen`, `generate/megakernel.go`).
+
+**Per-op audit table:**
+
+| Op | Fwd | Bwd | Action |
+|---|---|---|---|
+| FusedAddRMSNorm / FusedNormAdd / ResidualAdd / ResidualRef (inference/) | GPU fused + CPU fallback chain (compute.FusedAddRMSNormProvider -> FusedRMSNormGPU -> CPU FusedRMSNorm) | `Backward` returns "not implemented" | No defect -- confirmed inference-only (zero references from training/ or any trainable graph); backward is intentionally absent, not silently wrong. No action. |
+| FusedSDPA / ScaledDotProductAttention (layers/attention) | fused flash-decode / flash-forward / fused-scaled-softmax GPU fast paths, CPU fallback to explicit MatMul+Softmax chain | Analytic softmax-Jacobian backward, recomputes attention weights when the fused forward path skipped materializing them | Existing tests only checked fused-vs-unfused-forward EQUIVALENCE and shape/error paths -- **zero finite-difference verification that the analytic Backward is a correct Jacobian at all**. Added `layers/attention/fused_sdpa_gradcheck_test.go`: float64 gradcheck (ztensor testing/gradcheck, ADR 091) over Q/K/V for causal, bidirectional, and seqQ=1 decode-shape variants. All green -- confirms the softmax-chain-rule backward (scaled_dot_product_attention.go:385-408) is correct. |
+| FFN SwiGLU path (layers/core/ffn.go, compute.FusedSwiGLUProvider) | GPU fused SwiGLU kernel, CPU fallback (Concat + SwiGLU node) | Reconstructs swigluInput from cached w1Output/w3Output, backprops through SwiGLU node | `TestFFN_Backward` explicitly skipped gradient verification ("Skip weight gradient checks for now - just ensure backward pass works"). Added `layers/core/ffn_gradcheck_test.go`: float64 gradcheck over input + all 6 Dense weight/bias parameters, with-bias and no-bias. All green. |
+| FFN GELU path (layers/core/ffn.go, WithGELU) | `geluForward` inline (0.5x(1+tanh(...))) * w3Output | **BUG: `Backward` unconditionally called `f.swiglu.Backward(...)` regardless of `f.useGELU`** -- the GELU branch had no backward math at all. Caught immediately by the new gradcheck test (`TestFFN_GradcheckGELU`): "input tensors cannot be nil" (SwiGLU's own cached forward tensors were never populated because Forward never called it in GELU mode). | **Fixed**: added a GELU branch in `FFN.Backward` (dW3Output = dGated*GELU(w1Output), dW1Output = dGated*w3Output*GELU'(w1Output)), plus a `geluBackwardDeriv` helper mirroring `layers/activations.Gelu.Backward`'s derivation (that canonical node is `tensor.Float`-constrained, tracked separately as T124.2.3, so this stays a local mirror, not a shared call). `TestFFN_GradcheckGELU` now green. **Currently latent in production**: `WithGELU` is only used by `inference/arch_gemma4*.go` builders, which are inference-only (no training/ references), so this bug was never exercised end-to-end -- but any future trainable GELU-FFN (or an inference builder migrated to expose gradients) would have hit it, either as a crash (nil cached tensors, as reproduced) or, worse, silently wrong gradients if stale `swiglu` state from an unrelated call happened to be shape-compatible. |
+| PatchTST fused encoder forward (`timeseries/patchtst_fused_encoder.go: fusedEncoderForward`) | Calls `compute.FusedEncoderProvider.FusedEncoderForward` (ztensor's fused_encoder_fwd.cu, 1 launch/layer) when available; live in the GB10 training path via `patchtst_gpu_train.go:896` (fusedGPU != nil) | -- | **Zero equivalence-test coverage in zerfoo** (`grep` for encoderForward/FusedEncoderProvider in `*_test.go` returns nothing) -- the fused-vs-unfused-forward parity T3.4 asks for does not exist for this op. GPU-only (compute.FusedEncoderProvider has no CPU implementation), so it cannot be closed with a CPU test in this session. Filed on #522 (see below) rather than attempted blind against a shared GB10 pod. |
+| PatchTST fused encoder backward (`fusedEncoderBackward`) | -- | **Permanent stub**: always returns `(nil, false, nil)`, so `encoderBackward` always falls back to the ~78-op unfused per-op path regardless of what forward used. Comment says "needs dedicated FEBB_* scratch allocation". | Confirmed this is no longer kernel-blocked: ztensor v1.19.2 (pinned) already ships `FusedEncoderBackward` on `compute.FusedEncoderProvider`, backed by `internal/cuda/kernels/fused_encoder_bwd.cu`. zerfoo even has unused helper functions (`buildGradPtrs`, `buildWeightTransposePtrs`) that match the wire signature exactly. This is E55's own T55.3.1 ("wire fused encoder into encoderForward/encoderBackward") remaining half-done; E55 is a parked epic (#522, label `parked`), so this is a wiring/integration task (FEBB_* scratch alloc + numerics parity test), not fixed here -- filed as a comment on #522 with the concrete remaining steps. |
+| megakernel/codegen (`internal/codegen`, `generate/megakernel.go`) | Compiles a fused CUDA megakernel from an ExecutionPlan's instruction tape | No backward at all | Confirmed out of scope by design: `generate/` is the autoregressive-decode package (inference only); no training/ references. Not a fwd/bwd asymmetry, just a forward-only inference optimization. |
+
+**Accumulation-order/dtype observations:** ztensor's `fused_encoder_fwd.cu`
+documents its own accumulation choices (accurate `expf`/`tanhf`, `rsqrtf` for
+LayerNorm) as already audited under T3.1/T3.4 upstream; nothing zerfoo-side
+recomputes reductions in a different order than the unfused engine-op chain
+it dispatches to, so no new accumulation-order divergence was found in the
+ops actually covered here.
+
+**Fixes:** `layers/core/ffn.go` (GELU-mode `Backward` + `geluBackwardDeriv`
+helper). **New tests:** `layers/core/ffn_gradcheck_test.go` (3 cases),
+`layers/attention/fused_sdpa_gradcheck_test.go` (3 cases) -- all using
+ztensor's `testing/gradcheck` OpInfo harness (ADR 091), all green. Full
+`go test ./layers/...` green after the fix.
+
+**Filed:** comment on #522 (E55, parked) documenting the FusedEncoderBackward
+wiring gap and the concrete steps to close T55.3.1 when the epic is revived.
+
 ## 2026-07-02: Flash-decode stream ordering + scratch lifetime (T133.1, #865)
 
 **Type:** fix + finding

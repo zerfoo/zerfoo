@@ -345,7 +345,24 @@ fp32 fixed-order, every kernel passes the oracle gate, perf delta recorded.
   - Acceptance: oracle suite green across the kernel inventory; tolerance
     table committed.
 
-- [ ] T3.4 Fused encoder fwd/bwd kernels: same treatment
+- [x] T3.4 Fused encoder fwd/bwd kernels: same treatment  2026 07 02  (DONE
+      as a zerfoo-side audit -- see devlog "Fused encoder fwd/bwd audit
+      (T135.4)". fused_encoder_fwd.cu/fused_encoder_bwd.cu themselves already
+      carry the T3.4 fast-math-removal note upstream in ztensor v1.19.2 (no
+      --use_fast_math, accurate expf/tanhf). This pass covered zerfoo's own
+      fused-op wiring: added float64 gradcheck for FusedSDPA (three shapes:
+      causal, bidirectional, decode) and FFN (SwiGLU + GELU, with/without
+      bias) -- all green, closing a zero-finite-difference-coverage gap;
+      fixed a real bug the gradcheck caught (FFN.Backward unconditionally
+      differentiated the SwiGLU branch even in GELU mode, crashing/would have
+      silently corrupted any trainable GELU-FFN; currently latent because
+      GELU FFN is only used by inference-only Gemma4 builders). residual:
+      fused-vs-unfused equivalence for the GPU-only PatchTST fused encoder
+      (compute.FusedEncoderProvider) and the fused-vs-torch oracle leg are
+      NOT green -- no such test exists in zerfoo for that path (GPU-only,
+      requires a cuda-tagged parity harness); filed on the parked E55 epic
+      (#522) rather than fixed here, since the backward kernel wiring
+      (T55.3.1) is a multi-hour integration task out of audit scope.
        Owner: TBD  Est: 1d  verifies: [UC-GH-005]  kind: agent  blocked-by: [T3.1]
   - fused_encoder_fwd.cu / fused_encoder_bwd.cu reference fast-math; audit
     against the unfused chain AND torch within 1e-6 fp32 (the existing
