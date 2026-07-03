@@ -21,10 +21,20 @@ import (
 // Q: [batch*numQueryHeads, 1, headDim]
 // K: [batch*numKVHeads, seqKV, headDim]  (full KV cache)
 // V: [batch*numKVHeads, seqKV, headDim]
+//
+// engStream is the producing engine's CUDA stream (compute.StreamProvider,
+// proxy-unwrapped by the caller), or nil when the caller has no engine stream.
+// When non-nil the kernel launches on that stream, so it is ordered AFTER the
+// engine ops that produced Q/K/V. Launching on a private stream instead has no
+// ordering against those producers and races the still-in-flight Q/K/V -- the
+// same cross-stream race fixed for prefill in #866, tracked for decode in
+// zerfoo#865 (docs/lore.md L-0006). When nil, a temporary stream is used
+// (standalone use with synchronous inputs).
 func tryFlashDecode[T tensor.Numeric](
 	q, k, v *tensor.TensorNumeric[T],
 	headDim int,
 	numQueryHeads, numKVHeads int,
+	engStream unsafe.Pointer,
 ) (*tensor.TensorNumeric[T], error) {
 	if !cuda.Available() {
 		return nil, nil
@@ -90,12 +100,19 @@ func tryFlashDecode[T tensor.Numeric](
 	}
 	defer partialLSEGPU.Free() //nolint:errcheck
 
-	stream, err := cuda.CreateStream()
-	if err != nil {
-		oGPU.Free() //nolint:errcheck
-		return nil, err
+	// Resolve the stream to launch on. With an engine stream, launch
+	// stream-ordered after the Q/K/V producers (fixes the cross-stream race,
+	// zerfoo#865). Without one, create a temporary stream for standalone use.
+	launchStream := engStream
+	if launchStream == nil {
+		tmp, err := cuda.CreateStream()
+		if err != nil {
+			oGPU.Free() //nolint:errcheck
+			return nil, err
+		}
+		defer func() { _ = tmp.Destroy() }()
+		launchStream = tmp.Ptr()
 	}
-	defer func() { _ = stream.Destroy() }()
 
 	if err := kernels.FlashDecodeSplitKV(
 		qGPU.Ptr(), kGPU.Ptr(), vGPU.Ptr(), oGPU.Ptr(),
@@ -104,13 +121,22 @@ func tryFlashDecode[T tensor.Numeric](
 		unsafe.Pointer(nil), // kvLenPtr: not using CUDA graph capture here
 		numQueryHeads, numKVHeads,
 		chunkSize,
-		stream.Ptr(),
+		launchStream,
 	); err != nil {
 		oGPU.Free() //nolint:errcheck
 		return nil, err
 	}
 
-	if err := stream.Synchronize(); err != nil {
+	// The split-KV scratch (partialO/partialLSE) is per-call and defer-freed on
+	// return; it must not be reclaimed while the kernel is still reading and
+	// writing it. There is no in-tree stream-ordered free, so synchronize the
+	// launch stream before the scratch frees fire. Unlike prefill (#866), decode
+	// keeps this one host sync: it is single-token / latency-bound, the sync
+	// matches the legacy cost, and it also orders the output for the synchronous
+	// caller. Capture-replay decode -- where a mid-graph sync is illegal and the
+	// per-call scratch is itself the hazard -- is out of scope here and tracked
+	// in the #865->#870->#878 cluster (docs/lore.md L-0006).
+	if err := cuda.StreamFromPtr(launchStream).Synchronize(); err != nil {
 		oGPU.Free() //nolint:errcheck
 		return nil, err
 	}
