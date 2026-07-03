@@ -49,10 +49,14 @@ REF=""
 DRY_RUN=0
 TIMEOUT=1800
 POLL_INTERVAL="${POLL_INTERVAL:-5}"
+# Default GPU test scope: the purego production path (see dgx-validate-inpod.sh
+# and zerfoo#921 for why -tags cuda is out of scope). Override with -pkgs for
+# targeted debugging, e.g. -pkgs "-v -run TestKernelAdd ./internal/cuda/kernels/".
+TEST_PKGS="./internal/cuda/... ./internal/xblas/... ./tabular/..."
 
 usage() {
   cat >&2 <<USAGE
-Usage: $0 [-ref <git-ref>] [-timeout <seconds>] [-dry-run] [-keep] [-no-pull] [-delete <pod-name>]
+Usage: $0 [-ref <git-ref>] [-timeout <seconds>] [-dry-run] [-keep] [-no-pull] [-pkgs "<go test args>"] [-delete <pod-name>]
 
 Submits docs/bench/manifests/validate-arm64.yaml to Spark at \${SPARK}
 (currently ${SPARK}), polls until the pod terminates, streams logs, extracts
@@ -74,6 +78,7 @@ while [ $# -gt 0 ]; do
     -dry-run)  DRY_RUN=1; shift ;;
     -keep)     KEEP=1; shift ;;
     -no-pull)  PREPULL=0; shift ;;
+    -pkgs)     [ $# -ge 2 ] || usage; TEST_PKGS="$2"; shift 2 ;;
     -delete)   [ $# -ge 2 ] || usage; DELETE_POD="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "unknown arg: $1" >&2; usage ;;
@@ -101,12 +106,13 @@ SHORT="$(printf '%s' "$REF" | tr -cd '[:alnum:]' | cut -c1-12)"
 EPOCH="$(date -u +%s)"
 POD_NAME="zerfoo-validate-${SHORT}-${EPOCH}"
 
-# Substitute only the two variables we own. Refs/SHAs cannot contain '|', so it
-# is a safe sed delimiter here.
+# Substitute only the variables we own. Refs/SHAs and package lists cannot
+# contain '|', so it is a safe sed delimiter here.
 MANIFEST="$(
   sed \
     -e "s|\${POD_NAME}|${POD_NAME}|g" \
     -e "s|\${REF}|${REF}|g" \
+    -e "s|\${TEST_PKGS}|${TEST_PKGS}|g" \
     "$MANIFEST_TEMPLATE"
 )"
 
