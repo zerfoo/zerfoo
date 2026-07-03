@@ -66,6 +66,10 @@ spec:
           value: "/usr/local/cuda/lib64:/opt/zerfoo/lib"
         - name: GOFLAGS
           value: "-mod=mod"
+        # EXTRA_ENV_PLACEHOLDER -- scripts/dgx-validate.sh's -env flag expands
+        # additional "- name: K / value: V" pairs here for one-off test runs
+        # (e.g. env-gated fixtures) that need vars beyond CUDA_PKGS/MODELS_DIR.
+        # Left as a no-op comment when -env is not passed.
       resources:
         limits:
           memory: 32Gi
