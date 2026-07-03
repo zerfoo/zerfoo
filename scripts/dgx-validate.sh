@@ -53,17 +53,25 @@ POLL_INTERVAL="${POLL_INTERVAL:-5}"
 # and zerfoo#921 for why -tags cuda is out of scope). Override with -pkgs for
 # targeted debugging, e.g. -pkgs "-v -run TestKernelAdd ./internal/cuda/kernels/".
 TEST_PKGS="./internal/cuda/... ./internal/xblas/... ./tabular/..."
+# Extra env vars to inject into the pod (space-separated KEY=VALUE pairs), for
+# one-off runs of env-gated fixtures (e.g. ZERFOO_RUN_878_FIXTURE=1). Empty by
+# default, in which case the manifest's EXTRA_ENV_PLACEHOLDER line is dropped
+# unchanged (a no-op comment) -- existing callers see no behavior change.
+EXTRA_ENV=""
 
 usage() {
   cat >&2 <<USAGE
-Usage: $0 [-ref <git-ref>] [-timeout <seconds>] [-dry-run] [-keep] [-no-pull] [-pkgs "<go test args>"] [-delete <pod-name>]
+Usage: $0 [-ref <git-ref>] [-timeout <seconds>] [-dry-run] [-keep] [-no-pull] [-pkgs "<go test args>"] [-env "K=V K2=V2"] [-delete <pod-name>]
 
 Submits docs/bench/manifests/validate-arm64.yaml to Spark at \${SPARK}
 (currently ${SPARK}), polls until the pod terminates, streams logs, extracts
 the JSON report, deletes the pod, and exits 0 only on Succeeded + a report
 with no failures. Pre-pulls the pod image via Spark's image API (skip with
 -no-pull). On failure, pod events are fetched and printed before deletion;
--keep skips deletion entirely so the pod can be inspected.
+-keep skips deletion entirely so the pod can be inspected. -env injects extra
+space-separated KEY=VALUE pairs as additional pod env vars (e.g. -env
+"ZERFOO_RUN_878_FIXTURE=1 ZERFOO_UNSAFE_CAPTURE_TRAINING=1"); values must not
+contain spaces.
 USAGE
   exit 2
 }
@@ -79,6 +87,7 @@ while [ $# -gt 0 ]; do
     -keep)     KEEP=1; shift ;;
     -no-pull)  PREPULL=0; shift ;;
     -pkgs)     [ $# -ge 2 ] || usage; TEST_PKGS="$2"; shift 2 ;;
+    -env)      [ $# -ge 2 ] || usage; EXTRA_ENV="$2"; shift 2 ;;
     -delete)   [ $# -ge 2 ] || usage; DELETE_POD="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "unknown arg: $1" >&2; usage ;;
@@ -115,6 +124,29 @@ MANIFEST="$(
     -e "s|\${TEST_PKGS}|${TEST_PKGS}|g" \
     "$MANIFEST_TEMPLATE"
 )"
+
+# Expand EXTRA_ENV ("K=V K2=V2") into pod env entries at the manifest's
+# EXTRA_ENV_PLACEHOLDER marker line. Done as a plain line-oriented rewrite
+# (not sed -e) because the replacement is multi-line, which sed's s///
+# handles awkwardly across BSD/GNU; a read loop keeps this portable. No-op
+# (marker line dropped) when EXTRA_ENV is empty, matching prior behavior.
+render_extra_env() {
+  local marker="        # EXTRA_ENV_PLACEHOLDER -- scripts/dgx-validate.sh's -env flag expands"
+  local line
+  while IFS= read -r line; do
+    if [ "$line" = "$marker" ]; then
+      local kv k v
+      for kv in $EXTRA_ENV; do
+        k="${kv%%=*}"
+        v="${kv#*=}"
+        printf '        - name: %s\n          value: "%s"\n' "$k" "$v"
+      done
+    else
+      printf '%s\n' "$line"
+    fi
+  done
+}
+MANIFEST="$(printf '%s\n' "$MANIFEST" | render_extra_env)"
 
 # --- HTTP with retry ---------------------------------------------------------
 
