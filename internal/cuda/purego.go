@@ -2,6 +2,8 @@ package cuda
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -161,11 +163,64 @@ const (
 	rtldGlobal = 0x100
 )
 
+// trustedKernelLibPath is the vetted, absolute production location for the
+// custom kernels shared library. Standard installs and every DGX Spark
+// manifest (docs/bench/manifests/*.yaml) mount libkernels.so here.
+const trustedKernelLibPath = "/opt/zerfoo/lib/libkernels.so"
+
+// kernelLibPathOverrideEnv names an environment variable that, if set to a
+// vetted absolute path, is tried before trustedKernelLibPath. It exists so
+// dev builds that need a non-standard install location don't have to patch
+// this file. See vetKernelLibOverride for the safety checks applied.
+const kernelLibPathOverrideEnv = "ZERFOO_KERNEL_LIB_PATH"
+
 // kernelLibPaths lists paths to try for the custom kernels shared library.
-var kernelLibPaths = []string{
-	"libkernels.so",
-	"./libkernels.so",
-	"/opt/zerfoo/lib/libkernels.so",
+//
+// SECURITY: every entry here MUST be an absolute path. dlopen executes a
+// shared object's ELF constructors at load time, so a bare soname (resolved
+// via the default loader search path) or a CWD-relative entry lets an
+// attacker who can write into the process's working directory (or influence
+// LD_LIBRARY_PATH) achieve code execution the moment CUDA initializes.
+// This list previously included "libkernels.so" and "./libkernels.so" --
+// see docs/deep-reviews/002-full-codebase.md CUDA-1 and
+// docs/adr/094-untrusted-boundary-security-hardening.md. Do not reintroduce
+// a relative or bare-soname candidate; TestKernelLibPathsAreAbsolute enforces
+// this.
+var kernelLibPaths = buildKernelLibPaths()
+
+// buildKernelLibPaths assembles the dlopen candidate list: an optional
+// vetted override first, then the trusted absolute default.
+func buildKernelLibPaths() []string {
+	paths := make([]string, 0, 2)
+	if override := os.Getenv(kernelLibPathOverrideEnv); override != "" {
+		if vetted, ok := vetKernelLibOverride(override); ok {
+			paths = append(paths, vetted)
+		}
+		// An invalid override is silently ignored (not fatal): we fall
+		// through to the trusted default rather than refusing to start.
+	}
+	paths = append(paths, trustedKernelLibPath)
+	return paths
+}
+
+// vetKernelLibOverride validates that path is safe to hand to dlopen: it
+// must be an absolute path (never CWD-relative or a bare soname), it must
+// exist, and it must not be world-writable -- a world-writable "trusted"
+// path is just as hijackable as a CWD-relative one, since any local user
+// could replace its contents with a malicious library whose ELF
+// constructors run on the next dlopen.
+func vetKernelLibOverride(path string) (string, bool) {
+	if !filepath.IsAbs(path) {
+		return "", false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", false
+	}
+	if info.Mode().Perm()&0o002 != 0 {
+		return "", false
+	}
+	return path, true
 }
 
 // DlopenKernels loads the custom kernels shared library (libkernels.so)
