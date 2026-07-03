@@ -29,13 +29,23 @@ import (
 // state and replayed against corrupted memory. See:
 // https://github.com/zerfoo/zerfoo/issues/878
 //
-// The fixture trains two identically-initialised copies of a tiny synthetic
-// model on the SAME constant batch from the SAME seed: one through the
-// capture-replay runner with capture DISABLED (the eager reference) and one
-// with capture ENABLED. It then compares the loss trajectories and FAILS if
-// the capture-on trajectory diverges upward while the eager trajectory
-// converges -- i.e. it is the RED proof that #878 is present, and turns GREEN
-// once the Phase 1 root-cause fix lands (both paths must then converge alike).
+// The fixture trains three identically-initialised copies of a tiny synthetic
+// model on the SAME constant batch from the SAME seed:
+//
+//  1. baseline -- capture DISABLED, no arena resets (the known-good loop);
+//  2. eager    -- capture DISABLED, consumer-realistic per-step
+//     engine.ResetPool (the per-sample/per-epoch pattern of real trainers);
+//  3. capture  -- capture ENABLED, per-step engine.ResetPool.
+//
+// All three run identical math on identical data, and GB10 kernels are
+// deterministic, so all three loss trajectories must MATCH step for step.
+// The fixture FAILS if capture-on ascends while the baseline converges (the
+// coarse Wolf-scale signature) OR if either reset trajectory drifts from the
+// baseline beyond fp slack (the sharp signature: a gradient computed from
+// aliased/stale state -- AdamW's approximate scale invariance can hide a
+// mis-scaled gradient from the coarse check while training silently runs on
+// corrupted state). It is the RED proof that #878 is present, and turns
+// GREEN once the root-cause fix lands (all paths then converge alike).
 //
 // Logits are shaped [ns, 3] to match the 3-class target shape from the issue
 // ([ns,3] and [B*ns,3] were hit identically -> framework-level, not
@@ -91,53 +101,93 @@ func TestCaptureReplayGradientDivergence878(t *testing.T) {
 	// so no per-step host copy is enqueued inside the captured region).
 	inputData, onehotData := synthBatch878(ns, inDim, classes, dataSeed)
 
-	// Eager reference: identical runner with capture DISABLED (transparent
-	// passthrough to the backprop strategy).
+	// Ground-truth baseline: capture DISABLED, no arena resets. This is the
+	// plain, known-good training loop the other two trajectories must match.
+	baseLosses, baseRunner := run878Trajectory(t, engine, ops,
+		inputData, onehotData, ns, inDim, dModel, classes, warmup, lr, nSteps, initSeed, false, false)
+	defer func() { _ = baseRunner.Close() }()
+
+	// Eager reference: capture DISABLED, consumer-realistic per-step
+	// engine.ResetPool. Identical math to the baseline; a divergence here
+	// means eager training state is aliased by arena reuse.
 	eagerLosses, eagerRunner := run878Trajectory(t, engine, ops,
-		inputData, onehotData, ns, inDim, dModel, classes, warmup, lr, nSteps, initSeed, false)
+		inputData, onehotData, ns, inDim, dModel, classes, warmup, lr, nSteps, initSeed, false, true)
 	defer func() { _ = eagerRunner.Close() }()
 	if eagerRunner.Enabled() {
 		t.Fatalf("eager reference runner should have capture disabled but reports Enabled()==true")
 	}
 
-	// Capture-on: identical model/seed/data, capture ENABLED.
+	// Capture-on: identical model/seed/data, capture ENABLED, per-step resets.
 	captureLosses, captureRunner := run878Trajectory(t, engine, ops,
-		inputData, onehotData, ns, inDim, dModel, classes, warmup, lr, nSteps, initSeed, true)
+		inputData, onehotData, ns, inDim, dModel, classes, warmup, lr, nSteps, initSeed, true, true)
 	defer func() { _ = captureRunner.Close() }()
 	if !captureRunner.Enabled() {
 		t.Skip("engine does not implement GraphCapturer; capture-replay inactive, nothing to prove")
 	}
 
+	baseInit, baseFinal := edgeMean(baseLosses, 3)
 	eagerInit, eagerFinal := edgeMean(eagerLosses, 3)
 	capInit, capFinal := edgeMean(captureLosses, 3)
 
+	t.Logf("baseline: init=%.4f final=%.4f (no resets, capture off)", baseInit, baseFinal)
 	t.Logf("eager   : init=%.4f final=%.4f (captures=%d replays=%d)",
 		eagerInit, eagerFinal, eagerRunner.CapturesPerformed(), eagerRunner.ReplaysPerformed())
 	t.Logf("capture : init=%.4f final=%.4f (captures=%d replays=%d)",
 		capInit, capFinal, captureRunner.CapturesPerformed(), captureRunner.ReplaysPerformed())
 
-	// Precondition: the eager reference must actually train. If it does not,
-	// the fixture is broken (bad LR, degenerate data, ...) and cannot prove a
-	// capture-specific divergence -- fail loudly rather than emit a false red.
-	if !(eagerFinal < eagerInit*0.9) {
-		t.Fatalf("eager reference did not converge (init=%.4f final=%.4f); "+
-			"fixture cannot isolate the #878 capture-replay divergence", eagerInit, eagerFinal)
+	// Precondition: the baseline must actually train. If it does not, the
+	// fixture is broken (bad LR, degenerate data, ...) and cannot prove a
+	// state-aliasing divergence -- fail loudly rather than emit a false red.
+	if !(baseFinal < baseInit*0.9) {
+		t.Fatalf("baseline did not converge (init=%.4f final=%.4f); "+
+			"fixture cannot isolate the #878 divergence", baseInit, baseFinal)
 	}
 
-	// The #878 signature: capture-on ascends (or lands far above the eager
-	// baseline) while eager descends. Tolerances are generous -- the real bug
-	// is a 10-20x blow-up, not a subtle numeric drift. A correct capture path
-	// converges like eager and this assertion passes (fixture turns GREEN).
-	diverged := capFinal > capInit*1.2 || capFinal > eagerFinal*3.0
+	// The #878 signature, coarse form: capture-on ascends (or lands far above
+	// the baseline) while the plain loop descends. The real Wolf-scale bug was
+	// a 10-20x blow-up; keep this assertion for its diagnostic message.
+	diverged := capFinal > capInit*1.2 || capFinal > baseFinal*3.0
 	if diverged {
 		t.Errorf("zerfoo#878 REPRODUCED: capture-replay training diverged "+
-			"(loss init=%.4f -> final=%.4f) while the identical eager config converged "+
+			"(loss init=%.4f -> final=%.4f) while the identical baseline converged "+
 			"(loss init=%.4f -> final=%.4f). captures=%d replays=%d. "+
-			"This fixture is expected RED on GPU until the Phase 1 root-cause fix; "+
-			"see https://github.com/zerfoo/zerfoo/issues/878",
-			capInit, capFinal, eagerInit, eagerFinal,
+			"See https://github.com/zerfoo/zerfoo/issues/878",
+			capInit, capFinal, baseInit, baseFinal,
 			captureRunner.CapturesPerformed(), captureRunner.ReplaysPerformed())
 	}
+
+	// The #878 signature, sharp form: all three trajectories run identical
+	// math on identical data from identical initial weights, so they must
+	// MATCH step for step. The kernels are deterministic (verified: with no
+	// resets, capture-on and eager produce bit-identical loss trajectories on
+	// GB10), so any per-step drift beyond tiny fp slack means a gradient was
+	// computed from aliased/stale state -- exactly the silent corruption class
+	// this fixture guards. AdamW's approximate scale invariance can otherwise
+	// hide a mis-scaled gradient from the coarse convergence check above.
+	const trajTol = 1e-4
+	if i, d := maxAbsDiff(baseLosses, eagerLosses); d > trajTol {
+		t.Errorf("zerfoo#878 REPRODUCED (eager): per-step ResetPool changed the eager "+
+			"loss trajectory (max |diff|=%.6f at step %d: baseline=%.6f eager=%.6f); "+
+			"cross-step training state is aliased by arena reuse", d, i, baseLosses[i], eagerLosses[i])
+	}
+	if i, d := maxAbsDiff(baseLosses, captureLosses); d > trajTol {
+		t.Errorf("zerfoo#878 REPRODUCED (capture): capture-replay loss trajectory diverged "+
+			"from the baseline (max |diff|=%.6f at step %d: baseline=%.6f capture=%.6f); "+
+			"the captured graph is replaying against aliased/stale state", d, i, baseLosses[i], captureLosses[i])
+	}
+}
+
+// maxAbsDiff returns the index and magnitude of the largest element-wise
+// absolute difference between two equal-length trajectories.
+func maxAbsDiff(a, b []float32) (int, float64) {
+	idx, max := 0, 0.0
+	for i := range a {
+		d := math.Abs(float64(a[i]) - float64(b[i]))
+		if d > max {
+			idx, max = i, d
+		}
+	}
+	return idx, max
 }
 
 // run878Trajectory builds a fresh, deterministically-initialised tiny MLP
@@ -159,6 +209,7 @@ func run878Trajectory(
 	nSteps int,
 	initSeed uint64,
 	captureEnabled bool,
+	resetPool bool,
 ) ([]float32, *training.CaptureReplayRunner[float32]) {
 	t.Helper()
 	ctx := context.Background()
@@ -275,7 +326,9 @@ func run878Trajectory(
 		// a per-step intermediate. Without this reset the fixture cannot
 		// distinguish a correct implementation from one that merely never
 		// exercises arena reuse.
-		engine.ResetPool()
+		if resetPool {
+			engine.ResetPool()
+		}
 	}
 
 	return losses, runner
