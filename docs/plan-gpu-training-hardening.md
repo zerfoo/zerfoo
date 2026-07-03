@@ -373,7 +373,7 @@ fp32 fixed-order, every kernel passes the oracle gate, perf delta recorded.
 
 **Component:** kernels
 
-- [ ] T4.1 ZTENSOR_DETERMINISTIC=1 mode
+- [x] T4.1 ZTENSOR_DETERMINISTIC=1 mode  2026 07 03  (DONE ztensor#179 (feat-deterministic-mode, unmerged) + zerfoo wave-3-task-T135.5: cuBLAS handles get CUBLAS_WORKSPACE_CONFIG + CUBLAS_PEDANTIC_MATH under the flag; FusedEncoderBackward's atomicAdd dScale/dBias path refuses loudly (no deterministic variant -- the honest exclusion); inventory found CPU reductions (T135.2) and all custom GPU kernels already deterministic (warp-shuffle/tree, no cross-block atomics); scope table in ztensor docs/design.md "ZTENSOR_DETERMINISTIC scope". Weight-init nondeterminism (math/rand/v2 top-level funcs are unseedable by design) found+fixed zerfoo-side via timeseries.SeedWeightInit.)
        Owner: TBD  Est: 1.5d  verifies: [UC-GH-006]  kind: agent  blocked-by: [T3.2]
   - Env-gated mode selecting fixed-order reduction kernels everywhere,
     disabling any atomics-based accumulation paths, and setting deterministic
@@ -382,7 +382,7 @@ fp32 fixed-order, every kernel passes the oracle gate, perf delta recorded.
   - Acceptance: two identical seeded small training runs on the GB10 produce
     bitwise-identical per-epoch losses; documented in ztensor docs.
 
-- [ ] S4.1.1 Tests + lint + double-run proof on GB10
+- [x] S4.1.1 Tests + lint + double-run proof on GB10  2026 07 03  (DONE TestPatchTSTTrainGPUDeterministicDoubleRun: two child processes, ZTENSOR_DETERMINISTIC=1 at init, identically-seeded PatchTST training -- GB10 pod zerfoo-validate-wave3taskT13-1783115032, 3/3 epoch losses bitwise-identical (0x3fe8024d7e12aa6c, 0x3fe066b05c164401, 0x3fd18a52c2f44ad5); control pair without the flag ALSO identical for this shape (recorded honestly -- the kernels were already deterministic; the flag adds the cuBLAS guarantee + the atomics guard); devlog 2026-07-03)
        Owner: TBD  Est: 2h  verifies: [UC-GH-006]  kind: agent  blocked-by: [T4.1]
 
 ### E5: End-to-end validation, release, and Wolf unblock
@@ -466,7 +466,7 @@ T5.1) serialize on the single GPU -- never fan those out.
 ### Wave 4: Hardening tail (3 agents)
 - [ ] T2.4 Wolf-pattern stress test
 - [ ] T3.4 Fused encoder kernels
-- [ ] T4.1 Deterministic mode
+- [x] T4.1 Deterministic mode  2026 07 03  (DONE ztensor#179 + zerfoo wave-3-task-T135.5; GB10 bitwise proof pod zerfoo-validate-wave3taskT13-1783115032)
 
 ### Wave 5: Validation + ship (1 agent, GPU-serial)
 - [x] T5.1 Wolf GB10 f32 clean fold x2  2026 06 11  (DONE verify9/verify9b, image 0066d970, acc 0.6760)

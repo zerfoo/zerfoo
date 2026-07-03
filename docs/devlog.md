@@ -2,6 +2,74 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-03: ZTENSOR_DETERMINISTIC mode -- GB10 bitwise double-run proof (T135.5 / T4.1)
+
+**Type:** feature + GB10 proof
+**Tags:** determinism, cublas, gb10, spark, patchtst, gpu-training, T135.5, T4.1
+
+**What shipped.** ztensor PR #179 (branch `feat-deterministic-mode`, awaiting
+review) + zerfoo branch `wave-3-task-T135.5`. `ZTENSOR_DETERMINISTIC=1` is an
+env-gated debug/verification mode read once at process init (mirroring
+`ZTENSOR_ARENA_POISON`), off by default.
+
+**Nondeterminism inventory (the honest scope; full table in ztensor
+docs/design.md "ZTENSOR_DETERMINISTIC scope"):**
+
+| Source | Disposition |
+|---|---|
+| CPU fp32 reductions (Sum/Softmax/RMSNorm/numeric.Sum incl. NEON) | already deterministic unconditionally (T135.2 fixed-order pairwise) |
+| Custom GPU kernels (softmax, RMSNorm, GEMV family, flash attn/decode, fused AdamW) | already deterministic -- warp-shuffle/tree reductions, launch config a pure function of shape, audited free of cross-block atomics |
+| cuBLAS Sgemm/SgemmStridedBatched/GemmEx | routed under the flag: `CreateHandle` sets `CUBLAS_WORKSPACE_CONFIG` (if unset) + `cublasSetMathMode(CUBLAS_PEDANTIC_MATH)` -- the documented NVIDIA/PyTorch levers (no TF32, no workspace-dependent split-K/atomics algo). Best-effort: warns, never fails handle creation |
+| fused_encoder_bwd.cu dScale/dBias (atomicAdd across row blocks) | NOT covered -- no deterministic variant; `FusedEncoderBackward` refuses with a descriptive error under the flag. Unreachable from PatchTST training today (fused backward Go wiring is a stub, #522), so it does not gate this proof |
+| counter.cu atomicAdd | not a concern: `<<<1,1>>>` decode counter, atomicity not reduction order |
+| weight init (zerfoo timeseries) | REAL nondeterminism found during this task, host-side and orthogonal to the GPU flag: Xavier/He + positional-embedding init drew from `math/rand/v2` top-level funcs, which v2 made deliberately unseedable (no global Seed exists). Fixed via `timeseries.SeedWeightInit` + a package-level guarded generator; default (unseeded) behavior unchanged |
+
+**GB10 proof (bitwise = exact float64 bit patterns, not printed decimals).**
+`TestPatchTSTTrainGPUDeterministicDoubleRun` (timeseries/) re-execs the test
+binary twice as child processes with `ZTENSOR_DETERMINISTIC=1` set at process
+init in each (env is latched at init, so in-test Setenv is too late), runs an
+identically-seeded PatchTST training (seed 42, 256 samples x 4 channels x 24,
+3 epochs, batch 64) in each, and asserts per-epoch loss bits are identical.
+Separate processes = separate CUDA contexts/cuBLAS handles/arenas -- nothing
+shared. Ran twice via `scripts/dgx-validate.sh -ref wave-3-task-T135.5 -pkgs
+"-v -run TestPatchTSTTrainGPUDeterministic ./timeseries/"`:
+
+- Pod `zerfoo-validate-wave3taskT13-1783115032` (ref ae69e956): PASS, 3/3
+  epochs bitwise-identical across two processes.
+- Pod `zerfoo-validate-wave3taskT13-1783115121` (same ref): PASS, and the
+  bits match pod 1 exactly (4 processes, 2 pods, one bit pattern).
+- Epoch loss bits (all 4 processes): `0x3fe8024d7e12aa6c`,
+  `0x3fe066b05c164401`, `0x3fd18a52c2f44ad5`.
+
+**Control, recorded honestly:** the same double-run WITHOUT the flag was also
+bitwise-identical for this workload. That is consistent with the inventory
+(kernels already deterministic; default cuBLAS heuristics are frequently
+stable for a fixed shape+GPU+library version) -- the flag's value is the
+*guarantee* (pedantic math forecloses heuristic/workspace-dependent algorithm
+switches that CAN vary with occupancy and library version) plus the loud
+guard on the excluded atomics path, not a behavior change on this particular
+model. No claim is made that the control always holds.
+
+**What the mode does NOT guarantee:** identity across GPUs/driver/cuBLAS
+versions; identity when `FusedEncoderBackward` is reachable (it errors);
+CPU-vs-GPU bit parity (different, equally valid summation orders). Cost:
+`CUBLAS_PEDANTIC_MATH` forgoes TF32 tensor cores (not measurable on this
+small proof workload; expect a real GEMM slowdown on TF32-eligible shapes).
+
+**Cross-repo note (fork rule):** this task touched ztensor's Go-side cublas/
+compute/internal-cuda packages only -- no kernel (.cu) changes, so no
+zerfoo internal/cuda fork sync is needed. zerfoo's own internal/cublas fork
+does NOT get the deterministic handle config (it serves the inference path);
+if zerfoo-side training ever creates cuBLAS handles through the local fork,
+port `CreateHandle`'s deterministic block then.
+
+**Deliverable state:** zerfoo PR carries timeseries + cmd/bench_train
+(-seed flag, exact loss bits in output) + docs; its go.mod stays on ztensor
+v1.19.2 (the proof ran with a TEMPORARY branch pin, reverted before PR;
+the flag is inert until the next ztensor tag ships #179, at which point a
+normal bump activates it). T4.1 + S4.1.1 checked in
+plan-gpu-training-hardening.md; T135.5 checked in plan.md.
+
 ## 2026-07-03: T135.3 .so rebuild dropped flash_decode_splitkv_f32 -- ported the missing .cu from ztensor (T133.2 cross-check)
 
 **Type:** regression + fix
