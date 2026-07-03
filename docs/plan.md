@@ -122,7 +122,7 @@ Component: kernels (mostly ztensor) + internal/cuda/kernels. Task-level detail l
 - [x] T135.3 Oracle-gate remaining kernels (T3.3)  Owner: agent  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]  (done 2026-07-03, PR wave-2-task-T135.3: sgemv_m1.cu alignment fix, gemv_q4k_sm121.cu build fix, .so rebuilt via Spark build pod, honest per-op tolerance table docs/kernel-tolerances.md, full ./internal/cuda/kernels/ green on GB10)
   - Sweep the kernel inventory through the ztensor oracle harness on GB10; fix out-of-tolerance ops; commit the standing per-op tolerance table.
 - [ ] T135.4 Fused encoder fwd/bwd audit (T3.4)  Owner: TBD  Est: 1d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]
-- [ ] T135.5 ZTENSOR_DETERMINISTIC mode (T4.1)  Owner: TBD  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.2]
+- [x] T135.5 ZTENSOR_DETERMINISTIC mode (T4.1)  Owner: agent  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.2]  (done 2026-07-03: ztensor#179 (branch feat-deterministic-mode, awaiting review) + zerfoo branch wave-3-task-T135.5; GB10 proof 2 pods x 2 processes, 3/3 epoch losses bitwise-identical under the flag; honest exclusion: FusedEncoderBackward atomicAdd path errors under the flag; scope table in ztensor docs/design.md; devlog 2026-07-03)
   - Acceptance: two seeded GB10 epochs bitwise-identical per-epoch losses; scope documented honestly.
 - [ ] T135.6 Close #847 + #921 disposition + devlog  Owner: TBD  Est: 2h  verifies: [infrastructure]  kind: agent  blocked-by: [T135.3, T135.4, T135.5]
   - Close the umbrella with a completion summary; decide #921 (wire -tags cuda into the pod with an nvcc image + in-tree build, or close as documented build-on-DGX-only policy); update plan-gpu-training-hardening.md status to COMPLETE.
@@ -189,7 +189,7 @@ GB10 serialization: one GPU pod at a time across ALL tracks (E133 proofs, E135 b
 
 ### Wave 3: Deep fixes (4 agents)
 - [ ] S133.2.1, T133.3 (chain)  verifies: [UC-H2-003]
-- [ ] T135.5 deterministic mode  (after T135.2)
+- [x] T135.5 deterministic mode  (after T135.2) -- DONE 2026-07-03 (ztensor#179 + wave-3-task-T135.5; GB10 bitwise proof)
 - [ ] T134.2 gemma4e disposition  (after T134.1)
 - [ ] T136.3 matrix parity runs  (after T136.1, T136.2)
 
