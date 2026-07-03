@@ -184,7 +184,7 @@ GB10 serialization: one GPU pod at a time across ALL tracks (E133 proofs, E135 b
 - [ ] S133.1.1, T133.2 (chain)  verifies: [UC-H2-003]
 - [ ] S135.2.1  verifies: [UC-H2-003]
 - [ ] T135.3 oracle-gate kernels  (after T135.1)
-- [ ] T135.4 fused encoder audit  (after T135.1)
+- [x] T135.4 fused encoder audit  (after T135.1)  2026 07 02  (DONE devlog entry; FFN/SwiGLU + FusedSDPA gradcheck added; FFN GELU-mode Backward bug fixed [always called SwiGLU backward regardless of useGELU]; fused PatchTST encoder backward wiring gap filed on #522 [E55, parked])
 - [ ] T134.1 gemma4e fix attempt  (after T136.2)
 
 ### Wave 3: Deep fixes (4 agents)
