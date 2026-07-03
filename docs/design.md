@@ -1155,6 +1155,15 @@ mounted; it exits 0 only on a clean JSON report. One GPU pod runs at a time
 on the host; interactive SSH remains debugging-only. Results are recorded in
 docs/devlog.md per run.
 
+Targeted debugging narrows the GPU test scope with
+`-pkgs "<go test args>"` (e.g. `-pkgs "-v -run TestKernelAdd ./internal/cuda/kernels/"`),
+which the pod passes verbatim to `go test`. The in-pod stage
+(`scripts/dgx-validate-inpod.sh`) enforces a zero-match guard: if a `-run`
+regex matches no tests, `go test` still exits 0 with "no tests to run", so the
+guard treats that output as a FAILURE rather than a silent pass. Note the sed
+substitution in `dgx-validate.sh` uses `|` as its delimiter, so a `-run` regex
+must not contain `|` (regex alternation).
+
 ---
 
 ## 9. Troubleshooting

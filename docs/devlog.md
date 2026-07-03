@@ -2,6 +2,73 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-02: #922 bisected + fixed -- a null-pointer FP16 kernel launch poisoned the CUDA context (T135.1)
+
+**Type:** finding + bugfix
+**Tags:** dgx, spark, validation, gb10, purego, kernels, cuda-context, T135.1, #922, #847, M-P1-1
+
+**Problem:** `go test ./internal/cuda/kernels/` failed package-wide on the GB10:
+every visible test failed at its first cudaMalloc/cudaStreamCreate with
+"an illegal memory access was encountered" (sticky cuda error 700), yet
+`TestKernelSoftmax` passed in isolation. One early test poisoned the context.
+
+**Bisection (GB10 via `scripts/dgx-validate.sh -ref wave-1-task-T135.1 -pkgs ...`):**
+Spark returns only the log TAIL, so a full `-v` run showed the cascade already
+underway (pod `...T13-1783046310`, first visible fail `TestGatherI32Parity`).
+Re-running with `-v -failfast` puts the first failure AT the tail where
+truncation cannot hide it (pod `...T13-1783046501`): tests ran in source order
+counter -> elementwise_fp16 -> ... and stopped at the FIRST fail --
+`TestFP16GracefulWithoutCUDA/AddFP16` (elementwise_fp16_test.go:53,
+"AddFP16 should return error without CUDA").
+
+**Root cause:** `TestFP16GracefulWithoutCUDA` was the ONLY `*GracefulWithoutCUDA`
+test missing the `if cuda.Available() { t.Skip() }` guard its six siblings all
+have. On the live GB10, `klib()` is non-nil, so `AddFP16(nil,nil,nil,1,nil)`
+(and the other five FP16 wrappers) launched the real FP16 kernels with NULL
+device pointers. The null-pointer kernel dereference is an illegal memory access
+that poisons the CUDA context for the rest of the package; the launch is async
+so the wrapper returned nil (also failing the test's own "should return error"
+assertion). This is a test bug, not a kernel/launcher bug -- the wrappers do
+exactly what every other wrapper does (launch what they are given), and the
+graceful path is only meaningful when CUDA is absent.
+
+**Fix:** add the missing `cuda.Available()` skip guard (commit on branch
+wave-1-task-T135.1). Post-fix full-package run (pod `...T13-1783046820`,
+ref 27026e73) confirmed the IMA cascade is GONE: gather, gemm_q4, offset_memcpy,
+rope_select, and the sgemv/gemv parity cases now PASS where they all previously
+IMA'd. See [[L-0013]].
+
+**Also (T135.1 deliverable):** the standing gate treated a `-run` regex that
+matched zero tests as PASS (go prints "no tests to run" and exits 0) -- the
+footgun recorded in the T131.3 entry that silently invalidated targeted `-pkgs`
+bisection. `scripts/dgx-validate-inpod.sh` now captures test output and fails
+loudly on that signature; `[no test files]` (a package with no tests, normal
+under `./...`) stays allowed. Note `dgx-validate.sh` uses `|` as its sed
+substitution delimiter, so a `-run` regex must not contain `|`.
+
+**Residual (NOT #922; unmasked by removing the poison) -> T135.2 / T135.3:**
+the post-fix run surfaced pre-existing kernel failures the poison had hidden:
+1. `TestSgemvM1_MultipleSizes/odd_N_127x255` -> `cudaStreamSynchronize failed:
+   misaligned address`, which re-poisons the context (next subtest
+   `large_4096x4096` then fails cudaStreamCreate). Root cause: sgemv_m1.cu casts
+   `A + row*N` to `float4*` (line 45) -- for N not a multiple of 4 an odd row's
+   pointer is not 16-byte aligned, so the vectorized `__ldg` float4 load faults.
+   A kernel (.cu) bug -> #847 tail / T3.3 oracle-gate.
+2. FP32 reduction-order tolerance failures (rel err ~1e-4 to 7.5e-4 vs the
+   test's 1e-4 bar) in `TestGemvQ4KF32_LargerMatrix/MultipleSizes` and
+   `TestSgemvM1_MultipleSizes` (medium/gemma3 sizes). This is exactly the
+   fixed-order fp32 tree-reduction work (T135.2, lands in ztensor) and the
+   per-op oracle tolerance table (T135.3).
+The gate mounts a PREBUILT libkernels.so (read-only, from /opt/zerfoo/lib) and
+never recompiles .cu in-pod, so neither residual is fixable/verifiable in this
+gate -- both require a .so rebuild + oracle-gating and belong to T135.2/T135.3.
+
+**Impact on M-P1-1 (standing gate full-scope green):** NOT achievable by T135.1
+alone. Removing the #922 poison unmasks T135.2 (reductions) and T135.3
+(misalignment + oracle) failures, so the default-scope gate stays red on
+`./internal/cuda/kernels/` until those land. The plan attributes M-P1-1 to
+T135.1 only; it in fact depends on T135.2 + T135.3.
+
 ## 2026-07-02: Standing DGX arm64 validation gate operational -- first honest run catches a real kernel bug (T131.3)
 
 **Type:** finding + infrastructure
