@@ -163,3 +163,20 @@ them correctly (observed live during this task: a `\"` inside the command
 string was passed through as literal backslash-quote text and broke bash
 parsing). Prefer bare words / single quotes only, matching the existing
 `validate-arm64.yaml` bootstrap one-liner convention.
+
+**Footgun (found live during this task): a from-scratch rebuild can be a
+downgrade, not a no-op.** The `.so` deployed at `/opt/zerfoo/lib` before
+this task predated any rebuild through zerfoo's own `internal/cuda/kernels`
+Makefile -- it silently carried a kernel (`flash_decode_splitkv_f32`) whose
+`.cu` source was never actually checked into this repo (only ztensor's copy
+of the kernel fork has it; zerfoo's Go-side purego wrapper was merged
+without the corresponding kernel). Rebuilding strictly from `SRCS` in this
+repo's Makefile therefore silently DROPPED that symbol on first rebuild,
+breaking `TestTryFlashDecodeEngineStreamParity` on unmodified `main`. Fixed
+by porting `flash_decode.cu`/`flash_decode.h` from
+`github.com/zerfoo/ztensor` into this repo and adding it to `SRCS` (see the
+2026-07-03 "T135.3 .so rebuild dropped flash_decode_splitkv_f32" devlog
+entry for the full story and .so provenance table). **Before any future
+from-scratch `.so` rebuild, diff `internal/cuda/kernels/purego.go`'s symbol
+table against the Makefile's `SRCS` list** to catch this class of fork
+drift before it reaches the host, rather than after.

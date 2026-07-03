@@ -2,6 +2,77 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-03: T135.3 .so rebuild dropped flash_decode_splitkv_f32 -- ported the missing .cu from ztensor (T133.2 cross-check)
+
+**Type:** regression + fix
+**Tags:** cuda, kernels, gb10, spark, flash-decode, split-kv, fork-drift, T135.3, T133.1, T133.2
+
+**Problem (reported by the parallel T133.2 agent):** immediately after this
+task's first `libkernels.so` rebuild+deploy (see the T135.3 entry below,
+build ref `1082cced`), `TestTryFlashDecodeEngineStreamParity` (T133.1,
+already merged to main) started failing on unmodified `origin/main` through
+the standing gate (control pod `zerfoo-validate-5cbac6769563-1783059932`).
+Since the Go source hadn't changed, this pointed at the freshly-deployed
+`.so` itself.
+
+**Root cause:** `flash_decode_splitkv_purego.go` (added in `fb53c412`, wiring
+`FlashDecodeSplitKV`/`IsFlashDecodeSplitKVSupported` against the
+`flash_decode_splitkv_f32` symbol) was merged with ONLY the Go-side purego
+plumbing -- no `.cu` kernel source and no `Makefile` `SRCS` entry were ever
+added to zerfoo's `internal/cuda/kernels/`. The kernel only ever existed in
+`github.com/zerfoo/ztensor`'s copy of the kernel fork
+(`internal/cuda/kernels/flash_decode.cu`). This was invisible for months
+because the production `.so` at `/opt/zerfoo/lib` predated this task and
+was never rebuilt purely from zerfoo's own Makefile -- whatever process
+originally produced it evidently included the symbol from elsewhere. T135.3's
+from-scratch rebuild (the first time this repo's `internal/cuda/kernels`
+Makefile alone was used to produce the deployed `.so`) surfaced the gap by
+silently dropping the symbol; `IsFlashDecodeSplitKVSupported()` then returns
+false and `tryFlashDecode` bails to `(nil, nil)`, which the parity test does
+not expect.
+
+**Fix:** ported `flash_decode.cu` + `flash_decode.h` verbatim from
+`github.com/zerfoo/ztensor@v1.19.2` (the version zerfoo's `go.mod` currently
+requires; fetched from the local `GOMODCACHE`, byte-identical per `diff`)
+into `internal/cuda/kernels/`, and added `flash_decode.cu` to the Makefile's
+`SRCS` list so it is part of every future rebuild of this repo's kernel
+fork, not a one-off patch to the deployed binary.
+
+**.so provenance (both rebuilds, for next time this class of drift needs
+diagnosing):**
+
+| Build | Source ref | sha256 | Pod |
+|---|---|---|---|
+| 1st (missing flash_decode) | `1082cced57c670746b302c8ef0eb35deece41b34` | `d1fcbbc7ae1df8d4c8e9c22ab6bb53f4ca28c32788d6fe95e4009d17ca4b3c49` | `zerfoo-build-libkernels-t1353-1082cced` |
+| 2nd (flash_decode ported) | `bff530313d269852c6207779c2183e505d6f32a6` | `8f7b430acb9ab973ee9d6cb78e25572733794da463a1c55148308abbe96e8add` | `zerfoo-build-libkernels-t1353-bff53031` |
+
+Both prior backups (including the pre-T135.3 production `.so`, whatever
+built it) are retained on the host as
+`/opt/zerfoo/lib/libkernels.so.bak-<timestamp>-<sha>` (plus the older
+`libkernels.so.bak-apr10` / `libkernels.so.bak-pre-v1180-202606182102`), so
+the drift is recoverable/diagnosable without re-cloning history.
+
+**Verification (GB10, ref `bff530313`):**
+- `./internal/cuda/kernels/` -- full package green, pod
+  `zerfoo-validate-wave2taskT13-1783061096`
+  (`{"build":"pass","vet":"pass","cuda_tests":"pass","failures":[]}`).
+- `TestTryFlashDecodeEngineStreamParity` -- PASS in isolation, pod
+  `zerfoo-validate-wave2taskT13-1783061167`.
+- `./layers/attention/...` (full package) -- green on 2 of 3 runs (pods
+  `...1783061323` with `-failfast`, `...1783061242` truncated-tail
+  originally showed a FAIL whose specific test was hidden by Spark's
+  tail-only logs, then 2 immediate re-runs of the full package passed
+  clean). Not chased further: this package is outside the standing gate's
+  default scope, and the one kernel this task's fix touches
+  (`TestTryFlashDecodeEngineStreamParity`) passed cleanly and
+  reproducibly across all 3 runs. Logged as a watch-item for whoever next
+  touches `layers/attention` CI stability.
+- `TestFlashDecodeScratchReusedAcrossCalls` (PR #933, not yet merged at
+  time of writing) could not be exercised -- it does not exist on this
+  branch. T133.2 should re-verify it against this `.so` once #933 merges;
+  the underlying kernel symbol is now present so there is no reason to
+  expect it specifically to fail, but it was not directly observed here.
+
 ## 2026-07-03: Oracle-gate kernel sweep -- sgemv_m1 alignment fix + honest per-op tolerances (T135.3, #847)
 
 **Type:** fix + finding
