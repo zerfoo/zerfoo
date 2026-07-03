@@ -271,41 +271,74 @@ func (f *FFN[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *te
 	}
 
 	// Backward through W2
-	dSwiGLUOutput, err := f.w2.Backward(ctx, mode, dOut, f.swiGLUOutput)
+	dActivationOutput, err := f.w2.Backward(ctx, mode, dOut, f.swiGLUOutput)
 	if err != nil {
 		return nil, fmt.Errorf("failed to backward through w2: %w", err)
 	}
 
-	// Concatenate w1Output and w3Output to reconstruct swigluInput for backward
-	swigluInput, err := f.w1.linear.engine.Concat(ctx, []*tensor.TensorNumeric[T]{f.w1Output, f.w3Output}, -1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU backward: %w", err)
-	}
-
-	// Check if dSwiGLUOutput has at least one element
-	if len(dSwiGLUOutput) == 0 {
+	// Check if dActivationOutput has at least one element
+	if len(dActivationOutput) == 0 {
 		return nil, fmt.Errorf("no gradients from w2 backward pass")
 	}
 
-	// Backward through SwiGLU
-	dSwiGLUInputs, err := f.swiglu.Backward(ctx, mode, dSwiGLUOutput[0], swigluInput)
-	if err != nil {
-		return nil, fmt.Errorf("failed to backward through swiglu: %w", err)
-	}
+	var dW1Output, dW3Output *tensor.TensorNumeric[T]
+	if f.useGELU {
+		// GELU path: activationOutput = GELU(w1Output) * w3Output.
+		// dW3Output = dGated * GELU(w1Output); dW1Output = dGated * w3Output * GELU'(w1Output).
+		dGated := dActivationOutput[0]
+		engine := f.w1.linear.engine
+		ops := f.w1.linear.ops
 
-	// SwiGLU returns a single concatenated gradient, split it back into two parts
-	if len(dSwiGLUInputs) != 1 {
-		return nil, fmt.Errorf("expected 1 concatenated gradient from SwiGLU backward, got %d", len(dSwiGLUInputs))
-	}
+		geluOutput, geluErr := geluForward(ctx, engine, ops, f.w1Output)
+		if geluErr != nil {
+			return nil, fmt.Errorf("failed to recompute GELU output for backward: %w", geluErr)
+		}
+		dW3, err := engine.Mul(ctx, dGated, geluOutput)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compute dW3Output (GELU path): %w", err)
+		}
+		dW3Output = dW3
 
-	// Split the concatenated gradient back into dW1Output and dW3Output
-	splitGrads, err := f.w1.linear.engine.Split(ctx, dSwiGLUInputs[0], 2, len(dSwiGLUInputs[0].Shape())-1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to split SwiGLU gradients: %w", err)
-	}
+		deriv, derivErr := geluBackwardDeriv(ctx, engine, ops, f.w1Output)
+		if derivErr != nil {
+			return nil, fmt.Errorf("failed to compute GELU derivative: %w", derivErr)
+		}
+		dGeluOutput, err := engine.Mul(ctx, dGated, f.w3Output)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compute dGeluOutput (GELU path): %w", err)
+		}
+		dW1, err := engine.Mul(ctx, dGeluOutput, deriv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to compute dW1Output (GELU path): %w", err)
+		}
+		dW1Output = dW1
+	} else {
+		// Concatenate w1Output and w3Output to reconstruct swigluInput for backward
+		swigluInput, err := f.w1.linear.engine.Concat(ctx, []*tensor.TensorNumeric[T]{f.w1Output, f.w3Output}, -1)
+		if err != nil {
+			return nil, fmt.Errorf("failed to concatenate tensors for SwiGLU backward: %w", err)
+		}
 
-	dW1Output := splitGrads[0]
-	dW3Output := splitGrads[1]
+		// Backward through SwiGLU
+		dSwiGLUInputs, err := f.swiglu.Backward(ctx, mode, dActivationOutput[0], swigluInput)
+		if err != nil {
+			return nil, fmt.Errorf("failed to backward through swiglu: %w", err)
+		}
+
+		// SwiGLU returns a single concatenated gradient, split it back into two parts
+		if len(dSwiGLUInputs) != 1 {
+			return nil, fmt.Errorf("expected 1 concatenated gradient from SwiGLU backward, got %d", len(dSwiGLUInputs))
+		}
+
+		// Split the concatenated gradient back into dW1Output and dW3Output
+		splitGrads, err := f.w1.linear.engine.Split(ctx, dSwiGLUInputs[0], 2, len(dSwiGLUInputs[0].Shape())-1)
+		if err != nil {
+			return nil, fmt.Errorf("failed to split SwiGLU gradients: %w", err)
+		}
+
+		dW1Output = splitGrads[0]
+		dW3Output = splitGrads[1]
+	}
 
 	// Backward through W1
 	dInputW1, err := f.w1.Backward(ctx, mode, dW1Output, inputs[0])
@@ -396,6 +429,86 @@ func geluForward[T tensor.Numeric](ctx context.Context, engine compute.Engine[T]
 		return nil, err
 	}
 	return engine.MulScalar(ctx, xTimesOnePlusTanh, ops.FromFloat64(0.5))
+}
+
+// geluBackwardDeriv computes d/dx[GELU(x)] using engine primitives, mirroring
+// layers/activations.Gelu.Backward's derivation (see the T124.2.3 TODO on
+// geluForward: the canonical Gelu node is tensor.Float-constrained and cannot
+// be reused here directly under tensor.Numeric).
+//
+// GELU(x) = 0.5*x*(1+tanh(u)), u = sqrt(2/pi)*(x + 0.044715*x^3)
+// GELU'(x) = 0.5*(1+tanh(u)) + 0.5*x*sech^2(u)*du/dx
+// du/dx = sqrt(2/pi)*(1 + 3*0.044715*x^2)
+func geluBackwardDeriv[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T], x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	x2, err := engine.Mul(ctx, x, x)
+	if err != nil {
+		return nil, err
+	}
+	x3, err := engine.Mul(ctx, x2, x)
+	if err != nil {
+		return nil, err
+	}
+	term1, err := engine.MulScalar(ctx, x3, ops.FromFloat64(0.044715))
+	if err != nil {
+		return nil, err
+	}
+	term2, err := engine.Add(ctx, x, term1)
+	if err != nil {
+		return nil, err
+	}
+	u, err := engine.MulScalar(ctx, term2, ops.FromFloat64(math.Sqrt(2/math.Pi)))
+	if err != nil {
+		return nil, err
+	}
+	tanhU, err := engine.Tanh(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	tanhU2, err := engine.Mul(ctx, tanhU, tanhU)
+	if err != nil {
+		return nil, err
+	}
+	negTanhU2, err := engine.MulScalar(ctx, tanhU2, ops.FromFloat64(-1))
+	if err != nil {
+		return nil, err
+	}
+	sechSq, err := engine.AddScalar(ctx, negTanhU2, ops.One())
+	if err != nil {
+		return nil, err
+	}
+	dterm1, err := engine.MulScalar(ctx, x2, ops.FromFloat64(3*0.044715))
+	if err != nil {
+		return nil, err
+	}
+	dterm2, err := engine.AddScalar(ctx, dterm1, ops.One())
+	if err != nil {
+		return nil, err
+	}
+	dudx, err := engine.MulScalar(ctx, dterm2, ops.FromFloat64(math.Sqrt(2/math.Pi)))
+	if err != nil {
+		return nil, err
+	}
+	onePlusTanh, err := engine.AddScalar(ctx, tanhU, ops.One())
+	if err != nil {
+		return nil, err
+	}
+	halfOnePlusTanh, err := engine.MulScalar(ctx, onePlusTanh, ops.FromFloat64(0.5))
+	if err != nil {
+		return nil, err
+	}
+	xSechSq, err := engine.Mul(ctx, x, sechSq)
+	if err != nil {
+		return nil, err
+	}
+	xSechSqDudx, err := engine.Mul(ctx, xSechSq, dudx)
+	if err != nil {
+		return nil, err
+	}
+	halfXSechSqDudx, err := engine.MulScalar(ctx, xSechSqDudx, ops.FromFloat64(0.5))
+	if err != nil {
+		return nil, err
+	}
+	return engine.Add(ctx, halfOnePlusTanh, halfXSechSqDudx)
 }
 
 // splitMergedGateUp splits a merged gate+up output into separate gate and up tensors.
