@@ -2,7 +2,6 @@ package gguf
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,15 +146,9 @@ func LoadTensorsMmapSplit(sf *SplitFile, mappedShards [][]byte) (map[string]*ten
 		shard := sf.Shards[shardIdx]
 		mapped := mappedShards[shardIdx]
 
-		var numElements int64 = 1
-		for _, d := range ti.Dimensions {
-			if d > math.MaxInt32 {
-				return nil, fmt.Errorf("tensor %q: dimension %d exceeds maximum (%d)", ti.Name, d, int64(math.MaxInt32))
-			}
-			numElements *= int64(d)
-			if numElements > 1<<34 {
-				return nil, fmt.Errorf("tensor %q: total elements %d exceeds maximum (%d)", ti.Name, numElements, int64(1<<34))
-			}
+		numElements, err := computeNumElements(ti.Name, ti.Dimensions)
+		if err != nil {
+			return nil, err
 		}
 
 		shape := make([]int, len(ti.Dimensions))
@@ -216,15 +209,9 @@ func LoadTensorsSplit(sf *SplitFile, readers []*os.File) (map[string]*tensor.Ten
 		shard := sf.Shards[shardIdx]
 		r := readers[shardIdx]
 
-		var numElements int64 = 1
-		for _, d := range ti.Dimensions {
-			if d > math.MaxInt32 {
-				return nil, fmt.Errorf("tensor %q: dimension %d exceeds maximum", ti.Name, d)
-			}
-			numElements *= int64(d)
-			if numElements > 1<<34 {
-				return nil, fmt.Errorf("tensor %q: total elements %d exceeds maximum", ti.Name, numElements)
-			}
+		numElements, err := computeNumElements(ti.Name, ti.Dimensions)
+		if err != nil {
+			return nil, err
 		}
 
 		shape := make([]int, len(ti.Dimensions))

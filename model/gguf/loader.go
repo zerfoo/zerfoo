@@ -26,6 +26,44 @@ func isEmbeddingShape(shape []int) bool {
 	return len(shape) == 2 && shape[0] > embeddingVocabThreshold
 }
 
+// maxTensorElements is the element-count cap enforced during GGUF tensor
+// loading. It bounds the allocation size computed from file-controlled
+// dimensions so a corrupt or malicious file cannot force an oversized (or,
+// via overflow, negative) allocation.
+const maxTensorElements = 1 << 34
+
+// computeNumElements multiplies a tensor's GGUF dimensions into a total
+// element count, validating each dimension and checking for int64 overflow
+// BEFORE multiplying rather than after.
+//
+// This ordering matters: the previous implementation (duplicated across four
+// call sites) multiplied first and then checked "numElements > maxTensorElements",
+// which has two bugs. First, the running product can land on exactly
+// maxTensorElements (not rejected by a strict ">"), after which a further
+// dimension multiply overflows int64 to a negative value that also fails the
+// "> maxTensorElements" test -- so the negative element count silently passes
+// validation and later panics deep in allocation code. Second, checking after
+// the multiply means the overflow has already happened by the time it is
+// detected. Checking "numElements > maxTensorElements/d" before multiplying
+// makes the overflow structurally impossible to reach (deep-review 002,
+// finding F1).
+func computeNumElements(name string, dimensions []uint64) (int64, error) {
+	var numElements int64 = 1
+	for _, d := range dimensions {
+		if d == 0 {
+			return 0, fmt.Errorf("tensor %q: zero dimension is not allowed", name)
+		}
+		if d > math.MaxInt32 {
+			return 0, fmt.Errorf("tensor %q: dimension %d exceeds maximum (%d)", name, d, int64(math.MaxInt32))
+		}
+		if numElements > maxTensorElements/int64(d) {
+			return 0, fmt.Errorf("tensor %q: total elements exceeds maximum (%d)", name, int64(maxTensorElements))
+		}
+		numElements *= int64(d)
+	}
+	return numElements, nil
+}
+
 // pleNativeKQuantEnabled reports whether ZERFOO_GEMMA4_PLE_NATIVE_Q4K=1 is set.
 // When enabled, Q4_K / Q5_K / Q6_K embedding-shaped tensors keep their native
 // K-quant storage instead of being re-quantized to Q4_0 at load time.
@@ -52,15 +90,9 @@ func LoadTensors(f *File, r io.ReadSeeker) (map[string]*tensor.TensorNumeric[flo
 		ti := &f.Tensors[i]
 
 		// Compute number of elements with overflow checks.
-		var numElements int64 = 1
-		for _, d := range ti.Dimensions {
-			if d > math.MaxInt32 {
-				return nil, fmt.Errorf("tensor %q: dimension %d exceeds maximum (%d)", ti.Name, d, int64(math.MaxInt32))
-			}
-			numElements *= int64(d)
-			if numElements > 1<<34 {
-				return nil, fmt.Errorf("tensor %q: total elements %d exceeds maximum (%d)", ti.Name, numElements, int64(1<<34))
-			}
+		numElements, err := computeNumElements(ti.Name, ti.Dimensions)
+		if err != nil {
+			return nil, err
 		}
 
 		// Convert dimensions to int for tensor API.
