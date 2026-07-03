@@ -2,6 +2,49 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-02: Flash-decode stream ordering + scratch lifetime (T133.1, #865)
+
+**Type:** fix + finding
+**Tags:** attention, flash-decode, stream-sync, gpu, gb10, T133.1, #865, #866, L-0006
+
+**Problem:** `layers/attention/flash_decode.go`'s `tryFlashDecode` launched
+`FlashDecodeSplitKV` on a private CUDA stream with no ordering against the
+engine stream that produced Q/K/V (the same cross-stream race fixed for prefill
+in #866), and defer-freed its split-KV scratch (partialO/partialLSE), which on
+an engine-stream launch must not be reclaimed while the kernel is still using
+it.
+
+**Root cause:** decode was never migrated to the engine-stream launch pattern
+when prefill was (#866 explicitly deferred it to #865 because decode also frees
+per-call scratch).
+
+**Fix (contract level):** `tryFlashDecode` now accepts the engine stream
+(`compute.StreamProvider`, proxy-unwrapped by the SDPA node and shared with
+`tryFlashForward`) and launches on it, ordering the kernel after its producers.
+There is no in-tree stream-ordered free, so the launch stream is synchronized
+before the scratch defer-frees fire; unlike prefill, decode keeps this single
+host sync (single-token / latency-bound, matches the legacy cost, orders the
+output for the synchronous caller). Capture-replay decode stays out of scope,
+tracked in the #865->#870->#878 cluster (L-0006).
+
+**Finding -- a cross-stream GPU race cannot be red-proofed by a self-contained
+unit test:** `tryFlashDecode` allocates its output and scratch with `cudaMalloc`
+(`tensor.NewGPUStorage`), and `cudaMalloc` device-synchronizes, draining every
+pending engine-stream producer before the kernel launches. So an unordered
+private-stream launch still reads fully-written Q/K/V in isolation. Verified on
+the GB10 gate: a scratch branch forcing the pre-fix private-stream launch stayed
+GREEN even behind 8 GiB of queued async device-to-device producer work (8 GiB
+cannot drain in 0.3s at any bandwidth -- the pass proves the device-sync drain).
+The race only manifests with a pooled engine (no per-call cudaMalloc), i.e.
+under real training -- the same reason #866 validated via a training A/B, not a
+unit test. `TestTryFlashDecodeEngineStreamParity` is therefore a correctness /
+wiring guard on the engine-stream path, not a race reproduction.
+
+**Impact:** decode SDPA on any `StreamProvider` engine is now ordered after its
+Q/K/V producers. GB10 gate (scripts/dgx-validate.sh, ref wave-1-task-T133.1):
+build/vet/cuda_tests pass; `TestTryFlashDecodeEngineStreamParity` PASS (~0.38s),
+`TestTryFlashDecodeBailouts` PASS.
+
 ## 2026-07-02: #922 bisected + fixed -- a null-pointer FP16 kernel launch poisoned the CUDA context (T135.1)
 
 **Type:** finding + bugfix
