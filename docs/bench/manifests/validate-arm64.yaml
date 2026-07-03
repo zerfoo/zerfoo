@@ -27,7 +27,9 @@
 # file or directory" for any missing hostPath, observed live 2026-07-02):
 #   /usr/local/cuda        CUDA 13 runtime libs (loaded via purego/dlopen)
 #   /opt/zerfoo/lib        tanh-fixed sm_121 libkernels.so; resolved by
-#                          internal/cuda/purego.go kernelLibPaths[2]
+#                          internal/cuda/purego.go trustedKernelLibPath (the
+#                          sole kernelLibPaths entry as of CUDA-1, T141.1 --
+#                          no CWD-relative or bare-soname candidates)
 # Model parity: MODELS_DIR points at an in-container path that is absent by
 # default, so the parity stage skips cleanly. To run parity, provision GGUF
 # files on the host and re-add a models hostPath mount (path must pre-exist).

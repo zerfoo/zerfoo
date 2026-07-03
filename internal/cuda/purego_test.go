@@ -1,6 +1,8 @@
 package cuda
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -95,6 +97,104 @@ func TestDlopenPathValid(t *testing.T) {
 		t.Fatal("expected non-zero handle")
 	}
 	dlcloseImpl(h)
+}
+
+// TestKernelLibPathsAreAbsolute is the CUDA-1 regression guard
+// (docs/deep-reviews/002-full-codebase.md, docs/adr/094-*): dlopen executes a
+// shared object's ELF constructors at load time, so any bare-soname or
+// CWD-relative candidate in the kernel dlopen search list is a local
+// code-execution primitive. Every candidate must be an absolute path.
+func TestKernelLibPathsAreAbsolute(t *testing.T) {
+	if len(kernelLibPaths) == 0 {
+		t.Fatal("expected kernelLibPaths to contain at least the trusted default")
+	}
+	for _, p := range kernelLibPaths {
+		if !filepath.IsAbs(p) {
+			t.Fatalf("kernelLibPaths contains a non-absolute (CWD-relative or bare-soname) entry: %q", p)
+		}
+	}
+}
+
+// TestKernelLibPathsContainsTrustedDefault pins the trusted production path
+// so a future edit cannot silently drop it.
+func TestKernelLibPathsContainsTrustedDefault(t *testing.T) {
+	found := false
+	for _, p := range kernelLibPaths {
+		if p == trustedKernelLibPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected kernelLibPaths to contain trusted default %q, got %v", trustedKernelLibPath, kernelLibPaths)
+	}
+}
+
+func TestVetKernelLibOverrideRejectsRelativePath(t *testing.T) {
+	if _, ok := vetKernelLibOverride("libkernels.so"); ok {
+		t.Fatal("expected bare soname to be rejected")
+	}
+	if _, ok := vetKernelLibOverride("./libkernels.so"); ok {
+		t.Fatal("expected CWD-relative path to be rejected")
+	}
+	if _, ok := vetKernelLibOverride("../libkernels.so"); ok {
+		t.Fatal("expected relative parent path to be rejected")
+	}
+}
+
+func TestVetKernelLibOverrideRejectsMissingFile(t *testing.T) {
+	if _, ok := vetKernelLibOverride("/tmp/libnonexistent_test_xyzzy_kernellib.so"); ok {
+		t.Fatal("expected nonexistent absolute path to be rejected")
+	}
+}
+
+func TestVetKernelLibOverrideRejectsWorldWritable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "libkernels.so")
+	if err := os.WriteFile(path, []byte("stub"), 0o666); err != nil {
+		t.Fatalf("failed to write test fixture: %v", err)
+	}
+	if err := os.Chmod(path, 0o666); err != nil {
+		t.Fatalf("failed to chmod test fixture world-writable: %v", err)
+	}
+	if _, ok := vetKernelLibOverride(path); ok {
+		t.Fatal("expected world-writable absolute path to be rejected")
+	}
+}
+
+func TestVetKernelLibOverrideAcceptsSafeAbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "libkernels.so")
+	if err := os.WriteFile(path, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("failed to write test fixture: %v", err)
+	}
+	vetted, ok := vetKernelLibOverride(path)
+	if !ok {
+		t.Fatal("expected safe absolute, non-world-writable path to be accepted")
+	}
+	if vetted != path {
+		t.Fatalf("expected vetted path %q, got %q", path, vetted)
+	}
+}
+
+func TestBuildKernelLibPathsFallsBackOnInvalidOverride(t *testing.T) {
+	t.Setenv(kernelLibPathOverrideEnv, "./libkernels.so")
+	paths := buildKernelLibPaths()
+	if len(paths) != 1 || paths[0] != trustedKernelLibPath {
+		t.Fatalf("expected invalid override to fall through to trusted default only, got %v", paths)
+	}
+}
+
+func TestBuildKernelLibPathsUsesValidOverrideFirst(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "libkernels.so")
+	if err := os.WriteFile(path, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("failed to write test fixture: %v", err)
+	}
+	t.Setenv(kernelLibPathOverrideEnv, path)
+	paths := buildKernelLibPaths()
+	if len(paths) != 2 || paths[0] != path || paths[1] != trustedKernelLibPath {
+		t.Fatalf("expected [override, trustedDefault], got %v", paths)
+	}
 }
 
 func TestDlopenImplWithLibSystem(t *testing.T) {
