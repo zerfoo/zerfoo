@@ -84,10 +84,10 @@ Inputs from Phase 0 (all discovered/verified 2026 07 02, sources in devlog):
 
 Component: training/attention + ztensor boundary. Acceptance: all three issues closed with ADR-091 fixtures; fixture green on GB10; gate removed. Decision rationale: ADR-091 (every fix ships with a harness fixture), lore L-0006 (pointer stability under replay). Grep docs/lore.md #capture #arena before starting.
 
-- [ ] T133.1 Fix #865: flash-decode stream ordering + scratch lifetime  Owner: TBD  Est: 4h  verifies: [UC-H2-003]  kind: agent
+- [x] T133.1 Fix #865: flash-decode stream ordering + scratch lifetime  Owner: agent  Est: 4h  verifies: [UC-H2-003]  kind: agent  (done 2026-07-02, PR #928)
   - layers/attention/flash_decode.go launches FlashDecodeSplitKV on a private stream with no ordering against the engine stream that produced Q/K/V, and defer-frees scratch (partialO, partialLSE) non-stream-ordered. Fix: accept the engine stream (compute.StreamProvider pattern, mirroring the flash-forward fix in PR #866) + pool/epoch-managed or event-ordered frees. Add a parity-harness fixture reproducing the race shape.
   - Acceptance: fixture red on pre-fix behavior, green after; decode SDPA path exercised via the standing gate.
-- [ ] S133.1.1 Tests + lint  Owner: TBD  Est: 1h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.1]
+- [x] S133.1.1 Tests + lint  Owner: agent  Est: 1h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.1]  (done 2026-07-02, in PR #928: flash_decode_race_test.go + CI green)
 - [ ] T133.2 Fix #870: FusedSDPA replay-stable scratch  Owner: TBD  Est: 4h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.1]
   - Illegal memory access on replay ~#141/511 with FusedSDPA under CaptureReplayRunner: per-call scratch freed/reused between replays. Fix: graph-owned/persistent scratch keyed to the captured graph's lifetime, or make FusedSDPA return ErrCaptureIncompatible and fall back to the discrete chain (which is clean under replay). Prefer the persistent-scratch fix; the error fallback is the floor.
   - Acceptance: capture-replay with FusedSDPA=true completes 511 replays on GB10 without IMA (or is cleanly refused); ADR-091 fixture committed.
@@ -113,12 +113,12 @@ Component: model/gguf + inference. Acceptance: #757 and #766 closed, either way.
 
 Component: kernels (mostly ztensor) + internal/cuda/kernels. Task-level detail lives in docs/plan-gpu-training-hardening.md (T3.2/T3.3/T3.4/T4.1) -- keep that doc as the authoritative sub-breakdown and check its boxes too. Grep docs/lore.md #arena #capture first.
 
-- [ ] T135.1 Bisect + fix #922: first-faulting kernels test on GB10  Owner: TBD  Est: 1d  verifies: [UC-H2-003, infrastructure]  kind: agent
+- [x] T135.1 Bisect + fix #922: first-faulting kernels test on GB10  Owner: agent  Est: 1d  verifies: [UC-H2-003, infrastructure]  kind: agent  (done 2026-07-02, commits 047f2cc3/9c8e4e45/7ea2a605; residuals routed to T135.2/T135.3)
   - Bisect package test order with `scripts/dgx-validate.sh -pkgs "-v -run <subset> ./internal/cuda/kernels/"` (binary-search the test list; log head was truncated, first visible failures in elementwise_test.go). Identify the test that first triggers the IMA, fix the kernel/launcher (oracle-gate the fix per ADR-091). Also add a zero-tests-matched guard to dgx-validate-inpod.sh (footgun from devlog).
   - Acceptance: full `./internal/cuda/kernels/` green on GB10; standing gate default scope green end-to-end.
-- [ ] T135.2 Fixed-order fp32 tree reductions (plan-gpu-training-hardening T3.2)  Owner: TBD  Est: 1.5d  verifies: [UC-H2-003]  kind: agent
+- [x] T135.2 Fixed-order fp32 tree reductions (plan-gpu-training-hardening T3.2)  Owner: agent  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  (done 2026-07-02, ztensor v1.19.2; zerfoo bumped b9613f7b)
   - ztensor-side: audit every reduction (ReduceSum, softmax denominator, norm stats, optimizer clipping norms) for accumulation order/dtype; convert to fixed-order pairwise/tree fp32 accumulation. Oracle diffs must tighten.
-- [ ] S135.2.1 Tests + lint (ztensor)  Owner: TBD  Est: 2h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.2]
+- [x] S135.2.1 Tests + lint (ztensor)  Owner: agent  Est: 2h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.2]  (done 2026-07-02, ztensor main CI green through v1.19.2 release)
 - [ ] T135.3 Oracle-gate remaining kernels (T3.3)  Owner: TBD  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]
   - Sweep the kernel inventory through the ztensor oracle harness on GB10; fix out-of-tolerance ops; commit the standing per-op tolerance table.
 - [ ] T135.4 Fused encoder fwd/bwd audit (T3.4)  Owner: TBD  Est: 1d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]
@@ -131,7 +131,7 @@ Component: kernels (mostly ztensor) + internal/cuda/kernels. Task-level detail l
 
 Component: docs + tests/parity + bench. The public support claim becomes this matrix (strategy doc P1). Non-Wolf validation rule applies: include at least one non-LLM (timeseries) entry.
 
-- [ ] T136.1 Matrix schema + flagship list + gate criteria  Owner: TBD  Est: 2h  verifies: [UC-H2-004]  kind: agent
+- [x] T136.1 Matrix schema + flagship list + gate criteria  Owner: agent  Est: 2h  verifies: [UC-H2-004]  kind: agent  (done 2026-07-02, docs/verified-models.md, commits d92a17b3/4f50661d)
   - Create docs/verified-models.md: per-model row = architecture, GGUF source, quant, parity evidence (test + date + ref), benchmark evidence (tok/s + manifest + date), GPU-verified flag. Candidate list (~10): Gemma 3 1B + 4B, Llama 3.2 3B, Llama 4 (smallest runnable), Mistral 7B, Qwen 2, Phi-4, DeepSeek-R1-distill 1.5B, MiniMax-M2 229B (CPU/over-RAM), Chronos-2 (timeseries). Marketing may not exceed this file (ADR-093 rule 1); add that sentence to the file header.
 - [ ] T136.2 Provision GGUF models on the DGX host  Owner: David  Est: 2h  verifies: [UC-H2-004]  kind: human
   - Host-side (requires host access; agents cannot do this): create /var/lib/zerfoo/models on the DGX and stage the GGUF files for the T136.1 list (pull via zerfoo CLI or copy). Then re-add the models hostPath mount to docs/bench/manifests/validate-arm64.yaml (path must pre-exist -- lore: Spark/Podman fails on missing hostPath). Also stage the gemma4e E2B GGUF for T134.1.
@@ -146,7 +146,7 @@ Component: docs + tests/parity + bench. The public support claim becomes this ma
 
 ### E137: darwin dev-host fix (ztensor#171)
 
-- [ ] T137.1 Fix ztensor device.init darwin dlopen SIGSEGV; release; bump  Owner: TBD  Est: 4h  verifies: [UC-H2-006]  kind: agent
+- [x] T137.1 Fix ztensor device.init darwin dlopen SIGSEGV; release; bump  Owner: agent  Est: 4h  verifies: [UC-H2-006]  kind: agent  (done 2026-07-02, ztensor v1.19.1 + zerfoo 215fcefb; ztensor#171 closed)
   - In ztensor: guard the darwin dlopen probe so a missing/incompatible CUDA library yields a clean "no GPU" error instead of a SIGSEGV in init (repro: any test importing compute on darwin + Go 1.26.2 + ztensor v1.19.0). Ship ztensor release; bump zerfoo go.mod; verify tests/training runs (skips) on a mac.
   - Acceptance: `go test ./tests/training/ -run TestCaptureReplayGradientDivergence878` SKIPS (not crashes) on darwin; ztensor#171 closed.
 
@@ -172,13 +172,13 @@ GB10 serialization: one GPU pod at a time across ALL tracks (E133 proofs, E135 b
 
 ### Waves
 
-### Wave 1: Fan-out (5 agents + 1 human ask)
-- [ ] T133.1 #865 flash-decode stream ordering  verifies: [UC-H2-003]
-- [ ] T135.1 #922 bisect + fix  verifies: [UC-H2-003]
-- [ ] T135.2 fixed-order reductions (ztensor)  verifies: [UC-H2-003]
-- [ ] T136.1 matrix schema + list  verifies: [UC-H2-004]
-- [ ] T137.1 ztensor#171 darwin fix  verifies: [UC-H2-006]
-- [ ] T136.2 model provisioning  kind: human  (ask David at wave start; everything in Tracks B/D waits on it)
+### Wave 1: Fan-out (5 agents + 1 human ask) -- COMPLETE 2026-07-02 (except human T136.2)
+- [x] T133.1 #865 flash-decode stream ordering  verifies: [UC-H2-003]
+- [x] T135.1 #922 bisect + fix  verifies: [UC-H2-003]
+- [x] T135.2 fixed-order reductions (ztensor)  verifies: [UC-H2-003]
+- [x] T136.1 matrix schema + list  verifies: [UC-H2-004]
+- [x] T137.1 ztensor#171 darwin fix  verifies: [UC-H2-006]
+- [ ] T136.2 model provisioning  kind: human  (ask David at wave start; everything in Tracks B/D waits on it) -- STILL OPEN, blocking T134.1/T136.3/T136.4
 
 ### Wave 2: Build-out (5 agents)
 - [ ] S133.1.1, T133.2 (chain)  verifies: [UC-H2-003]
@@ -253,6 +253,13 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 ---
 
 ## Progress Log
+
+### 2026 07 02 (late) -- Change Summary: Wave 1 complete (T132.1 -> Wave 2 dispatched)
+
+- Wave 1 done same-day, 5/5 agent tasks: T133.1 (#865 flash-decode stream ordering, PR #928, includes S133.1.1 race-shape fixture flash_decode_race_test.go), T135.1 (#922 bisected to the unguarded TestFP16GracefulWithoutCUDA null-pointer launch; fixed + zero-match gate guard; residuals routed to T135.2/T135.3), T135.2+S135.2.1 (ztensor v1.19.2 fixed-order pairwise fp32 reductions, zerfoo bumped), T136.1 (docs/verified-models.md schema + candidates), T137.1 (ztensor v1.19.1 darwin dlopen guard, ztensor#171 closed, zerfoo bumped).
+- M-P1-1 correction (from T135.1 devlog): standing-gate full-scope green additionally depends on T135.2 (.so rebuild) and T135.3 (sgemv_m1 misalignment + oracle tolerances), not T135.1 alone.
+- T136.2 (human: GGUF provisioning on DGX at /var/lib/zerfoo/models) remains the open external dependency; Tracks B (gemma4e) and D (matrix/bench GPU runs) are blocked on it.
+- Wave 2 dispatched: T133.2 (FusedSDPA replay scratch), T135.3 (oracle-gate kernels), T135.4 (fused encoder audit).
 
 ### 2026 07 02 -- Change Summary: Phase 0 complete; plan advanced to Phase 1 (T132.1)
 
