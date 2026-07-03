@@ -102,11 +102,11 @@ Component: training/attention + ztensor boundary. Acceptance: all three issues c
   - Illegal memory access on replay ~#141/511 with FusedSDPA under CaptureReplayRunner: per-call scratch freed/reused between replays. Fix: graph-owned/persistent scratch keyed to the captured graph's lifetime, or make FusedSDPA return ErrCaptureIncompatible and fall back to the discrete chain (which is clean under replay). Prefer the persistent-scratch fix; the error fallback is the floor.
   - Acceptance: capture-replay with FusedSDPA=true completes 511 replays on GB10 without IMA (or is cleanly refused); ADR-091 fixture committed.
 - [x] S133.2.1 Tests + lint  Owner: agent  Est: 1h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.2]  (done 2026-07-03, in PR #933: flash_capture_replay_test.go ADR-091 fixture + CI green)
-- [ ] T133.3 Fix #878: captured training-state aliasing  Owner: TBD  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.2]
+- [x] T133.3 Fix #878: captured training-state aliasing  Owner: agent  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.2]  (done 2026-07-03, PR #937: root cause confirmed -- the d(loss)=1 seed in buildOnesSeed was the one piece of cross-step captured state still arena-pooled via engine.Fill; re-homed into a nil-pool GPUStorage, same pattern as newPersistentGradTensor; red-proof to bit-identical-trajectory green on GB10; also fixed the merged T129.1 fixture, which had never actually exercised the bug, and a second .so symbol-drift regression from T135.3)
   - Root-cause the silent gradient divergence: suspect gradAccumulator.seeds / device-resident loss seed built via engine.Fill being captured with stale or aliased state across replays. Fix at the CONTRACT level (allocation-stable captured operands; SaveForBackward-style pinning for captured state), not consumer special-casing. Localize with ZTENSOR_ARENA_POISON=1 if needed.
   - Acceptance: tests/training/capture_replay_divergence_878_test.go (ZERFOO_RUN_878_FIXTURE=1) GREEN on GB10 via `scripts/dgx-validate.sh -pkgs "-v -run TestCaptureReplayGradientDivergence878 ./tests/training/"`; capture-on and eager trajectories converge alike.
-- [ ] S133.3.1 GB10 green proof + devlog  Owner: TBD  Est: 1h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.3]
-- [ ] T133.4 Remove the containment gate; release; close the cluster  Owner: TBD  Est: 2h  verifies: [UC-H2-003]  kind: agent  blocked-by: [S133.3.1]
+- [x] S133.3.1 GB10 green proof + devlog  Owner: agent  Est: 1h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.3]  (done 2026-07-03, delivered inline in PR #937: pods ...1783116105/...1783117013 bit-identical baseline/eager-reset/capture-reset trajectories; devlog entry included)
+- [ ] T133.4 Remove the containment gate; release; close the cluster  Owner: TBD  Est: 2h  verifies: [UC-H2-003]  kind: agent
   - Remove the T129.2 loud-fail gate from NewCaptureReplayRunner (keep the constructor's error return; keep ZERFOO_DISABLE_CUDA_GRAPH); un-gate the fixture (drop ZERFOO_UNSAFE_CAPTURE_TRAINING from it; keep ZERFOO_RUN_878_FIXTURE as a long-test gate only if runtime demands). Ship release; close #865, #870, #878 with fix summaries; update docs/lore.md L-0006 with the resolution.
 
 ### E134: gemma4e decode -- time-boxed disposition
@@ -328,13 +328,13 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 - [ ] T134.1 gemma4e fix attempt  (after T136.2)
 
 ### Wave 3: Deep fixes (4 agents)
-- [ ] S133.2.1, T133.3 (chain)  verifies: [UC-H2-003]
+- [x] S133.2.1, T133.3 (chain)  verifies: [UC-H2-003] -- DONE 2026-07-03 (PR #937)
 - [x] T135.5 deterministic mode  (after T135.2) -- DONE 2026-07-03 (ztensor#179 + wave-3-task-T135.5; GB10 bitwise proof)
 - [ ] T134.2 gemma4e disposition  (after T134.1)
 - [ ] T136.3 matrix parity runs  (after T136.1, T136.2)
 
 ### Wave 4: Proof + ship (4 agents)
-- [ ] S133.3.1 GB10 green proof
+- [x] S133.3.1 GB10 green proof -- DONE 2026-07-03 (PR #937)
 - [ ] T133.4 remove gate + release + close cluster
 - [ ] T136.4 + S136.4.1 Ollama re-run  (GPU-serial with S133.3.1)
 - [ ] T135.6 close #847/#921
@@ -443,6 +443,12 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 ---
 
 ## Progress Log
+
+### 2026 07 03 (later still) -- Change Summary: T133.3 closes the capture cluster's keystone bug (#878)
+
+- T133.3 + S133.3.1 done (PR #937): root-caused #878 to `buildOnesSeed`'s device-resident `d(loss)=1` seed being the one piece of cross-step captured training state still allocated via the engine's arena pool (`engine.Fill`) -- every other cross-step state (grad accumulators, fused-AdamW moments) was already allocation-stable. Fixed at the contract level by re-homing the seed into a nil-pool `GPUStorage`, mirroring `newPersistentGradTensor`'s existing pattern. Red-proof (sharpened fixture) diverged at step 6 (max |diff| 0.0248) before the fix; after the fix, baseline/eager-reset/capture-reset trajectories are bit-identical on GB10 (pods `...1783116105`/`...1783117013`). Also repaired the merged T129.1 fixture, which had never actually exercised the bug (capture-illegal ReLU fallback, missing `ResetPool` call, too-coarse assertion), and a second `.so` symbol-drift regression from T135.3's rebuild (5 missing symbols: transpose_2d/nd_bf16, dropout_f32, fused_adamw_f32, tiny_batched_gemm_f32 -- ported from ztensor v1.19.2). Added `-env "K=V ..."` plumbing to dgx-validate.sh for env-gated fixtures.
+- E133 (capture/replay cluster) now has only T133.4 (remove containment gate, release, close #865/#870/#878) remaining.
+- Filed a follow-up task (not in this plan; tracked in session) to automate a fork-parity symbol check between zerfoo's and ztensor's kernel .so builds, so the class of drift T133.3 caught by accident is caught by CI instead.
 
 ### 2026 07 03 (later) -- Change Summary: deep-review 002 merged into Phase 1 scope (E139-E145)
 
