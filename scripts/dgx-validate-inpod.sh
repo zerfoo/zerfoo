@@ -15,7 +15,14 @@ set -uo pipefail
 
 REF="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 MODELS_DIR="${MODELS_DIR:-/var/lib/zerfoo/models}"
-CUDA_PKGS="${CUDA_PKGS:-./internal/cuda/... ./tabular/... ./tests/parity/...}"
+# GPU test scope: the PUREGO path (default build, no tags) IS the production
+# GPU path -- with real CUDA libs present these tests exercise dlopen bindings,
+# arena, and kernels via libkernels.so on LD_LIBRARY_PATH. The `-tags cuda`
+# CGo alternative path is NOT buildable from a module checkout (needs an
+# nvcc-built libkernels.so in-tree, and ztensor's published module lacks its
+# generated kernel headers -- see zerfoo#921); it is intentionally out of the
+# standing gate's scope.
+CUDA_PKGS="${CUDA_PKGS:-./internal/cuda/... ./internal/xblas/... ./tabular/...}"
 
 FAILS=""
 add_fail() { FAILS="${FAILS:+$FAILS,}\"$1\""; }
@@ -52,9 +59,9 @@ else
 fi
 
 CUDA=pass
-echo ">> go test -tags cuda $CUDA_PKGS"
+echo ">> go test $CUDA_PKGS (purego GPU path)"
 # shellcheck disable=SC2086
-go test -tags cuda -count=1 -timeout 900s $CUDA_PKGS || { CUDA=fail; add_fail cuda_tests; }
+go test -count=1 -timeout 900s $CUDA_PKGS || { CUDA=fail; add_fail cuda_tests; }
 
 # Model parity: only when GGUF files are mounted. Each model parity test skips
 # itself when its ModelDirEnvVar is unset, so we discover those env-var names
@@ -66,8 +73,8 @@ if [ -d "$MODELS_DIR" ] && [ -n "$(ls -A "$MODELS_DIR" 2>/dev/null)" ]; then
     export "$v=$MODELS_DIR"
   done
   PARITY=pass
-  echo ">> go test -tags cuda ./tests/parity/... (models present)"
-  go test -tags cuda -count=1 -timeout 900s ./tests/parity/... || { PARITY=fail; add_fail parity; }
+  echo ">> go test ./tests/parity/... (models present; purego GPU path)"
+  go test -count=1 -timeout 900s ./tests/parity/... || { PARITY=fail; add_fail parity; }
 else
   echo ">> model parity skipped (no files under $MODELS_DIR)"
 fi
