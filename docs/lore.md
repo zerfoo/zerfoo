@@ -148,3 +148,14 @@ the next `L-NNNN` ID; never renumber. See `~/.claude/skills/lore/SKILL.md`
 **Why:** The repo's commit convention — reflected in the `/apply`, `/journal`, and `/lore` workflows, which each stage a single path (`git add docs/lore.md`) — is one directory per commit, so history stays bisectable and PRs stay reviewable per subsystem. NOTE / discrepancy with the seed summary: this could not be verified as an *installed* pre-commit hook in this worktree — there is no `.git/hooks/pre-commit`, no `.githooks/`, no `core.hooksPath`, and the rule is not stated in the project `CLAUDE.md`. Treat it as a documented convention (and honor it) until the enforcing hook is located; if you add such a hook, update this entry with its path.
 **Trigger:** A `git add` / commit spanning two top-level directories at once.
 **Source:** CLAUDE.md / repo commit hooks (convention; installed hook not located as of 2026-07-02).
+
+## L-0013: A null-pointer kernel launch poisons the whole CUDA context; graceful-degradation tests must skip when CUDA is available
+
+**Tags:** #gb10 #kernel #cuda-context #purego #gotcha
+**Date:** 2026-07-02
+**Repo:** zerfoo/zerfoo
+
+**Rule:** Never launch a real kernel with NULL device pointers on a live CUDA context. The `*GracefulWithoutCUDA` tests (which pass nil pointers to assert the wrappers error out) MUST guard with `if cuda.Available() { t.Skip("CUDA available, skipping graceful-failure test") }` -- the graceful path is only meaningful when CUDA is absent (klib() nil -> early error return before any launch).
+**Why:** With CUDA available, `klib()` is non-nil and a wrapper like `AddFP16(nil,nil,nil,1,nil)` calls `cuda.Ccall(k.launchAddFP16, 0,0,0,1,0)`, launching the FP16 kernel with null device pointers. The on-device null dereference is an illegal memory access that leaves a STICKY error (cuda 700) on the context, so every subsequent test in the package fails at its first cudaMalloc/cudaStreamCreate -- a package-wide IMA cascade that looks like many broken kernels but is one poisoning test. The launch is async, so the wrapper's `checkKernel` sees launch-success and returns nil, which also silently fails the test's own "should return error" assertion. `TestFP16GracefulWithoutCUDA` was the sole graceful test missing the guard (zerfoo#922); its six siblings (counter, elementwise_parity, fp8_ops, gather, offset_memcpy, rope_select) all had it. Corollary: to find the first-faulting test when Spark truncates logs to the tail, run `-v -failfast` so the first failure lands at the tail where truncation cannot hide it.
+**Trigger:** A new `*GracefulWithoutCUDA` (or any nil-device-pointer) test without the `cuda.Available()` skip guard; more generally, any code path that can reach a kernel launch with a null/unallocated device pointer on a live context.
+**Source:** zerfoo#922; devlog 2026-07-02 (T135.1).
