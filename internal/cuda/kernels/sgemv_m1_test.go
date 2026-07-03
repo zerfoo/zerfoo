@@ -102,7 +102,7 @@ func TestSgemvM1_Parity(t *testing.T) {
 		if relErr > maxRelErr {
 			maxRelErr = relErr
 		}
-		if relErr > 1e-4 {
+		if relErr > gemvReductionRelTol {
 			t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
 			if t.Failed() {
 				break
@@ -191,7 +191,7 @@ func TestSgemvM1_MultipleSizes(t *testing.T) {
 				if relErr > maxRelErr {
 					maxRelErr = relErr
 				}
-				if relErr > 1e-4 {
+				if relErr > gemvReductionRelTol {
 					t.Errorf("y[%d] = %f, want %f (rel err %e)", i, got[i], ref[i], relErr)
 					if t.Failed() {
 						break
