@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -252,6 +254,67 @@ func TestHandleChatCompletions_InvalidJSON(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestHandleChatCompletions_AdapterPathTraversalRejected is the API-level
+// regression test for SERVE-2: a request whose "model" field encodes a LoRA
+// adapter name with path-traversal sequences must be rejected with a
+// 400-class error, and must never open a file outside the configured
+// adapter directory.
+func TestHandleChatCompletions_AdapterPathTraversalRejected(t *testing.T) {
+	mdl := buildTestModel(t)
+
+	base := t.TempDir()
+	dir := filepath.Join(base, "adapters")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Plant a real, loadable adapter GGUF outside the adapter directory.
+	// If the traversal succeeded, this is the file it would open.
+	writeLoRAGGUFFile(t, filepath.Join(base, "secret.gguf"), 4, 8.0)
+
+	srv := NewServer(mdl, WithAdapterCache(dir, 5))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"messages":[{"role":"user","content":"hello"}],"model":"base:../secret","max_tokens":5}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, b)
+	}
+	if srv.adapterCache.cache.Size() != 0 {
+		t.Errorf("adapter cache poisoned by traversal name, size = %d, want 0", srv.adapterCache.cache.Size())
+	}
+}
+
+// TestHandleChatCompletions_AdapterValidNameLoads confirms the traversal fix
+// does not regress the legitimate path: a real adapter with a well-formed
+// name still resolves via the adapter cache and the request completes.
+func TestHandleChatCompletions_AdapterValidNameLoads(t *testing.T) {
+	mdl := buildTestModel(t)
+
+	dir := t.TempDir()
+	writeLoRAGGUFFile(t, filepath.Join(dir, "my-adapter.gguf"), 4, 8.0)
+
+	srv := NewServer(mdl, WithAdapterCache(dir, 5))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"messages":[{"role":"user","content":"hello"}],"model":"test-model:my-adapter","max_tokens":5}`
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, b)
+	}
+	if srv.adapterCache.cache.Size() != 1 {
+		t.Errorf("adapter cache size = %d, want 1 (legitimate adapter should load)", srv.adapterCache.cache.Size())
 	}
 }
 
