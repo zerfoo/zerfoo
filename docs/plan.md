@@ -24,7 +24,8 @@ Phase 1 makes every public claim true. Three correctness debts block a credible 
 3. #847 closed: #922 bisected and fixed, fixed-order fp32 reductions, remaining kernels oracle-gated, fused-encoder audit, ZTENSOR_DETERMINISTIC mode.
 4. Verified-model matrix (~10 flagship models, each with parity + benchmark + GPU evidence) published; Ollama comparison re-run with reproduction manifests; T86.5.8 closed.
 5. ztensor#171 fixed (darwin dev hosts can run tests again -- prerequisite for Phase 2 external contributors).
-6. Phase 2 (Traction) is planned.
+6. Deep-review 002 (docs/deep-reviews/002-full-codebase.md) tiers 1-2 closed: all 9 High findings (F1/F2/F3, DIST-1/2, CUDA-1/2, OCI-1/2, SERVE-1/2, CONC-H1/H2) fixed and re-verified; CICD-1/2 fixed; already-written security capabilities (rate limiter, keystore, mTLS) wired into the CLI. See ADR-094.
+7. Phase 2 (Traction) is planned.
 
 ### Non-goals (Phase 1)
 
@@ -48,6 +49,7 @@ Phase 1 makes every public claim true. Three correctness debts block a credible 
 | Verified matrix | 10+ models published | docs/verified-models.md with per-model evidence links |
 | Benchmarks | reproducible | manifests in docs/bench/; benchmarks.md refreshed at current versions |
 | gemma4 honesty | fixed or demoted | decode verified on GB10 OR registry marks experimental |
+| Security posture (deep-review 002) | 0 open High findings; CICD-1/2 fixed | every High-finding fix has a repro test; re-verified against docs/deep-reviews/002-full-codebase.md roadmap tiers 1-2 |
 
 ---
 
@@ -63,6 +65,13 @@ Inputs from Phase 0 (all discovered/verified 2026 07 02, sources in devlog):
 - Candidate matrix models (verified-generate today per benchmarks.md: Gemma 3 1B, DeepSeek-R1 1.5B, Llama 3.2 3B, Mistral 7B, MiniMax-M2 229B CPU): extend to ~10 with Qwen 2, Phi-4, Llama 4 variant, Gemma 3 4B, Chronos-2 (timeseries, non-LLM evidence per the general-purpose rule).
 - Use cases: UC-H2-003 (capture-replay training trains correctly), UC-H2-004 (verified-model matrix published with evidence), UC-H2-005 (gemma4e correct or honestly demoted), UC-H2-006 (darwin dev hosts run tests). Manifest: .claude/scratch/usecases-manifest.json.
 
+Inputs from deep-review 002 (2026-07-03, HEAD 5817d590, full text docs/deep-reviews/002-full-codebase.md; policy decision docs/adr/094-untrusted-boundary-security-hardening.md):
+- 9 High findings, no Critical: F1 (GGUF element-count overflow, check-after-multiply bug, 4 duplicate loader sites), F2 (GGUF offset signed-conversion, default mmap path), DIST-1 (unauth/unencrypted distributed worker, 0.0.0.0 bind), CUDA-1 (CWD dlopen of libkernels.so -> local code exec), OCI-1 (OCI pull never verifies blob digest, library-only reachability), SERVE-1 (pre-auth metric-label cardinality, conditional on a real collector), SERVE-2 (LoRA adapter-name path traversal, conditional on WithAdapterCache), CONC-H1 (SpeculativeGenerate bypasses graphMu), CONC-H2 (model-delete TOCTOU + WaitGroup misuse).
+- 10 Medium, 7 Low, 3 Info findings across DIST-2, OCI-2, CUDA-2, SERVE-3/3b/4/5/6/7, SSRF-1, HF-1, CONC-M1/M2/L1, CICD-1..6, L1-L3, SLSA gaps -- full detail and exact fix diffs in the review doc.
+- Positive baseline (do not regress): secure-by-default serve auth, constant-time key compare, SHA-256 hashed keys, best-in-class connect-time SSRF defense (defeats DNS rebinding), correct path-traversal defense on the HF/OCI download path, textbook AES-256-GCM, clean secrets/dependency hygiene.
+- Architectural theme: security capabilities (rate limiter, keystore, mTLS, incident responder) are implemented correctly but never wired into the shipped CLI -- ADR-094 makes "wire the defense you write" a standing rule.
+- New use cases: UC-H2-007 (GGUF loader crash-safe), UC-H2-008 (distributed wire authenticated/encrypted), UC-H2-009 (native lib loading trusted-path-only), UC-H2-010 (concurrency race-free), UC-H2-011 (HTTP resource/traversal bounded), UC-H2-012 (CI/CD supply chain hardened). All P0/P1, PLANNED.
+
 ---
 
 ## Scope and Deliverables
@@ -75,6 +84,7 @@ Inputs from Phase 0 (all discovered/verified 2026 07 02, sources in devlog):
 | D4 | Verified-model matrix + refreshed benchmarks | TBD | docs/verified-models.md live; benchmarks.md re-run at current versions with manifests; T86.5.8 closed |
 | D5 | ztensor#171 darwin fix released | TBD | tests/training runs (skips cleanly) on a mac; ztensor tagged; zerfoo bumped |
 | D6 | Phase 2 plan | TBD | docs/plan.md replaced, ends with plan-Phase-3 task |
+| D7 | Deep-review 002 tiers 1-2 closed | TBD | 9 High findings + CICD-1/2 fixed with repro tests; unwired defenses (rate limiter/keystore/mTLS) exposed via CLI flags; docs/deep-reviews/002-full-codebase.md status header updated |
 
 ---
 
@@ -152,8 +162,129 @@ Component: docs + tests/parity + bench. The public support claim becomes this ma
 
 ### E138: Plan Phase 2
 
-- [ ] T138.1 Produce the Phase 2 (Traction) plan  Owner: TBD  Est: 2h  delivers: [docs/plan.md replaced with the Phase 2 plan]  kind: any  blocked-by: [T133.4, T135.6, T136.5]
+- [ ] T138.1 Produce the Phase 2 (Traction) plan  Owner: TBD  Est: 2h  delivers: [docs/plan.md replaced with the Phase 2 plan]  kind: any  blocked-by: [T133.4, T135.6, T136.5, T145.2]
   - Run /plan with docs/product-strategy-2026-H2.md Part 4 Phase 2 as scope: website/docs site (Hugo per ADR-064; zerfoo.github.io is an empty scaffold), examples/ (6+ runnable apps), DX golden-path pass (pull->run->library quickstart; register the orphaned forecast CLI command), launch week (publish the docs/distribution/ drafts with T136.4's fresh numbers), GitHub Discussions + CONTRIBUTING + good-first-issues (E124 residue #773/#774/#796/#799), CFP submissions, and the ADR-084/090 major-version bump with the enterprise-repo extraction (human-led push). End with a task to plan Phase 3 (Moat).
+
+### E139: Untrusted-input hardening -- GGUF loader + OCI registry (deep-review 002)
+
+Component: model/gguf + model/registry. Acceptance: F1/F2/F3 closed with a shared, tested helper; OCI-1/OCI-2 closed. Decision rationale: ADR-094 (treat the model file as first-class untrusted input). Source: docs/deep-reviews/002-full-codebase.md F1/F2/F3/OCI-1/OCI-2.
+
+- [ ] T139.1 Fix F1: GGUF element-count integer-overflow bypasses the size cap  Owner: TBD  Est: 3h  verifies: [UC-H2-007]  kind: agent
+  - `model/gguf/loader.go:55-64` (dup in `loader_mmap.go:23-33`, `split_file.go:150-159,219-228`) multiplies then checks with strict `>`, so the running product can land on exactly `1<<34` and a later dimension overflows int64 to negative, passing the check and reaching `make([]byte, negativeSize)`. Fix: check `numElements > (1<<34)/int64(d)` BEFORE multiplying, at all four sites; extract into one shared `computeNumElements(ti) (int64, error)` helper so the fix exists in exactly one place (per ADR-094).
+  - Acceptance: a crafted `Dimensions = [131072, 131072, 2147483647]` GGUF returns an error, not a panic, on every one of the four call sites.
+- [ ] T139.2 Fix F2: GGUF tensor offset signed-conversion out-of-bounds panic  Owner: TBD  Est: 2h  verifies: [UC-H2-007]  kind: agent
+  - `model/gguf/loader_mmap.go:51-57` (dup `split_file.go:171-177`, the DEFAULT mmap load path) converts a file-controlled `uint64` offset to `int64` with no unsigned validation; a huge offset wraps negative and slips past the single `end >` check. Fix: validate `ti.Offset <= math.MaxInt64` and bounds-check `offset >= 0 && offset <= len(mapped) && sz <= len(mapped)-offset` before slicing.
+  - Acceptance: `ti.Offset = 0x8000000000000000` returns an error, not a slice-bounds panic.
+- [ ] T139.3 Fix F3: cap GGUF tensor dimension count  Owner: TBD  Est: 1h  verifies: [UC-H2-007]  kind: agent
+  - `parser.go:131-136` reads an unbounded number of dimensions per tensor. Cap `numDims` at 8 and return an error above that.
+- [ ] S139.3.1 Malformed-GGUF fuzz corpus + table tests  Owner: TBD  Est: 3h  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.1, T139.2, T139.3]
+  - Go native fuzzing (`go test -fuzz`) seeded with the F1/F2/F3 repro shapes above, plus a table test of legitimate tensor shapes proving no regression. Wire into CI as a bounded fuzz run (time-boxed), not a one-shot manual repro.
+- [ ] T139.4 Fix OCI-1: verify blob digest on OCI pull  Owner: TBD  Est: 2h  verifies: [UC-H2-007]  kind: agent
+  - `model/registry/oci.go:199-207` `Pull` writes `getBlob` bytes to disk with no recompute-and-compare against `ggufLayer.Digest`, even though `sha256Digest` (`:367`) already exists (used only on push). Fix: recompute `sha256Digest(data)` and reject a mismatch.
+- [ ] T139.5 Fix OCI-2: reject non-https registry URLs  Owner: TBD  Est: 1h  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.4]
+  - `oci.go:46-55` accepts plain `http://`. Reject non-`https://` unless an explicit insecure flag is set.
+- [ ] S139.5.1 Tests + lint  Owner: TBD  Est: 1h  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.5]
+  - Unit tests: digest-mismatch rejected, http:// rejected without the flag, https:// and matching-digest accepted unchanged.
+
+### E140: Distributed-training wire security (deep-review 002)
+
+Component: distributed/. Acceptance: DIST-1 closed (mTLS wired, non-loopback requires TLS); DIST-2 closed (coordinator authenticates registration). Decision rationale: ADR-094 (the distributed wire is untrusted network, fail closed not open).
+
+- [ ] T140.1 Fix DIST-1: wire mTLS into the worker gRPC server  Owner: TBD  Est: 4h  verifies: [UC-H2-008]  kind: agent
+  - `distributed/worker_node.go:64` creates `grpc.NewServer()` with zero opts; `distributed/tlsconfig.go`'s `RequireAndVerifyClientCert` builder is correct but has no caller. Fix: if `wn.config.TLS != nil`, wire `wn.config.TLS.ServerCredentials()` via `grpc.Creds`; else refuse to start on a non-loopback `WorkerAddress`.
+  - Acceptance: a loopback bind with no TLS config still starts (dev UX unchanged); a routable bind with no TLS config returns a startup error; a routable bind with TLS config starts and requires client certs.
+- [ ] T140.2 Default the worker CLI example to loopback; add --tls-* flags  Owner: TBD  Est: 2h  verifies: [UC-H2-008]  kind: agent  blocked-by: [T140.1]
+  - `cmd/cli/worker.go:127` ships `--worker-address 0.0.0.0:9001` in its documented example. Change the example/default to `127.0.0.1:9001`; add `--tls-cert`/`--tls-key`/`--tls-ca` flags wired to `distributed.TLSConfig`; document a cert-gen helper for multi-host runs.
+- [ ] T140.3 Fix DIST-2: authenticate coordinator worker registration  Owner: TBD  Est: 3h  verifies: [UC-H2-008]  kind: agent  blocked-by: [T140.1]
+  - `coordinator.go:71-93` is unauthenticated unless `SetServerOptions` is called (no caller exists today); `RegisterWorker` (`:160`) trusts any caller to claim a rank and returns the full peer list. Fix: require TLS creds by default (mirror T140.1's server-credential wiring) and gate `RegisterWorker` on a valid client cert/token before returning peers.
+- [ ] S140.3.1 Tests + lint  Owner: TBD  Est: 2h  verifies: [UC-H2-008]  kind: agent  blocked-by: [T140.3]
+  - Integration test: a routable-bind worker/coordinator refuses to start without TLS; a TLS-configured pair completes a handshake and an AllReduce round-trip; an unauthenticated connection attempt to the coordinator is rejected before the peer list is returned.
+
+### E141: Native library loading hardening (deep-review 002)
+
+Component: internal/cuda + internal/*/purego. Acceptance: CUDA-1 closed (no CWD/bare-soname dlopen); CUDA-2 closed or explicitly mitigated (absolute vendor paths / validated resolution). Decision rationale: ADR-094 (vetted absolute paths only).
+
+- [ ] T141.1 Fix CUDA-1: remove CWD dlopen candidates for the kernel library  Owner: TBD  Est: 2h  verifies: [UC-H2-009]  kind: agent
+  - `internal/cuda/purego.go:164-169` includes `"./libkernels.so"` (and a bare `"libkernels.so"`) in `kernelLibPaths`, loaded by `DlopenKernels`; `dlopen` runs ELF constructors on load, so a planted file in the process's working directory gets code execution. Fix: drop both entries; keep only the trusted absolute path (`/opt/zerfoo/lib/libkernels.so`); if a configurable override is needed, read one absolute path from an env var and `os.Stat`-verify it is not world-writable before loading.
+  - Acceptance: `kernelLibPaths` contains zero relative or CWD-implying entries; a test asserts the loader rejects a relative-path candidate.
+- [ ] T141.2 Fix CUDA-2: prefer absolute vendor-library paths  Owner: TBD  Est: 3h  verifies: [UC-H2-009]  kind: agent  blocked-by: [T141.1]
+  - All native libs (`libcudart.so.12`, `libcublas.so.12`, HIP, rocBLAS, MIOpen, OpenCL across `internal/*/purego.go`) load by bare soname, hijackable via `LD_LIBRARY_PATH`/RPATH given env control. Fix: prefer absolute vendor install paths where known (mirror T141.1's pattern); where a bare soname is unavoidable (system libs), document the residual trust assumption explicitly rather than leaving it silent.
+- [ ] S141.2.1 Tests + lint  Owner: TBD  Est: 1h  verifies: [UC-H2-009]  kind: agent  blocked-by: [T141.2]
+  - Unit test asserting the dlopen path-candidate list contains no relative paths and no unconditional bare-soname-only fallback without a documented rationale.
+
+### E142: Concurrency correctness (deep-review 002)
+
+Component: inference/, serve/. Acceptance: CONC-H1/H2 closed (High); CONC-M1/M2/L1 closed (Medium/Low). Decision rationale: existing `graphMu` design is correct; these are entrypoints that escaped it, not a broken model -- fix the entrypoints, do not redesign the lock.
+
+- [ ] T142.1 Fix CONC-H1: route SpeculativeGenerate through graphMu  Owner: TBD  Est: 3h  verifies: [UC-H2-010]  kind: agent
+  - `inference/inference.go:872-882` builds a speculative generator over the shared singleton graphs and calls `Forward` with no lock, while every normal generation path serializes on `gen.mu` (`generate/session.go:91`). Two concurrent requests (one speculative, one normal) then mutate the same stateful graph simultaneously. Fix: expose `LockGraph()`/`UnlockGraph()` on `Generator` and wrap `SpeculativeGenerate`'s call with it.
+  - Acceptance: with `WithDraftModel` enabled, a concurrent normal + speculative request pair under `-race` shows no race and no corruption.
+- [ ] T142.2 Fix CONC-H2: model-delete TOCTOU + WaitGroup misuse  Owner: TBD  Est: 3h  verifies: [UC-H2-010]  kind: agent
+  - `serve/handlers.go:19,172,343` call `s.inflight.Add(1)` at handler entry with no `unloaded` recheck, racing `handlers.go:331-333`'s `unloaded.Store(true)` -> `inflight.Wait()` -> `s.model.Close()`. Fix: recheck `s.unloaded.Load()` immediately after `Add(1)` and back out cleanly if set (or replace the Add/Wait pair with an RWMutex: `RLock` per handler, `Lock` before close).
+  - Acceptance: a race test interleaving `DELETE /v1/models/{id}` with a concurrent chat request under `-race` shows neither a use-after-close nor a `WaitGroup misuse` panic.
+- [ ] T142.3 Fix CONC-M1: RateLimiter unbounded bucket map  Owner: TBD  Est: 2h  verifies: [UC-H2-010]  kind: agent
+  - `serve/security/network.go:98` `Cleanup()` exists but is never scheduled outside tests, so `rl.buckets` grows one permanent entry per distinct client IP. Fix: a background ticker calling `Cleanup()` every `cleanTTL`, plus a size cap as a backstop.
+- [ ] T142.4 Fix CONC-M2: KeyStore field race on Revoked/ExpiresAt  Owner: TBD  Est: 2h  verifies: [UC-H2-010]  kind: agent
+  - `authMiddleware` (`server.go:282-288`) reads `key.Valid()`/`HasScope()` lock-free while `Revoke`/`Rotate` write `k.Revoked`/`ExpiresAt` under lock (`apikey.go:186,205`) -- a data race plus a brief post-revoke authorization window. Fix: make `Revoked` an `atomic.Bool` (simplest), or have `Lookup` return a value copy under the existing lock.
+- [ ] T142.5 Fix CONC-L1: executeBatch ctx-wait goroutine leak  Owner: TBD  Est: 1h  verifies: [UC-H2-010]  kind: agent
+  - `batch.go:166-173` accumulates per-request ctx-wait goroutines transiently. Fix: add a `select` on `batchCtx.Done()` so they are reaped when the batch returns.
+- [ ] S142.5.1 Race-detector test suite for this epic  Owner: TBD  Est: 2h  verifies: [UC-H2-010]  kind: agent  blocked-by: [T142.1, T142.2, T142.3, T142.4, T142.5]
+  - `go test -race` covering: delete-during-inflight-request, speculative+normal concurrent generate, concurrent revoke+authenticate, sustained multi-IP rate-limit traffic (bucket count stays bounded), batch cancellation goroutine count returns to baseline.
+
+### E143: HTTP server hardening (deep-review 002)
+
+Component: serve/. Acceptance: SERVE-1/2 closed (High/conditional-High); SERVE-3/3b/4/5/6/7, SSRF-1, HF-1 closed (Medium/Low/Info). Decision rationale: mirror the traversal defense already correct on the HF/OCI download path (`pull.go:198-209`) rather than inventing a new pattern.
+
+- [ ] T143.1 Fix SERVE-2: LoRA adapter-name path traversal  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent
+  - `serve/adapter.go:33,44` splits the `model` field on `:` and joins the remainder verbatim into a file path with no validation; `filepath.Join` cleans `../` so a crafted name escapes the adapter directory. Fix: an anchored name regex (`^[A-Za-z0-9_-]{1,64}$`) plus a `filepath.Clean` + prefix-containment check, mirroring `model/registry/pull.go:198-209`.
+- [ ] T143.2 Fix SERVE-1: bound error-metric label cardinality  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent
+  - `serve/metrics.go:93-95`'s `RecordError` encodes the raw, pre-auth `r.URL.Path` into a permanent counter name (`server.go:366`, outside `authMiddleware`). Fix: normalize to a matched route template, collapsing unknown paths to a single `"other"` bucket.
+- [ ] T143.3 Fix SERVE-3: cap /v1/embeddings input array size  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+  - `handlers.go:342-400` has no element-count cap while `/v1/classify`/`/v1/guard/batch` cap at 256. Fix: mirror `maxClassifyBatch = 256`.
+- [ ] T143.4 Fix SERVE-3b: cap per-request image-fetch fan-out  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent
+  - `handlers.go:99-110` -> `vision.go:245`: a 10 MB body can carry thousands of `image_url` entries, each fetched sequentially (up to 20 MB, 30s timeout). Fix: cap images per request (<=16), cap total decoded bytes, bound concurrency and overall wall-clock via `r.Context()` deadline.
+- [ ] T143.5 Fix SERVE-4: GuardianMiddleware unbounded body read  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+  - `guardian_middleware.go:42,95-126` does `io.ReadAll(r.Body)` with no cap and buffers the full response, breaking SSE. Latent (not wired into `NewServer` today, but fix before it is). Fix: `http.MaxBytesReader` before read; skip response buffering for `text/event-stream`.
+- [ ] T143.6 Fix SERVE-5: validate sampling parameter bounds  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+  - `handlers.go:59-62` only clamps the upper bound of `max_tokens`; `temperature` (`types.go:167-182`) has no upper bound. Fix: reject `max_tokens <= 0`; clamp `temperature <= 2`.
+- [ ] T143.7 Fix SSRF-1: extend the SSRF IP blocklist  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+  - `vision.go:37-55`'s `isBlockedIP` omits `IsUnspecified()` (`0.0.0.0`/`::`) and CGNAT `100.64.0.0/10`. Fix: add both. The core connect-time SSRF defense is otherwise excellent (keep it as-is).
+- [ ] T143.8 Fix SERVE-6: stop logging percent-decoded request paths  Owner: TBD  Est: 30m  verifies: [UC-H2-011]  kind: agent
+  - `server.go:376` logs the decoded `r.URL.Path` (log-injection risk). Fix: log `r.URL.EscapedPath()` or strip control characters.
+- [ ] T143.9 Fix SERVE-7: remove dead validation code; evaluate /metrics gating  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+  - `validateImageURL`/`ssrfValidator` (`vision.go:127,136`) are never called -- remove to avoid a false sense that URL-level validation runs. Separately evaluate gating `/metrics` (`server.go:262`) behind auth or a separate listener; if not done this phase, file as tech debt.
+- [ ] T143.10 Fix HF-1: support an out-of-band expected hash for HF downloads  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent
+  - `pull.go:254-260`'s integrity check is trust-on-first-download (expected SHA comes from the same server's ETag; absent ETag warns and accepts). Fix: accept an optional out-of-band expected-hash parameter/pin that, when provided, is verified instead of trusting the ETag.
+- [ ] S143.10.1 API tests for this epic  Owner: TBD  Est: 3h  verifies: [UC-H2-011]  kind: agent  blocked-by: [T143.1, T143.2, T143.3, T143.4, T143.5, T143.6, T143.7, T143.8, T143.9, T143.10]
+  - Real-request tests against the HTTP boundary: adapter traversal name rejected (400, no file opened), oversized embeddings/image-fan-out batch rejected, SSE response not buffered by GuardianMiddleware, negative max_tokens rejected, request to `http://0.0.0.0/` blocked by the SSRF dialer.
+
+### E144: CI/CD and supply-chain hardening (deep-review 002)
+
+Component: .github/workflows, deploy/. Acceptance: CICD-1/2 closed (this phase, per Objectives); CICD-3/4/5/6 closed or tracked. Decision rationale: match the least-privilege pattern already used correctly by `benchmark.yml`, `codeql.yml`, `release-please.yml`.
+
+- [ ] T144.1 Fix CICD-1: add permissions blocks to PR-triggered workflows  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+  - `ci.yml`, `arm64-build.yml`, `golden-staleness.yml` run on `pull_request` (build/run PR code) with no `permissions:` block, so jobs inherit the repo/org default `GITHUB_TOKEN` scope. Fix: add `permissions: contents: read` to all three, matching the workflows that already do this correctly.
+- [ ] T144.2 Fix CICD-2: pin mutable tool/package installs in CI  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+  - `ci.yml:38` installs `govulncheck@latest`; `golden-staleness.yml:15` installs unpinned `torch`/`numpy` via pip. Fix: pin exact versions (or hash-checked installs) for both.
+- [ ] T144.3 Fix CICD-3: scope the benchmark PR-comment token  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+  - `benchmark.yml` grants `pull-requests: write` to the whole job that builds/runs PR code (same-repo branch PRs get the broad write scope; fork PRs already get read-only). Fix: scope the write permission to only the commenting step/job.
+- [ ] T144.4 Fix CICD-4: digest-pin container base images  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+  - `deploy/aws/Dockerfile:2,20` pins by mutable tag, not digest. Fix: `FROM ...@sha256:<digest>`.
+- [ ] T144.5 Fix CICD-5: add .dockerignore  Owner: TBD  Est: 30m  verifies: [UC-H2-012]  kind: agent
+  - `deploy/aws/Dockerfile:10` `COPY . .` has no `.dockerignore`. Add one excluding `.git`, test fixtures, local scratch.
+- [ ] T144.6 Fix CICD-6: track the bbolt advisory instead of blanket continue-on-error  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+  - `go.etcd.io/bbolt v1.4.3` has GO-2026-4923 with no fix available; the CI vuln check is currently blanket `continue-on-error`. Fix: add a scoped govulncheck ignore for only that advisory ID, and re-enable failing on any other vulnerability.
+- [ ] T144.7 SLSA: add artifact signing + SBOM to the release pipeline  Owner: TBD  Est: 4h  verifies: [UC-H2-012]  kind: agent  blocked-by: [T144.1]
+  - Build is reproducible-ish (pinned deps, no `replace`) but unsigned with no provenance attestation (~SLSA L1-L2). Add cosign signing + SBOM generation to `release-please.yml`. Time-boxed stretch item: if not completed this phase, file as tracked tech debt rather than extending the phase.
+
+### E145: Security review closeout
+
+Component: docs. Acceptance: tiers 1-2 of deep-review 002 are re-verified closed; unwired defenses are exposed via CLI flags; the review doc and lore are updated.
+
+- [ ] T145.1 Wire unwired security defenses into the CLI  Owner: TBD  Est: 3h  verifies: [UC-H2-008, UC-H2-010]  kind: agent  blocked-by: [T140.1, T142.3]
+  - Add `--rate-limit`, `--keystore`, and `--tls-*` flags to `serve`/`worker` (ADR-094's "ship the defense you write" rule) so operators can turn on the already-correct `serve/security/` and `distributed/tlsconfig.go` capabilities without hand-wiring Go code. Document in README/design.md.
+- [ ] T145.2 Close deep-review 002 tiers 1-2  Owner: TBD  Est: 2h  verifies: [infrastructure]  kind: agent  blocked-by: [T139.5, T140.3, T141.2, T142.5, T143.10, T144.6, T145.1]
+  - Re-verify every High finding has a passing repro test proving the fix (not just that code changed). Append a docs/devlog.md entry summarizing the closeout. Promote the two lore candidates the review flagged via /lore: the four-way-duplicated-loader-guard landmine, and the "security code in serve/security and distributed/tlsconfig.go is real but unwired" invariant. File GitHub issues for any tier-3/tech-debt findings not completed in this phase (SERVE-3/3b/4/5/6/7 residue, SSRF-1, HF-1, CONC-L1, L1/L2/L3, SLSA if T144.7 slipped). Update docs/deep-reviews/002-full-codebase.md's header with a remediation status line.
 
 ---
 
@@ -166,9 +297,18 @@ Component: docs + tests/parity + bench. The public support claim becomes this ma
 | C: Kernel numerics | T135.1; T135.2 parallel; then T135.3/T135.4/T135.5; T135.6 last | T135.1 unblocks the gate's full-scope green |
 | D: Matrix + bench | T136.1; T136.2 (human); then T136.3/T136.4; T136.5 | T136.2 is the external dependency -- surface it to David EARLY |
 | E: darwin fix | T137.1 | independent; ztensor repo |
-| F: Next plan | T138.1 | after A, C, D converge |
+| F: Next plan | T138.1 | after A, C, D, and G-M converge |
+| G: Untrusted input | T139.1/2/3 -> S139.3.1; T139.4 -> T139.5 -> S139.5.1 | model/gguf + model/registry; no GPU needed |
+| H: Distributed security | T140.1 -> T140.2; T140.1 -> T140.3 -> S140.3.1 | distributed/ only; no GPU needed |
+| I: Native lib loading | T141.1 -> T141.2 -> S141.2.1 | internal/*/purego.go only; no GPU needed |
+| J: Concurrency | T142.1/2/3/4/5 (parallel) -> S142.5.1 | inference/ + serve/; no GPU needed |
+| K: HTTP hardening | T143.1..10 (parallel) -> S143.10.1 | serve/ only; no GPU needed |
+| L: CI/CD supply chain | T144.1..7 (parallel) | .github/workflows + deploy/; no GPU needed |
+| M: Security closeout | T145.1 (after H, J); T145.2 (after G, H, I, J, K, L, T145.1) | |
 
 GB10 serialization: one GPU pod at a time across ALL tracks (E133 proofs, E135 bisect/oracle runs, E136 parity/bench). The coordinator owns GPU scheduling order: T135.1 first (unblocks gate green), then interleave.
+
+Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loader/network/CLI/CI-only) and can be dispatched as a fully separate, fully parallel wave set that runs concurrently with the GB10-serial Tracks A-D -- no GB10 scheduling coordination needed. Note some file overlap between Tracks J and K (both touch `serve/handlers.go`); this does not block parallel dispatch (isolated worktrees), but expect a rebase pass when merging.
 
 ### Waves
 
@@ -203,6 +343,52 @@ GB10 serialization: one GPU pod at a time across ALL tracks (E133 proofs, E135 b
 - [ ] T136.5 publish matrix
 - [ ] T138.1 plan Phase 2
 
+### Wave Sec-1: Security fixes, tier 1 + top tier 2 (10 agents; no GPU; can run any time in parallel with Waves 1-5)
+- [ ] T139.1 fix F1 GGUF overflow  verifies: [UC-H2-007]
+- [ ] T139.2 fix F2 GGUF offset  verifies: [UC-H2-007]
+- [ ] T140.1 wire mTLS into worker  verifies: [UC-H2-008]
+- [ ] T141.1 remove CWD dlopen  verifies: [UC-H2-009]
+- [ ] T142.1 fix CONC-H1 speculative lock  verifies: [UC-H2-010]
+- [ ] T142.2 fix CONC-H2 delete TOCTOU  verifies: [UC-H2-010]
+- [ ] T143.1 fix SERVE-2 adapter traversal  verifies: [UC-H2-011]
+- [ ] T143.2 fix SERVE-1 metric cardinality  verifies: [UC-H2-011]
+- [ ] T144.1 fix CICD-1 permissions blocks  verifies: [UC-H2-012]
+- [ ] T144.2 fix CICD-2 pin installs  verifies: [UC-H2-012]
+
+### Wave Sec-2: Security fixes, tier 2 remainder + tier 3 start (10 agents)
+- [ ] T139.3 fix F3 dim cap  verifies: [UC-H2-007]
+- [ ] T139.4 fix OCI-1 digest verify  verifies: [UC-H2-007]
+- [ ] T139.5 fix OCI-2 https-only  (after T139.4)  verifies: [UC-H2-007]
+- [ ] T140.2 worker loopback default + --tls flags  (after T140.1)  verifies: [UC-H2-008]
+- [ ] T140.3 fix DIST-2 coordinator auth  (after T140.1)  verifies: [UC-H2-008]
+- [ ] T141.2 fix CUDA-2 vendor paths  (after T141.1)  verifies: [UC-H2-009]
+- [ ] T142.3 fix CONC-M1 rate-limiter cleanup  verifies: [UC-H2-010]
+- [ ] T142.4 fix CONC-M2 keystore race  verifies: [UC-H2-010]
+- [ ] T142.5 fix CONC-L1 batch goroutine leak  verifies: [UC-H2-010]
+- [ ] T143.3 fix SERVE-3 embeddings cap  verifies: [UC-H2-011]
+
+### Wave Sec-3: Security fixes, tier 3 remainder (10 agents)
+- [ ] T143.4 fix SERVE-3b image fan-out cap  verifies: [UC-H2-011]
+- [ ] T143.5 fix SERVE-4 guardian body cap  verifies: [UC-H2-011]
+- [ ] T143.6 fix SERVE-5 sampling bounds  verifies: [UC-H2-011]
+- [ ] T143.7 fix SSRF-1 blocklist  verifies: [UC-H2-011]
+- [ ] T143.8 fix SERVE-6 log escaping  verifies: [UC-H2-011]
+- [ ] T143.9 fix SERVE-7 dead code + metrics gating  verifies: [UC-H2-011]
+- [ ] T143.10 fix HF-1 hash pin  verifies: [UC-H2-011]
+- [ ] T144.3 fix CICD-3 token scope  verifies: [UC-H2-012]
+- [ ] T144.4 fix CICD-4 digest-pin images  verifies: [UC-H2-012]
+- [ ] T144.5 fix CICD-5 .dockerignore  verifies: [UC-H2-012]
+
+### Wave Sec-4: Tests, tech-debt tier, closeout (6 agents)
+- [ ] S139.3.1 GGUF fuzz corpus  (after T139.1/2/3)  verifies: [UC-H2-007]
+- [ ] S139.5.1, S140.3.1, S141.2.1, S142.5.1, S143.10.1 (parallel; each after its epic's fixes)
+- [ ] T144.6 fix CICD-6 bbolt tracking  verifies: [UC-H2-012]
+- [ ] T144.7 SLSA signing + SBOM  (after T144.1)  verifies: [UC-H2-012]
+
+### Wave Sec-5: Closeout (2 agents)
+- [ ] T145.1 wire flags into CLI  (after T140.1, T142.3)
+- [ ] T145.2 close deep-review 002 tiers 1-2  (after everything above)
+
 ---
 
 ## Timeline and Milestones
@@ -215,8 +401,9 @@ GB10 serialization: one GPU pod at a time across ALL tracks (E133 proofs, E135 b
 | M-P1-4 | Matrix + benchmarks live | E136 | verified-models.md published; benchmarks.md refreshed; T86.5.8 closed |
 | M-P1-5 | gemma4 honest | E134 | fixed or demoted, issues closed |
 | M-P1-6 | Phase 2 planned | E138 | new plan.md |
+| M-P1-7 | Security tiers 1-2 closed | E139-E145 | 9 High findings + CICD-1/2 fixed with repro tests; CLI flags wired; review doc status updated |
 
-Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the human-gated T136.2. Surface T136.2 to David in the first status update.
+Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the human-gated T136.2. Surface T136.2 to David in the first status update. Tracks G-M (security) need no GPU and can run entirely concurrently with Tracks A-D, so M-P1-7 should not extend the phase's wall-clock if dispatched alongside Wave 2/3.
 
 ---
 
@@ -230,6 +417,9 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 | R4 | gemma4e candidate fails and pressure builds to keep hunting | Med | Med | ADR-093 rule 3 is pre-committed: demote and move on; T134.2 exists precisely for this |
 | R5 | ztensor/zerfoo version skew during parallel kernel + capture work | Med | Med | dependency-ordered releases; pin commit SHAs on branches until tags ship |
 | R6 | Removing the containment gate too early | High | Low | T133.4 is blocked by the GB10 green proof (S133.3.1), not by code review alone |
+| R7 | Distributed TLS requirement (T140.1) breaks an existing multi-host deployment that relied on the old no-TLS default | Med | Low | loopback binds are explicitly exempted; document the cert-gen helper and the policy change prominently in T140.2 and release notes |
+| R8 | Security fix touches the same file as an in-flight non-security fix (e.g. serve/handlers.go shared by E142/E143 and any parallel Phase-1 work) | Low | Med | isolated worktrees mean no blocking; expect a short rebase pass when merging, not a conflict that stalls a task |
+| R9 | Tier-3/tech-debt security findings (SERVE-3b, CONC-L1, SLSA signing, etc.) balloon past the phase's time-box | Med | Med | ADR-093 rule 3 discipline applies here too: file remaining findings as tracked GitHub issues in T145.2 rather than open-endedly extending the phase |
 
 ---
 
@@ -253,6 +443,15 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 ---
 
 ## Progress Log
+
+### 2026 07 03 (later) -- Change Summary: deep-review 002 merged into Phase 1 scope (E139-E145)
+
+- Ran /plan against docs/deep-reviews/002-full-codebase.md (full-codebase security + architecture audit, 9 High findings, 0 Critical, 10 Medium, 7 Low, 3 Info). Added Objective 6 (deep-review 002 tiers 1-2 closed) and Deliverable D7. Added six new epics: E139 (untrusted-input hardening: GGUF loader F1/F2/F3 + OCI-1/2), E140 (distributed-wire security: DIST-1/2), E141 (native library loading: CUDA-1/2), E142 (concurrency correctness: CONC-H1/H2/M1/M2/L1), E143 (HTTP server hardening: SERVE-1..7, SSRF-1, HF-1), E144 (CI/CD supply-chain hardening: CICD-1..6, SLSA), E145 (security review closeout). New Waves Sec-1..Sec-5 added; these tracks (G-M) need no GPU and can run fully in parallel with the existing GB10-serial Tracks A-D.
+- Created docs/adr/094-untrusted-boundary-security-hardening.md, capturing the policy: treat the GGUF file and distributed wire as first-class untrusted input, native library loading trusts only vetted absolute paths, the distributed wire fails closed on a routable bind, and "ship the defense you write" (rate limiter/keystore/mTLS must be CLI-reachable, not just correct library code).
+- Added six use cases to .claude/scratch/usecases-manifest.json: UC-H2-007 (GGUF loader crash-safe), UC-H2-008 (distributed wire authenticated/encrypted), UC-H2-009 (native lib loading trusted-path-only), UC-H2-010 (concurrency race-free), UC-H2-011 (HTTP resource/traversal bounded), UC-H2-012 (CI/CD supply chain hardened) -- all P0/P1, PLANNED.
+- T138.1 (plan Phase 2) now additionally blocked-by T145.2 (security closeout) so Phase 2 planning waits on the security tiers 1-2 being genuinely closed, not just Tracks A/C/D.
+- Risk register: added R7 (TLS-requirement deployment break), R8 (file-overlap between E142/E143, non-blocking), R9 (tier-3/tech-debt scope creep, mitigated by ADR-093 rule 3 discipline already in force).
+- No trim performed: no completed epics were fully closed out of scope this pass (E133/E135/E136/E137 remain open pending T133.3/T133.4/T134.x/T135.6/T136.x); trimming deferred to when E133-E138 fully close.
 
 ### 2026 07 03 -- Change Summary: T135.3 oracle-gate kernels done (Wave 2)
 
@@ -298,13 +497,15 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 4. The #878 fixture is the phase's keystone proof: tests/training/capture_replay_divergence_878_test.go, gated by ZERFOO_RUN_878_FIXTURE=1 (+ ZERFOO_UNSAFE_CAPTURE_TRAINING=1 until T133.4 removes the gate). Expected RED on GB10 today; the phase exits with it GREEN.
 5. docs/plan-gpu-training-hardening.md holds the authoritative T3.x/T4.x detail for E135; check its boxes as you go and mark it COMPLETE in T135.6.
 6. Phase 0's full record: git history of this file (b718cd07 and earlier), three devlog entries dated 2026 07 02, PRs #912-#920, release v1.56.0.
+7. E139-E145 (security) are the task-level breakdown of docs/deep-reviews/002-full-codebase.md; read that doc for the full CWE/CVSS/attack-narrative detail and exact fix diffs behind each task -- the plan tasks summarize file:line and the fix shape, the review doc has the complete reasoning and verification evidence. ADR-094 is the policy decision behind these epics. These tracks need no GPU and should be dispatched alongside, not after, the GB10-bound tracks.
 
 ---
 
 ## Appendix
 
 - docs/product-strategy-2026-H2.md -- strategy, phases, metrics, kill criteria.
-- docs/adr/093 -- strategy decision + one-phase plan scoping. docs/adr/091 -- verification gates. docs/lore.md -- landmines (L-0001..L-0012).
+- docs/adr/093 -- strategy decision + one-phase plan scoping. docs/adr/091 -- verification gates. docs/adr/094 -- untrusted-boundary security hardening policy (E139-E145). docs/lore.md -- landmines (L-0001..L-0013).
 - docs/plan-gpu-training-hardening.md -- E135 sub-breakdown (T3.2/T3.3/T3.4/T4.1).
+- docs/deep-reviews/002-full-codebase.md -- full security/architecture audit behind E139-E145: CWE/CVSS classification, attack narratives, exact fix diffs, verification evidence for every finding.
 - Issue clusters: #865/#870/#878 (capture), #757/#766 (gemma4e), #847/#921/#922 (kernels), #572/T86.5.8 (parity), ztensor#171 (darwin).
-- .claude/scratch/usecases-manifest.json -- UC-H2-003..006 active this phase.
+- .claude/scratch/usecases-manifest.json -- UC-H2-003..012 active this phase (007-012 added for deep-review 002).

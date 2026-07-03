@@ -279,5 +279,204 @@
       ],
       "has_tests": false
     }
+  },
+  {
+    "id": "UC-H2-007",
+    "domain": "trust-security",
+    "name": "Untrusted GGUF model files cannot crash the loader",
+    "description": "A malformed or crafted GGUF file (integer-overflow dims, out-of-range offsets, oversized dim count) is rejected with a returned error, never a panic, on both the default mmap load path and split-file variants.",
+    "actor": "operator",
+    "preconditions": [
+      "A GGUF file is being loaded (local, pulled, or split)"
+    ],
+    "interfaces": [
+      {
+        "type": "library",
+        "path": "model/gguf/loader.go, loader_mmap.go, split_file.go"
+      }
+    ],
+    "expected_outcome": "F1 (element-count overflow), F2 (offset signed-conversion), F3 (unbounded dim count) are all bounds-checked before use; a malformed-input fuzz corpus proves rejection with an error, not a panic.",
+    "priority": "P0",
+    "tags": [
+      "security",
+      "phase-1",
+      "deep-review-002",
+      "untrusted-input"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "library"
+      ],
+      "has_tests": false
+    },
+    "note": "deep-review 002 findings F1/F2/F3 + OCI-1/OCI-2 (digest verification, https-only); see docs/deep-reviews/002-full-codebase.md and plan.md E139"
+  },
+  {
+    "id": "UC-H2-008",
+    "domain": "trust-security",
+    "name": "Distributed training wire is authenticated and encrypted",
+    "description": "The distributed worker/coordinator gRPC surface refuses a non-loopback bind without mTLS, wires the existing tlsconfig.go credentials, and the coordinator authenticates worker registration before disclosing the peer list.",
+    "actor": "operator",
+    "preconditions": [
+      "distributed training is enabled (worker/coordinator processes running)"
+    ],
+    "interfaces": [
+      {
+        "type": "rpc",
+        "path": "distributed/worker_node.go, coordinator.go, tlsconfig.go"
+      }
+    ],
+    "expected_outcome": "DIST-1 (unauth/unencrypted worker bound to 0.0.0.0) and DIST-2 (coordinator peer-list disclosure, unauthenticated RegisterWorker) are closed; a routable bind requires TLS certs; loopback-only runs are unaffected.",
+    "priority": "P0",
+    "tags": [
+      "security",
+      "phase-1",
+      "deep-review-002",
+      "distributed"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "rpc"
+      ],
+      "has_tests": false
+    },
+    "note": "deep-review 002 findings DIST-1/DIST-2; see plan.md E140"
+  },
+  {
+    "id": "UC-H2-009",
+    "domain": "trust-security",
+    "name": "Native library loading only trusts vetted absolute paths",
+    "description": "CUDA/HIP/OpenCL kernel and vendor libraries are never dlopen'd from the current working directory or by bare soname resolution that LD_LIBRARY_PATH can hijack; only vetted absolute paths are used.",
+    "actor": "operator",
+    "preconditions": [
+      "a zerfoo process initializes a GPU backend"
+    ],
+    "interfaces": [
+      {
+        "type": "library",
+        "path": "internal/cuda/purego.go, internal/*/purego.go"
+      }
+    ],
+    "expected_outcome": "CUDA-1 (./libkernels.so CWD dlopen) and CUDA-2 (bare-soname LD_LIBRARY_PATH hijack) are closed; kernelLibPaths contains only absolute, vetted paths.",
+    "priority": "P0",
+    "tags": [
+      "security",
+      "phase-1",
+      "deep-review-002",
+      "native-loading"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "library"
+      ],
+      "has_tests": false
+    },
+    "note": "deep-review 002 findings CUDA-1/CUDA-2; see plan.md E141"
+  },
+  {
+    "id": "UC-H2-010",
+    "domain": "trust-security",
+    "name": "Concurrent request handling has no data races or TOCTOU windows",
+    "description": "Speculative decode is serialized through the same graph mutex as normal generation; model-delete cannot race a use-after-close; the rate limiter and API-key revocation state are race-free under -race.",
+    "actor": "operator",
+    "preconditions": [
+      "the HTTP server is handling concurrent requests"
+    ],
+    "interfaces": [
+      {
+        "type": "api",
+        "method": "POST",
+        "path": "/v1/completions, /v1/chat/completions"
+      },
+      {
+        "type": "api",
+        "method": "DELETE",
+        "path": "/v1/models/{id}"
+      }
+    ],
+    "expected_outcome": "CONC-H1 (SpeculativeGenerate lock bypass), CONC-H2 (model-delete TOCTOU/WaitGroup misuse), CONC-M1 (rate-limiter unbounded map), CONC-M2 (KeyStore field race), CONC-L1 (batch goroutine leak) are all closed; -race is clean on the affected packages.",
+    "priority": "P0",
+    "tags": [
+      "security",
+      "phase-1",
+      "deep-review-002",
+      "concurrency"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "api"
+      ],
+      "has_tests": false
+    },
+    "note": "deep-review 002 findings CONC-H1/H2/M1/M2/L1; see plan.md E142"
+  },
+  {
+    "id": "UC-H2-011",
+    "domain": "trust-security",
+    "name": "HTTP API resource consumption and traversal are bounded",
+    "description": "Adapter names cannot traverse outside the adapter directory; error-metric labels cannot grow unbounded from attacker-chosen paths; embeddings/image-fetch/guardian-body inputs are capped; sampling parameters are validated; SSRF blocklist covers unspecified/CGNAT ranges.",
+    "actor": "unauthenticated_or_authenticated_client",
+    "preconditions": [
+      "the OpenAI-compatible HTTP server is running"
+    ],
+    "interfaces": [
+      {
+        "type": "api",
+        "method": "POST",
+        "path": "/v1/chat/completions, /v1/completions, /v1/embeddings"
+      }
+    ],
+    "expected_outcome": "SERVE-1/2/3/3b/4/5/6/7, SSRF-1, HF-1 are closed with API tests asserting the real request/response boundary.",
+    "priority": "P1",
+    "tags": [
+      "security",
+      "phase-1",
+      "deep-review-002",
+      "http-server"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "api"
+      ],
+      "has_tests": false
+    },
+    "note": "deep-review 002 findings SERVE-1/2/3/3b/4/5/6/7, SSRF-1, HF-1; see plan.md E143"
+  },
+  {
+    "id": "UC-H2-012",
+    "domain": "trust-security",
+    "name": "CI/CD pipeline and container supply chain are hardened",
+    "description": "GitHub Actions workflows declare least-privilege permissions blocks, pin mutable tool/package installs, scope PR-comment write tokens, digest-pin container base images, and track the outstanding bbolt advisory instead of silently continue-on-error.",
+    "actor": "maintainer",
+    "preconditions": [
+      "a PR or push triggers CI"
+    ],
+    "interfaces": [
+      {
+        "type": "cli",
+        "command": ".github/workflows/*.yml, deploy/aws/Dockerfile"
+      }
+    ],
+    "expected_outcome": "CICD-1 through CICD-6 are closed; SLSA provenance (cosign signing + SBOM) added as a stretch item.",
+    "priority": "P1",
+    "tags": [
+      "security",
+      "phase-1",
+      "deep-review-002",
+      "supply-chain"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "cli"
+      ],
+      "has_tests": false
+    },
+    "note": "deep-review 002 findings CICD-1..6, L1-L3, SLSA; see plan.md E144"
   }
 ]
