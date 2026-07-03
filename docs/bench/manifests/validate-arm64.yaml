@@ -46,70 +46,13 @@ spec:
     - name: validate
       image: docker.io/library/golang:1.26-bookworm
       command:
-        - /bin/bash
-        - -c
-      args:
-        - |
-          set -uo pipefail
-
-          REF="${REF:-main}"
-          REPO_URL="${REPO_URL:-https://github.com/zerfoo/zerfoo.git}"
-          MODELS_DIR="${MODELS_DIR:-/var/lib/zerfoo/models}"
-          CUDA_PKGS="${CUDA_PKGS:-./internal/cuda/... ./tabular/... ./tests/parity/...}"
-          SRC=/workspace/zerfoo
-
-          FAILS=""
-          add_fail() { FAILS="${FAILS:+$FAILS,}\"$1\""; }
-
-          # Emit the single-line JSON report as the final stdout line.
-          emit() {
-            printf '{"ref":"%s","build":"%s","vet":"%s","cuda_tests":"%s","parity":"%s","failures":[%s]}\n' \
-              "$REF" "$1" "$2" "$3" "$4" "$FAILS"
-          }
-
-          echo ">> zerfoo arm64 GPU validation: ref=$REF host=$(uname -m) go=$(go version)"
-
-          rm -rf "$SRC"
-          if ! git clone --quiet "$REPO_URL" "$SRC"; then
-            add_fail clone; emit fail skip skip skip; exit 1
-          fi
-          cd "$SRC" || { add_fail chdir; emit fail skip skip skip; exit 1; }
-          if ! git checkout --quiet "$REF"; then
-            add_fail checkout; emit fail skip skip skip; exit 1
-          fi
-          echo ">> HEAD $(git rev-parse HEAD)"
-
-          BUILD=pass
-          echo ">> go build ./..."
-          go build ./... || { BUILD=fail; add_fail build; }
-
-          VET=pass
-          echo ">> go vet ./..."
-          go vet ./... || { VET=fail; add_fail vet; }
-
-          CUDA=pass
-          echo ">> go test -tags cuda $CUDA_PKGS"
-          # shellcheck disable=SC2086
-          go test -tags cuda -count=1 -timeout 900s $CUDA_PKGS || { CUDA=fail; add_fail cuda_tests; }
-
-          # Model parity: only when GGUF files are mounted. Each model parity
-          # test skips itself when its ModelDirEnvVar is unset, so we discover
-          # those env-var names from the source and point them all at MODELS_DIR.
-          PARITY=skip
-          if [ -d "$MODELS_DIR" ] && [ -n "$(ls -A "$MODELS_DIR" 2>/dev/null)" ]; then
-            for v in $(grep -rhoE 'ModelDirEnvVar:[[:space:]]*"[A-Z0-9_]+"' tests/parity 2>/dev/null \
-                       | grep -oE '"[A-Z0-9_]+"' | tr -d '"' | sort -u); do
-              export "$v=$MODELS_DIR"
-            done
-            PARITY=pass
-            echo ">> go test -tags cuda ./tests/parity/... (models present)"
-            go test -tags cuda -count=1 -timeout 900s ./tests/parity/... || { PARITY=fail; add_fail parity; }
-          else
-            echo ">> model parity skipped (no files under $MODELS_DIR)"
-          fi
-
-          emit "$BUILD" "$VET" "$CUDA" "$PARITY"
-          [ -z "$FAILS" ] || exit 1
+        - "/bin/bash"
+        - "-c"
+        # Single-line bootstrap: Spark's YAML parser does not preserve literal
+        # block scalars in args (observed 2026-07-02), so the real validation
+        # logic lives in the committed scripts/dgx-validate-inpod.sh, exec'd
+        # from the fresh clone. $REPO_URL and $REF come from the env block.
+        - "rm -rf /workspace/zerfoo && git clone --quiet $REPO_URL /workspace/zerfoo && cd /workspace/zerfoo && git checkout --quiet $REF && exec bash scripts/dgx-validate-inpod.sh"
       env:
         - name: REF
           value: "${REF}"
