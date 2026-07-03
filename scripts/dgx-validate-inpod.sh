@@ -27,13 +27,29 @@ emit() {
 
 echo ">> zerfoo arm64 GPU validation: ref=$REF host=$(uname -m) go=$(go version)"
 
+# The -tags cuda packages compile CGo against the CUDA headers/libs from the
+# read-only /usr/local/cuda mount.
+export CPATH="/usr/local/cuda/include${CPATH:+:$CPATH}"
+export LIBRARY_PATH="/usr/local/cuda/lib64${LIBRARY_PATH:+:$LIBRARY_PATH}"
+
 BUILD=pass
 echo ">> go build ./..."
 go build ./... || { BUILD=fail; add_fail build; }
 
+# Vet policy matches docs/QUALITY.md: the purego dlopen bindings carry known,
+# intentional "possible misuse of unsafe.Pointer" findings (only visible when
+# vetting on linux, where the linux_arm64 files are in scope). Fail vet only
+# if anything OTHER than that class remains.
 VET=pass
 echo ">> go vet ./..."
-go vet ./... || { VET=fail; add_fail vet; }
+VET_OUT="$(go vet ./... 2>&1)" || true
+VET_RESIDUE="$(printf '%s\n' "$VET_OUT" | grep -vE 'possible misuse of unsafe\.Pointer' | grep -vE '^#|^$' || true)"
+if [ -n "$VET_RESIDUE" ]; then
+  printf '%s\n' "$VET_OUT"
+  VET=fail; add_fail vet
+else
+  printf '%s\n' "$VET_OUT" | grep -E 'possible misuse' | sed 's/^/>> vet (allowed, QUALITY.md purego class): /' || true
+fi
 
 CUDA=pass
 echo ">> go test -tags cuda $CUDA_PKGS"
