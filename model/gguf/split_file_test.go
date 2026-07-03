@@ -307,6 +307,64 @@ func TestLoadTensorsMmapSplit(t *testing.T) {
 	}
 }
 
+// TestLoadTensorsMmapSplit_HugeOffsetSignedConversion verifies that a
+// maliciously large tensor offset in a shard (which would wrap to a
+// negative int64 after conversion from uint64) is rejected with an error
+// instead of panicking with a slice-bounds-out-of-range error (F2, split
+// shard variant).
+func TestLoadTensorsMmapSplit_HugeOffsetSignedConversion(t *testing.T) {
+	shard := &File{
+		DataOffset: 50,
+		Tensors: []TensorInfo{
+			{
+				Name:       "evil",
+				Dimensions: []uint64{4},
+				Type:       GGMLTypeF32,
+				Offset:     0x8000000000000000,
+			},
+		},
+	}
+	sf := &SplitFile{
+		File:       shard,
+		Shards:     []*File{shard},
+		ShardIndex: map[string]int{"evil": 0},
+	}
+	mappedShards := [][]byte{make([]byte, 100)}
+
+	_, err := LoadTensorsMmapSplit(sf, mappedShards)
+	if err == nil {
+		t.Fatal("expected error for huge offset, got nil")
+	}
+}
+
+// TestLoadTensorsMmapSplit_OffsetPlusSizeOverflow verifies that an offset
+// which is itself in range but whose offset+size sum exceeds the mapped
+// shard region is rejected rather than causing a panic.
+func TestLoadTensorsMmapSplit_OffsetPlusSizeOverflow(t *testing.T) {
+	shard := &File{
+		DataOffset: 50,
+		Tensors: []TensorInfo{
+			{
+				Name:       "evil2",
+				Dimensions: []uint64{4},
+				Type:       GGMLTypeF32,
+				Offset:     uint64(math.MaxInt64) - 40,
+			},
+		},
+	}
+	sf := &SplitFile{
+		File:       shard,
+		Shards:     []*File{shard},
+		ShardIndex: map[string]int{"evil2": 0},
+	}
+	mappedShards := [][]byte{make([]byte, 100)}
+
+	_, err := LoadTensorsMmapSplit(sf, mappedShards)
+	if err == nil {
+		t.Fatal("expected error for offset+size overflow, got nil")
+	}
+}
+
 func TestLoadTensorsSplit_Heap(t *testing.T) {
 	dir := t.TempDir()
 
