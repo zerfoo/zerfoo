@@ -264,6 +264,18 @@ func run878Trajectory(
 		if oerr := opt.Step(ctx, g.Parameters()); oerr != nil {
 			t.Fatalf("step %d: optimizer.Step: %v", step, oerr)
 		}
+
+		// Consumer-realistic per-step arena reset (the per-sample/per-epoch
+		// ResetPool pattern of real training loops; ztensor#167's arena reset
+		// floor makes it legal while a captured graph is live). This is the
+		// trigger for the #878 mechanism: any cached cross-step training state
+		// the strategy holds MUST live in allocation-stable non-arena storage,
+		// or the reset recycles it behind the cache -- and, under capture, the
+		// graph's baked device address for it becomes permanently aliased with
+		// a per-step intermediate. Without this reset the fixture cannot
+		// distinguish a correct implementation from one that merely never
+		// exercises arena reuse.
+		engine.ResetPool()
 	}
 
 	return losses, runner
