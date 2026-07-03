@@ -141,12 +141,12 @@ func TestCaptureReplayGradientDivergence878(t *testing.T) {
 }
 
 // run878Trajectory builds a fresh, deterministically-initialised tiny MLP
-// (Dense -> ReLU -> Dense) that emits [ns, classes] logits, wires a
+// (Dense -> Sigmoid -> Dense) that emits [ns, classes] logits, wires a
 // device-pure one-hot cross-entropy loss, and trains it for nSteps through a
 // CaptureReplayRunner (capture toggled by captureEnabled). It returns the
 // per-step loss trajectory and the runner (for its counters / Enabled state).
 //
-// Only public APIs are used: graph.Builder, core.Dense, activations.ReLU,
+// Only public APIs are used: graph.Builder, core.Dense, activations.Sigmoid,
 // training.DefaultBackpropStrategy, training.CaptureReplayRunner,
 // loss.CrossEntropyLossOneHot, optimizer.AdamW.
 func run878Trajectory(
@@ -173,8 +173,16 @@ func run878Trajectory(
 		t.Fatalf("NewDense l1: %v", err)
 	}
 	h := b.AddNode(l1, input)
-	relu := activations.NewReLU[float32](engine, ops)
-	h = b.AddNode(relu, h)
+	// The nonlinearity must be DEVICE-PURE (engine ops only) to satisfy the
+	// CaptureReplayRunner contract. ReLU/BaseActivation is not: it routes
+	// through engine.UnaryOp, which GPUEngine delegates to the CPU engine --
+	// a host D2H read plus a CPU-resident result mid-graph, both illegal
+	// inside a capture region (observed live on GB10: "operation would make
+	// the legacy stream depend on a capturing blocking stream"). Sigmoid is
+	// composed of engine primitives (Exp, AddScalar, Div), all with native
+	// f32 GPU kernels, so the walk stays on-device.
+	sigmoid := activations.NewSigmoid[float32](engine, ops)
+	h = b.AddNode(sigmoid, h)
 	head, err := core.NewDense[float32]("head", engine, ops, dModel, classes)
 	if err != nil {
 		t.Fatalf("NewDense head: %v", err)
