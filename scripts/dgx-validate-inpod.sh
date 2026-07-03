@@ -60,8 +60,22 @@ fi
 
 CUDA=pass
 echo ">> go test $CUDA_PKGS (purego GPU path)"
+# Capture output (still streamed via tee) so we can enforce a zero-match guard.
+# Footgun (devlog 2026-07-02): when CUDA_PKGS carries a `-run <regex>` filter
+# that matches NO tests, `go test` prints "no tests to run", exits 0, and the
+# gate reports a false PASS. That silently invalidated targeted -pkgs bisection
+# runs. Detect that signature and fail loudly. NOTE: "[no test files]" (a
+# package that simply ships no tests, normal under the ./... default scope) is
+# a DIFFERENT string and must stay allowed.
+CUDA_LOG="$(mktemp)"
 # shellcheck disable=SC2086
-go test -count=1 -timeout 900s $CUDA_PKGS || { CUDA=fail; add_fail cuda_tests; }
+go test -count=1 -timeout 900s $CUDA_PKGS 2>&1 | tee "$CUDA_LOG"
+[ "${PIPESTATUS[0]}" -eq 0 ] || { CUDA=fail; add_fail cuda_tests; }
+if grep -q 'no tests to run' "$CUDA_LOG"; then
+  echo ">> ERROR: a -run filter matched zero tests; refusing to count this as a pass" >&2
+  CUDA=fail; add_fail cuda_tests_zero_match
+fi
+rm -f "$CUDA_LOG"
 
 # Model parity: only when GGUF files are mounted. Each model parity test skips
 # itself when its ModelDirEnvVar is unset, so we discover those env-var names
