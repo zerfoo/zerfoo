@@ -150,6 +150,10 @@ func computeGradientsTensorCommon[T tensor.Numeric](
 	// every step; inside CaptureReplayRunner's capture region that host copy is
 	// illegal ("operation not permitted when stream is capturing") and crashed
 	// capture-on training. Reusing the cached device seed enqueues no host copy.
+	// The cached seed's storage is a raw NON-ARENA device allocation (issue
+	// #878, see buildOnesSeed): arena storage would be recycled behind the
+	// cache by the consumer's engine.ResetPool and, under capture-replay,
+	// aliased with an in-graph intermediate at the seed's baked address.
 	//
 	// When acc is nil (a few unit tests bypass the strategy accumulator) there
 	// is nowhere to cache, so fall back to the per-call host seed: those paths
