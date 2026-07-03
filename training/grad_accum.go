@@ -131,37 +131,49 @@ func shapeKey(shape []int) string {
 }
 
 // buildOnesSeed allocates a ones tensor of ref's shape whose storage is
-// DEVICE-RESIDENT when engine is a GPU engine, so reusing it across steps
-// enqueues no host->device copy (#875).
+// DEVICE-RESIDENT when ref (the loss tensor the graph produced) lives on the
+// GPU, so reusing it across steps enqueues no host->device copy (#875) --
+// and, critically, whose storage is ALLOCATION-STABLE: a raw device
+// allocation (pool == nil), never an arena/pool block (#878).
 //
-// With an engine present it allocates a same-shaped tensor and calls
-// engine.Fill(t, 1): on the GPU engine Fill runs a device-side fill kernel and
-// swaps in fresh GPU storage (no host memcpy of the seed values); on the CPU
-// engine it fills the host slice in place. With no engine it falls back to the
-// host-tensor onesLike path used before #875.
+// The pre-#878 implementation built the device seed via engine.Fill, whose
+// GPU path allocates from the engine's ARENA pool (gpuFill -> pool.Alloc +
+// SetStorage). The seed is cached on the strategy and read on every
+// subsequent step, but arena storage does not survive the consumer's
+// engine.ResetPool (the per-sample/per-epoch reset pattern): the reset
+// recycles the seed's block to a later step's intermediates, silently
+// re-scaling every gradient by whatever value lands there. Under CUDA-graph
+// capture-replay it is worse: the captured graph bakes the seed's device
+// address, an in-graph producer is later assigned the same recycled block,
+// and every replay computes gradients from the aliased value -- the
+// zerfoo#878 silent-divergence signature (correct counters, drifting loss).
+// Cross-step cached training state must live in storage the arena can never
+// recycle, exactly like the persistent gradient accumulators
+// (newPersistentGradTensor) and ztensor's engine-owned AdamW moments.
+//
+// The seed's CONTENT (all ones) is written host-side and uploaded once here
+// -- on the first ComputeGradients call, which under CaptureReplayRunner is
+// an eager warmup step outside any capture region -- so later capture-step
+// reuse still enqueues no host copy (#875 preserved). With a CPU-resident
+// loss or no engine it falls back to the host-tensor onesLike path.
 func buildOnesSeed[T tensor.Numeric](engine compute.Engine[T], ref *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
-	if engine == nil {
-		return onesLike[T](engine, ref)
-	}
-	one, err := onesValue[T](engine)
+	seed, err := onesLike[T](engine, ref)
 	if err != nil {
 		return nil, err
 	}
-	shape := ref.Shape()
-	n := 1
-	for _, d := range shape {
-		n *= d
+	gs, ok := ref.GetStorage().(*tensor.GPUStorage[T])
+	if !ok {
+		return seed, nil
 	}
-	// Start from a zeroed host tensor; engine.Fill overwrites every element
-	// with 1 (and, on the GPU engine, re-homes the storage to device memory).
-	seed, err := tensor.New[T](shape, make([]T, n))
+	// Re-home the host ones into a raw (nil-pool) device allocation on the
+	// loss tensor's device. A nil-pool GPUStorage is never touched by engine
+	// ResetPool, so the cached seed's device pointer and content are stable
+	// for the strategy's whole lifetime, including across every graph replay.
+	ps, err := tensor.NewGPUStorageFromSlice(seed.Data(), gs.DeviceID())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("training: allocating persistent loss seed: %w", err)
 	}
-	if err := engine.Fill(context.Background(), seed, one); err != nil {
-		return nil, fmt.Errorf("training: filling device-resident loss seed: %w", err)
-	}
-	return seed, nil
+	return tensor.NewWithStorage[T](ref.Shape(), ps)
 }
 
 // capture is the post-Backward hook: for every trainable parameter of g
