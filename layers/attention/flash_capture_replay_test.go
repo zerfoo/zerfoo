@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
+	"github.com/zerfoo/zerfoo/internal/cuda/kernels"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
@@ -179,6 +180,17 @@ func TestFusedSDPAForwardReplayStableScratch(t *testing.T) {
 func TestFlashDecodeScratchReusedAcrossCalls(t *testing.T) {
 	if !cuda.Available() {
 		t.Skip("CUDA not available (no GPU)")
+	}
+	if !kernels.IsFlashDecodeSplitKVSupported() {
+		// Pre-existing, environment-level: the split-KV kernel symbol is not
+		// loaded from this host's libkernels.so, independent of this fix (the
+		// unmodified T133.1 test, TestTryFlashDecodeEngineStreamParity, bails
+		// out with the same "bailed unexpectedly on a GPU decode shape"
+		// message on unmodified main). Q/K/V here use the flash-decode-only
+		// GQA layout ([batch, kvLen, numKVHeads*headDim]), which the
+		// generic/naive SDPA fallback does not understand, so asserting
+		// against that fallback would fail for an unrelated reason.
+		t.Skip("split-KV flash decode kernel not loaded on this host (pre-existing, unrelated to zerfoo#870)")
 	}
 
 	engine, err := compute.NewGPUEngine[float32](numeric.Float32Ops{})
