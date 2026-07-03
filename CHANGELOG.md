@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.56.0](https://github.com/zerfoo/zerfoo/compare/v1.55.1...v1.56.0) (2026-07-03)
+
+
+### Features
+
+* **bench:** add validate-arm64 Spark pod manifest (T131.1) ([f95633a](https://github.com/zerfoo/zerfoo/commit/f95633a13b6bc9d728406e845c16bb89d93e8dfe))
+* **scripts:** -pkgs override for targeted GPU test scoping (T131.3) ([2b96e9e](https://github.com/zerfoo/zerfoo/commit/2b96e9e58b1e548f46743d795b92cba48cceb005))
+* **scripts:** add -delete mode to dgx-validate for pod cleanup (T131.3) ([3135db9](https://github.com/zerfoo/zerfoo/commit/3135db945dee276a6fe75114bb0a35f47e17ded7))
+* **scripts:** add dgx-validate.sh one-command GPU validation submit (T131.1) ([9b500f6](https://github.com/zerfoo/zerfoo/commit/9b500f6ae8b0b8c4d723a7a79ea1853820c85bdc))
+* **scripts:** committed in-pod validation stage dgx-validate-inpod.sh (T131.3) ([518ef61](https://github.com/zerfoo/zerfoo/commit/518ef61bd7c764e889ce7f4c56e56746af701629))
+* **training:** loud-fail gate on capture-replay training pending zerfoo[#878](https://github.com/zerfoo/zerfoo/issues/878) (T129.2) ([72cfb48](https://github.com/zerfoo/zerfoo/commit/72cfb48901089873b0a574cf1470c502f243a979))
+
+
+### Bug Fixes
+
+* **bench:** drop unprovisioned hostPath mounts from validate-arm64 pod (T131.3) ([2b79ca4](https://github.com/zerfoo/zerfoo/commit/2b79ca42f3d39c53062bf6c82660960de5d4e8df))
+* **bench:** parameterize test scope via TEST_PKGS substitution (T131.3) ([697ea89](https://github.com/zerfoo/zerfoo/commit/697ea89617201a057347657ffb9d29bf2e2b47e3))
+* **bench:** purego package set for validate-arm64 env (T131.3) ([1e82694](https://github.com/zerfoo/zerfoo/commit/1e826948ad9bc83c554e887711bde9233212dfe7))
+* **bench:** single-line bootstrap args -- Spark YAML drops block scalars (T131.3) ([14c3141](https://github.com/zerfoo/zerfoo/commit/14c3141963440ab0c98d6d498ee0f867f6c4ac10))
+* **cuda:** skip dlsym invalid-handle test on linux -- handle 0 is RTLD_DEFAULT on glibc (T131.3) ([7e29ef6](https://github.com/zerfoo/zerfoo/commit/7e29ef6c3dd61c5c8816337679967a563c236831))
+* **scripts:** dgx-validate diagnosis hardening -- image pre-pull, events on failure, -keep flag (T131.3) ([d6e8b0d](https://github.com/zerfoo/zerfoo/commit/d6e8b0d3c6f55118928bfd705e5a61536a2abf86))
+* **scripts:** in-pod CGo header paths + QUALITY.md vet policy for purego warnings (T131.3) ([7b6daa3](https://github.com/zerfoo/zerfoo/commit/7b6daa3d41f1493ed3f19aedb02c47496b2c8e8a))
+* **scripts:** scope standing gate to purego GPU path; -tags cuda tracked in [#921](https://github.com/zerfoo/zerfoo/issues/921) (T131.3) ([87465c5](https://github.com/zerfoo/zerfoo/commit/87465c5bd248be83a641170c1599f67fbea516ef))
+
 ## [1.55.1](https://github.com/zerfoo/zerfoo/compare/v1.55.0...v1.55.1) (2026-06-30)
 
 
