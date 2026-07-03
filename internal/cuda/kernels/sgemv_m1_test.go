@@ -89,7 +89,7 @@ func TestSgemvM1_Parity(t *testing.T) {
 		t.Fatalf("Memcpy y: %v", err)
 	}
 
-	checkGemvRelError(t, got, ref, gemvReductionRelTol)
+	checkGemvRelError(t, got, ref, gemvReductionAbsTol, gemvReductionRelTol)
 }
 
 func TestSgemvM1_MultipleSizes(t *testing.T) {
@@ -158,7 +158,7 @@ func TestSgemvM1_MultipleSizes(t *testing.T) {
 				t.Fatalf("Memcpy y: %v", err)
 			}
 
-			checkGemvRelError(t, got, ref, gemvReductionRelTol)
+			checkGemvRelError(t, got, ref, gemvReductionAbsTol, gemvReductionRelTol)
 		})
 	}
 }

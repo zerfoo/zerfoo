@@ -253,7 +253,7 @@ func TestGemvQ4KF32_Parity(t *testing.T) {
 		t.Fatalf("Memcpy y: %v", err)
 	}
 
-	checkGemvRelError(t, got, ref, gemvReductionRelTol)
+	checkGemvRelError(t, got, ref, gemvReductionAbsTol, gemvReductionRelTol)
 }
 
 func TestGemvQ4KF32_LargerMatrix(t *testing.T) {
@@ -308,7 +308,7 @@ func TestGemvQ4KF32_LargerMatrix(t *testing.T) {
 		t.Fatalf("Memcpy y: %v", err)
 	}
 
-	checkGemvRelError(t, got, ref, gemvReductionRelTol)
+	checkGemvRelError(t, got, ref, gemvReductionAbsTol, gemvReductionRelTol)
 }
 
 func TestGemvQ4KF32_MultipleSizes(t *testing.T) {
@@ -376,7 +376,7 @@ func TestGemvQ4KF32_MultipleSizes(t *testing.T) {
 				t.Fatalf("Memcpy y: %v", err)
 			}
 
-			checkGemvRelError(t, got, ref, gemvReductionRelTol)
+			checkGemvRelError(t, got, ref, gemvReductionAbsTol, gemvReductionRelTol)
 		})
 	}
 }
