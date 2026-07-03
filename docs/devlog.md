@@ -2,6 +2,110 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-03: Oracle-gate kernel sweep -- sgemv_m1 alignment fix + honest per-op tolerances (T135.3, #847)
+
+**Type:** fix + finding
+**Tags:** cuda, kernels, gb10, spark, sgemv, gemv_q4k, oracle, tolerance, T135.3, #847, #922
+
+**Problem:** T135.1 unmasked two residuals in `./internal/cuda/kernels/` on
+the GB10 that had been hidden behind the #922 CUDA-context poison:
+(1) `sgemv_m1.cu` faulted with a misaligned-address error on
+`TestSgemvM1_MultipleSizes/odd_N_127x255`, re-poisoning the context for
+subsequent subtests; (2) `TestGemvQ4KF32_LargerMatrix/MultipleSizes` and
+`TestSgemvM1_MultipleSizes` failed a flat `1e-4` relative-error bar with
+errors up to ~7.5e-4.
+
+**Fix 1 -- sgemv_m1.cu misalignment:** `sgemv_m1_kernel` cast
+`A + row*N` to `float4*` unconditionally for its vectorized `__ldg` load
+path. When `N` is not a multiple of 4, most rows are not 16-byte aligned, so
+the vectorized load faults -- a hard misaligned-address error, not just
+slow, and it poisons the whole CUDA context for the rest of the process
+(the same class as #922/L-0013, but a kernel bug this time, not a test-guard
+gap). Fixed by gating the float4 path on the row pointer's ACTUAL 16-byte
+alignment (`(uintptr_t)row_ptr & 0xF == 0`) instead of assuming
+`N % 4 == 0`; misaligned rows fall back to the existing scalar remainder
+loop, correct for any `N`.
+
+**Fix 2 (found during the .so rebuild, not one of the two known
+residuals) -- gemv_q4k_sm121.cu build failure:** rebuilding `libkernels.so`
+from scratch with nvcc 13.1 failed with `namespace "cooperative_groups" has
+no member "reduce"/"plus"` -- `cg::reduce`/`cg::plus` live in
+`cooperative_groups/reduce.h`, not pulled in transitively by the
+`cooperative_groups.h` umbrella header on this toolchain. Added the
+explicit include. Without this the kernel fork does not compile at all on a
+from-scratch rebuild, independent of any test outcome -- this would have
+silently blocked every future .so rebuild until someone tried one.
+
+**The .so rebuild path (T135.3's main infrastructure question):** the
+standing gate (`scripts/dgx-validate.sh`) mounts
+`/opt/zerfoo/lib/libkernels.so` READ-ONLY and never recompiles `.cu` in-pod
+(zerfoo#921 territory). Fixing a `.cu` bug requires a separate one-shot
+Spark build pod: `nvcr.io/nvidia/pytorch:26.02-py3` (already used as the
+oracle image; confirmed via a throw-away probe pod to ship nvcc 13.1 with
+`compute_121`/sm_121 support) clones the fix branch, runs
+`make -j8 shared CUDA_ARCH=sm_121` in `internal/cuda/kernels/`, mounts
+`/opt/zerfoo/lib` READ-WRITE (unlike the validation manifest), backs up the
+existing `.so` (`libkernels.so.bak-<timestamp>-<sha>`), and atomically `mv`s
+the new build into place. No `nvidia.com/gpu` claim needed (nvcc
+cross-assembles for sm_121 without touching the device), so it does not
+contend with `SPARK_GPU_MAX=1`. Ran end-to-end with no human step required;
+build+deploy completed in ~15s per attempt. Footgun hit and worked around:
+Spark's YAML parser does not round-trip embedded double-quotes/backslash
+escapes in a pod's inline command (`\"` came through as literal
+backslash-quote text and broke bash parsing) -- keep build-pod commands to
+bare words / single quotes, matching the `validate-arm64.yaml` convention.
+
+**Fix 3 -- honest tolerance, not a looser bar:** the first attempt raised
+the flat relative bound from `1e-4` to `1e-3` to cover the observed
+failures. That surfaced a SECOND, more interesting test bug: the original
+per-element loop called `t.Errorf` + `break` at the first
+tolerance-exceeding index, so the logged "max relative error" only ever
+reflected the error up to that first break point -- never the true
+dataset-wide max. Raising the tolerance changed WHICH element the loop
+broke on, which made the logged max jump around between runs in a way that
+briefly looked like kernel nondeterminism. It was not: the kernel is
+bit-reproducible (verified by re-running the same isolated subtest twice,
+identical result both times). Fixed the test to scan to completion
+(`checkGemvRelError` in `internal/cuda/kernels/tolerance_test.go`), which
+revealed the TRUE worst case: `TestSgemvM1_MultipleSizes/large_4096x4096`
+hits rel err 7.32e-3 at `y[3862]`, but the absolute diff is only ~5e-6
+against `want=6.30e-4` -- catastrophic cancellation on a near-zero
+reduction row inflates relative error while absolute error stays tiny. A
+pure relative bound loose enough to admit that (~1e-2) would also mask a
+real bug on any legitimately small-magnitude output. Switched to a
+numpy-`allclose`-style combined bound instead:
+`|got-want| <= gemvReductionAbsTol + gemvReductionRelTol*|want|`, with
+`gemvReductionAbsTol=1e-5` (covers the ~6e-6 cancellation noise with
+margin) and `gemvReductionRelTol=1e-4` (unchanged from the original tight
+relative bound for normal-magnitude elements). Full rationale and measured
+numbers in `internal/cuda/kernels/tolerance_test.go` and
+`docs/kernel-tolerances.md`.
+
+**Standing per-op tolerance table:** `docs/kernel-tolerances.md` (new) --
+covers the GEMV reduction family in detail, records the other kernel
+families' existing (unchanged) tolerances swept during this pass, and notes
+the coverage gap for kernels with no dedicated numeric-parity test in this
+package (dequant_q4k, gemm_int4/int8/q8, gemv_q5k/q6k, transpose, rmsnorm,
+argmax, scaled_softmax, the fused_* kernels, megakernel_ops) as follow-up,
+not a T135.3 blocker.
+
+**Result (GB10, ref `368d68d1`, pod `zerfoo-validate-wave2taskT13-1783060264`):**
+full `./internal/cuda/kernels/` package green -- build pass, vet pass,
+`{"cuda_tests":"pass","failures":[]}`. Reconfirmed via several isolated
+`-run` subsets during triage (elementwise, flash-attention purego, fp8_ops,
+counter, gather, signature tests) to rule out log truncation hiding a
+failure; all green. One transient `TestGatherI32Parity/single_index`
+failure was observed once in a full-package run and did not reproduce in
+three subsequent runs (isolated and full-package) -- logged here as a
+watch-item, not chased further within T135.3's scope.
+
+**M-P1-1 impact:** this closes the "T135.3" half of the M-P1-1 correction
+recorded in the T135.1 devlog entry (T135.2's ztensor bump was the other
+half, already done). The standing gate's default scope
+(`./internal/cuda/... ./internal/xblas/... ./tabular/...`) should now be
+green end-to-end on `main` once this PR merges, modulo whatever T135.4/T135.5
+still owe.
+
 ## 2026-07-02: FusedSDPA replay-stable flash scratch (T133.2, #870)
 
 **Type:** fix
