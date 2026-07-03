@@ -75,10 +75,25 @@ GPU-only (skip without CUDA); the CPU-runnable bailout/fallback wiring is
 unchanged and still covered by `TestTryFlashForwardFallback` and
 `TestSDPAFlashFallbackParity`.
 
-**GB10 evidence:** ref `wave-2-task-T133.2`, `scripts/dgx-validate.sh -pkgs
-"-v -run TestFusedSDPAForwardReplayStableScratch|TestFlashDecodeScratchReusedAcrossCalls|TestTryFlashDecodeEngineStreamParity ./layers/attention/"`,
-pod `<POD_NAME>`: PASS (511/511 replays, no illegal memory access; decode
-scratch reuse verified over 20 calls).
+**GB10 evidence:** ref `wave-2-task-T133.2` (7c24032e), `scripts/dgx-validate.sh
+-pkgs "-v -failfast ./layers/attention/..."`, pod
+`zerfoo-validate-wave2taskT13-1783060338`: `TestFusedSDPAForwardReplayStableScratch`
+PASS (0.33s) -- 511/511 replays, no illegal memory access, output verified
+against the CPU reference; this is the direct #870 reproduction (the flash
+FORWARD/prefill path, which is what Wolf's CrossAsset training actually
+exercises). `TestFlashDecodeScratchReusedAcrossCalls` SKIP (split-KV kernel
+not loaded on this host -- see finding below).
+
+**Finding (pre-existing, unrelated to this fix):** the split-KV flash-decode
+kernel (`kernels.IsFlashDecodeSplitKVSupported()`) is not currently loaded on
+the GB10 gate's `/opt/zerfoo/lib` libkernels.so mount. Confirmed via a control
+run on unmodified `origin/main` (5cbac676, pod
+`zerfoo-validate-5cbac6769563-1783059932`): the existing T133.1 test
+`TestTryFlashDecodeEngineStreamParity` bails out identically ("bailed
+unexpectedly on a GPU decode shape") on main, so this is a standing-gate /
+host-image regression independent of T133.2, not something introduced here.
+Left out of scope per "stay on task"; worth a follow-up issue to check the
+mounted kernel library on the DGX host.
 
 ## 2026-07-02: Fused encoder fwd/bwd audit -- FFN GELU-backward bug + zero gradcheck coverage on FusedSDPA/FFN closed (T135.4)
 
