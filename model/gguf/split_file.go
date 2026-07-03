@@ -168,13 +168,16 @@ func LoadTensorsMmapSplit(sf *SplitFile, mappedShards [][]byte) (map[string]*ten
 			return nil, fmt.Errorf("tensor %q: %w", ti.Name, err)
 		}
 
+		if ti.Offset > math.MaxInt64 {
+			return nil, fmt.Errorf("tensor %q: offset out of range", ti.Name)
+		}
 		offset := shard.DataOffset + int64(ti.Offset)
-		end := offset + int64(dataSize)
-		if end > int64(len(mapped)) {
-			return nil, fmt.Errorf("tensor %q: mmap region too small in shard %d (need offset %d + %d bytes, have %d)",
+		sz := int64(dataSize)
+		if offset < 0 || sz < 0 || offset > int64(len(mapped)) || sz > int64(len(mapped))-offset {
+			return nil, fmt.Errorf("tensor %q: offset+size out of mmap range in shard %d (need offset %d + %d bytes, have %d)",
 				ti.Name, shardIdx, offset, dataSize, len(mapped))
 		}
-		raw := mapped[offset:end]
+		raw := mapped[offset : offset+sz]
 
 		// Ternary tensors decoded eagerly (MmapStorage doesn't support TQ2_0).
 		if ti.Type == GGMLTypeTQ2_0 {

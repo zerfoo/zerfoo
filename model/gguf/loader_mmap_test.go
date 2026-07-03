@@ -277,6 +277,54 @@ func TestLoadTensorsMmap_OutOfBounds(t *testing.T) {
 	}
 }
 
+// TestLoadTensorsMmap_HugeOffsetSignedConversion verifies that a
+// maliciously large tensor offset (which would wrap to a negative int64
+// after conversion from uint64) is rejected with an error instead of
+// panicking with a slice-bounds-out-of-range error (F2).
+func TestLoadTensorsMmap_HugeOffsetSignedConversion(t *testing.T) {
+	mapped := make([]byte, 100)
+	gf := &File{
+		DataOffset: 50,
+		Tensors: []TensorInfo{
+			{
+				Name:       "evil",
+				Dimensions: []uint64{4},
+				Type:       GGMLTypeF32,
+				Offset:     0x8000000000000000,
+			},
+		},
+	}
+
+	_, err := LoadTensorsMmap(gf, mapped)
+	if err == nil {
+		t.Fatal("expected error for huge offset, got nil")
+	}
+}
+
+// TestLoadTensorsMmap_OffsetPlusSizeOverflow verifies that an offset which
+// is itself in range but whose offset+size sum overflows/exceeds the mapped
+// region is rejected rather than causing a panic (F2 offset+dataSize variant).
+func TestLoadTensorsMmap_OffsetPlusSizeOverflow(t *testing.T) {
+	mapped := make([]byte, 100)
+	gf := &File{
+		DataOffset: 50,
+		Tensors: []TensorInfo{
+			{
+				Name:       "evil2",
+				Dimensions: []uint64{4},
+				Type:       GGMLTypeF32,
+				// math.MaxInt64 - DataOffset(50) + dataSize(16) overflows past len(mapped).
+				Offset: uint64(math.MaxInt64) - 40,
+			},
+		},
+	}
+
+	_, err := LoadTensorsMmap(gf, mapped)
+	if err == nil {
+		t.Fatal("expected error for offset+size overflow, got nil")
+	}
+}
+
 func TestLoadTensorsMmap_TQ2_0(t *testing.T) {
 	// Create ternary data: 8 values {-1, 0, 1, 1, 0, -1, 1, 0}.
 	values := []int8{-1, 0, 1, 1, 0, -1, 1, 0}

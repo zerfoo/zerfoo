@@ -48,13 +48,16 @@ func LoadTensorsMmap(f *File, mapped []byte) (map[string]*tensor.TensorNumeric[f
 		}
 
 		// Slice into the mmap'd region at the tensor's offset.
+		if ti.Offset > math.MaxInt64 {
+			return nil, fmt.Errorf("tensor %q: offset out of range", ti.Name)
+		}
 		offset := f.DataOffset + int64(ti.Offset)
-		end := offset + int64(dataSize)
-		if end > int64(len(mapped)) {
-			return nil, fmt.Errorf("tensor %q: mmap region too small (need offset %d + %d bytes, have %d)",
+		sz := int64(dataSize)
+		if offset < 0 || sz < 0 || offset > int64(len(mapped)) || sz > int64(len(mapped))-offset {
+			return nil, fmt.Errorf("tensor %q: offset+size out of mmap range (need offset %d + %d bytes, have %d)",
 				ti.Name, offset, dataSize, len(mapped))
 		}
-		raw := mapped[offset:end]
+		raw := mapped[offset : offset+sz]
 
 		// Ternary tensors are decoded eagerly because MmapStorage does not
 		// support the TQ2_0 quantization type. The copy is cheap since
