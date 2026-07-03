@@ -2,6 +2,76 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-03: Capture/replay cluster closed -- containment gate removed, #865/#870/#878 all fixed at the contract level (T133.4)
+
+**Type:** fix + cluster closure
+**Tags:** training, capture-replay, cuda-graph, arena, gb10, T133.4, T133.1, T133.2, T133.3, #865, #870, #878, L-0006
+
+**What this task did.** T133.1-T133.3 fixed the three capture/replay bugs at
+the contract level (allocation-stable operands instead of per-call arena
+scratch); T133.4 removes the T129.2 `ZERFOO_UNSAFE_CAPTURE_TRAINING`
+containment gate that was standing in front of `NewCaptureReplayRunner` while
+#878 was open, since its reason for existing (silent gradient divergence
+under capture) is gone.
+
+**Gate removal (`training/capture_replay.go`).** Deleted the
+`UnsafeCaptureTrainingEnv` const and `ErrCaptureTrainingDisabled` sentinel and
+the branch in `NewCaptureReplayRunner` that returned it when a
+`GraphCapturer` engine was present and the override was unset.
+`NewCaptureReplayRunner` now enables capture unconditionally whenever the
+engine implements `compute.GraphCapturer` and `ZERFOO_DISABLE_CUDA_GRAPH` is
+unset -- the constructor keeps its `(*CaptureReplayRunner[T], error)` return
+shape (no caller-visible signature change) and `ZERFOO_DISABLE_CUDA_GRAPH`
+stays as the plain escape hatch to force eager/passthrough construction.
+Removed the three T129.2 containment tests
+(`TestCaptureReplayRunner_GateBlocksCaptureWithoutOverride`,
+`..._GateOverrideRestoresCapture`, `..._GateIgnoresEagerConstruction`) and
+replaced them with `TestCaptureReplayRunner_CaptureEnabledNoOverrideNeeded`,
+which asserts a `GraphCapturer` engine builds a capture-enabled runner with
+NO env override and completes a normal warmup->capture->replay schedule.
+
+**Fixture ungated (`tests/training/capture_replay_divergence_878_test.go`).**
+Dropped the `t.Setenv("ZERFOO_UNSAFE_CAPTURE_TRAINING", "1")` call and the
+doc comment describing it as a workaround for the (now-removed) gate.
+`ZERFOO_RUN_878_FIXTURE=1` stays as the opt-in gate -- it is kept for being a
+long-running (3x40 step), GPU-only training run, not because the bug is
+still unsafe.
+
+**CPU verification.** `go build ./...` and `go test ./...` both green on
+darwin. The only failure in a full `go test ./...` run
+(`TestGenerateBatch_ConcurrentSessions`, `inference` package: "peak
+concurrent sessions = 1, want >= 2") reproduces on origin/main HEAD
+(0945374f) with none of this task's changes applied, and passes cleanly when
+run in isolation (`go test -run TestGenerateBatch_ConcurrentSessions
+./inference/...`, both with and without this branch's diff) -- a pre-existing
+scheduling flake under full-suite parallel load, unrelated to
+training/capture-replay and not touched by this task.
+`TestCaptureReplayGradientDivergence878` skips cleanly on this CPU-only host
+(no `ZERFOO_RUN_878_FIXTURE`), as expected.
+
+**GB10 validation not performed by this agent.** This task's sandboxed
+environment has a hard `deny: ["Bash(curl *)"]` in the global permission
+config, so neither a direct Spark API call nor `scripts/dgx-validate.sh`
+(which shells out to `curl`) could be run from here -- `-dry-run` rendering
+of the manifest was confirmed to work (pod name, env, mounts all correct for
+`-ref wave-4-task-T133.4 -pkgs "-v -run TestCaptureReplayGradientDivergence878
+./tests/training/"`), but the actual submit/poll/log steps were not
+executed. The coordinator (or a session with curl permission) needs to run
+`scripts/dgx-validate.sh -ref wave-4-task-T133.4 -pkgs "-v -run
+TestCaptureReplayGradientDivergence878 ./tests/training/"` plus the standing
+default-scope gate before merge, to get the GB10 green proof this task was
+supposed to produce.
+
+**Deliberately held (per coordinator instruction, not because the work isn't
+ready):** GitHub issues #865, #870, #878 were NOT closed and no release was
+manually triggered by this task -- closing issues and shipping a release are
+visible/hard-to-reverse actions left for the coordinator to confirm after
+reviewing the PR. Draft close comments (referencing PRs #928, #933, #937
+respectively) are ready. The commit on this branch uses a `fix(training):`
+conventional-commit type, so release-please will pick it up automatically
+once the PR merges to main -- no separate release action is needed from
+whoever merges.
+
 ## 2026-07-03: #878 root-caused and fixed -- the cached loss seed was arena-backed; capture-replay training now trajectory-identical to eager (T133.3)
 
 **Type:** fix + finding
