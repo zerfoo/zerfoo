@@ -73,6 +73,25 @@ the drift is recoverable/diagnosable without re-cloning history.
   the underlying kernel symbol is now present so there is no reason to
   expect it specifically to fail, but it was not directly observed here.
 
+**Watch-item resolved -- the intermittent gather/attention flake is host GPU
+contention, not code:** the sporadic `cudaMemcpy failed: invalid argument`
+failures (gather H2D copies; also the one truncated `layers/attention` FAIL
+above) tracked a concurrent `ltx-render-*` pod on the DGX host exactly: the
+SAME ref (`fd194a98`) was full-package green twice, then red on 6
+consecutive full-package runs while `ltx-render-20260703-0657/0708` were
+active (the failing test varied run to run -- GatherI32/single_index,
+GatherInt64/multiple_indices, GatherInt64/single_index -- classic
+environmental nondeterminism), then green twice consecutively (pods
+`zerfoo-validate-wave2taskT13-1783063105`, `...1783063177`) immediately
+after the render pod completed, with zero code change. Note the render pod
+is NOT gpu-accounted by Spark (`/api/v1/resources` showed
+`gpuMemoryMB allocated: 0` throughout), so `SPARK_GPU_MAX=1` does NOT
+serialize against it -- a gap in the one-GPU-pod-at-a-time invariant when a
+workload requests no `nvidia.com/gpu` limit but still touches the unified
+GPU. Follow-up for Spark scheduling hygiene: either make such workloads
+request the GPU so they serialize, or accept sporadic gate flakes while
+they run.
+
 ## 2026-07-03: Oracle-gate kernel sweep -- sgemv_m1 alignment fix + honest per-op tolerances (T135.3, #847)
 
 **Type:** fix + finding
