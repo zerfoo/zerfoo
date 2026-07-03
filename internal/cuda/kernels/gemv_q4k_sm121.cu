@@ -34,6 +34,12 @@
 #include "gemv_q4k.h"   /* decode_scales_mins is shared */
 #include <cuda_fp16.h>
 #include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>  /* cg::reduce / cg::plus live here, not
+                                          * in the cooperative_groups.h umbrella
+                                          * header -- CUDA 13.1/nvcc 13.1.115
+                                          * (this rebuild's toolchain) fails
+                                          * "namespace has no member reduce/plus"
+                                          * without it. T135.3 oracle-gate build. */
 #include <stdint.h>
 
 namespace cg = cooperative_groups;
