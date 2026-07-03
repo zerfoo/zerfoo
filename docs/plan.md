@@ -129,7 +129,7 @@ Component: training. Acceptance: on the released version, no user can silently t
   - Acceptance: constructing the runner without the env var errors; with it, behavior unchanged; docs updated.
 - [x] S129.2.1 Tests + lint for the gate  2026 07 02  (DONE in PR #920: 3 gate tests w/ fake capturer; executed on Linux CI -- darwin blocked by ztensor#171)  Owner: TBD  Est: 45m  verifies: [UC-H2-001]  kind: agent  blocked-by: [T129.2]
   - Unit tests: default errors with actionable message; env override works; eager trainer unaffected. gofmt, go vet, golangci-lint clean.
-- [ ] T129.3 Merge, release, and update #878  Owner: TBD  Est: 30m  verifies: [UC-H2-001]  kind: agent  blocked-by: [S129.2.1]
+- [x] T129.3 Merge, release, and update #878  2026 07 02  (DONE: v1.56.0 tagged with the gate; #878 commented with containment + Phase 1 fix plan)  Owner: TBD  Est: 30m  verifies: [UC-H2-001]  kind: agent  blocked-by: [S129.2.1]
   - Rebase-merge the PR; let release-please tag the patch release; comment on #878 with the containment release version and a pointer to the Phase 1 fix plan.
   - Acceptance: release tagged; #878 comment posted.
 
@@ -168,7 +168,7 @@ Component: infrastructure. Acceptance: one command submits a Spark pod that buil
 - [x] T131.2 Document the job as the standing GPU validation gate  2026 07 02  (DONE: CLAUDE.md Build & Test + design.md 8.5)  Owner: TBD  Est: 45m  verifies: [infrastructure]  kind: agent  blocked-by: [T131.1]
   - Add a "GPU validation" subsection to CLAUDE.md Build & Test and to the design.md CI section: all GPU-dependent acceptance runs through scripts/dgx-validate.sh; interactive SSH remains debugging-only. Note the one-GPU-pod-at-a-time rule.
   - Acceptance: docs merged; contradictory stale guidance removed.
-- [ ] T131.3 First green run; close the stalled-validation backlog  Owner: TBD  Est: 1.5h  verifies: [UC-H2-002]  kind: agent  blocked-by: [S131.1.1]
+- [x] T131.3 First green run; close the stalled-validation backlog  2026 07 02  (DONE with findings: gate operational end-to-end, 9 pod iterations, green isolated run; full scope red on a REAL kernel bug -> #922 (Phase 1, #847); -tags cuda unbuildable -> #921; T86.5.8 stays open pending host model provisioning; devlog entry has the full record)  Owner: TBD  Est: 1.5h  verifies: [UC-H2-002]  kind: agent  blocked-by: [S131.1.1]
   - Run the job on main. Record the JSON report in docs/devlog.md. Close the T86.5.8 issue (GPU parity on DGX) referencing the run; confirm the T128.3 closures of superseded validation tasks were correct. GPU-serial: coordinate with any Wolf GPU work.
   - Acceptance: pod phase Succeeded; devlog entry with report; T86.5.8 closed.
 

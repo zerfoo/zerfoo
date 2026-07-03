@@ -2,6 +2,41 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-02: Standing DGX arm64 validation gate operational -- first honest run catches a real kernel bug (T131.3)
+
+**Type:** finding + infrastructure
+**Tags:** dgx, spark, validation, arm64, purego, gb10, T131.3, #921, #922, ztensor#171
+
+**Problem:** GPU validation had no standing job (purego cannot cross-compile
+darwin->linux/arm64), so "DGX validation pending" tasks accumulated since April.
+**Fix:** scripts/dgx-validate.sh + docs/bench/manifests/validate-arm64.yaml,
+hardened over 9 Spark pod iterations. Infrastructure facts established:
+1. Spark/Podman does NOT honor DirectoryOrCreate hostPaths -- a missing host
+   dir fails the container with "statfs ...: no such file or directory".
+   Mount only pre-existing host paths.
+2. Spark's YAML parser DROPS literal block scalars in args (pod ran
+   `/bin/bash -c '|'`); in-pod logic must be a committed script
+   (scripts/dgx-validate-inpod.sh) exec'd after clone.
+3. The -tags cuda CGo path is unbuildable from a module checkout (needs
+   in-tree nvcc libkernels.so; ztensor module lacks generated headers) --
+   filed #921; the gate scopes to the PUREGO production path.
+4. dlsym(0) is RTLD_DEFAULT on glibc and resolves real symbols --
+   TestDlsymImplFailsOnInvalidHandle was darwin-only-correct, now skips on
+   linux (fix 7e29ef6c).
+5. The QUALITY.md purego unsafe.Pointer vet warnings only surface when
+   vetting on linux; the in-pod vet filters exactly that class.
+**Result (ref 1e826948, GB10, golang:1.26 arm64 pod):** build pass, vet pass,
+internal/cuda ok, internal/xblas ok (NEON on arm64), tabular ok (real GPU,
+5.4s). internal/cuda/kernels: package-wide "illegal memory access" cascade --
+but TestKernelSoftmax PASSES in isolation (0.25s, same pod/so/ref), so one
+early test poisons the shared CUDA context and everything after fails at its
+first cudaMalloc. Filed #922 (Phase 1, #847 kernel-numerics tail owns the
+bisect). Model parity skipped: /var/lib/zerfoo/models not provisioned on the
+host -- provisioning is a host-side task and keeps T86.5.8 open.
+**Impact:** the cross-compile blocker class is retired -- any GPU validation is
+now one command. Footgun noted: a -pkgs filter matching zero tests counts as
+pass (go test semantics).
+
 ## 2026-07-02: Tracker-hygiene pass complete -- open issues reduced to live engineering
 
 **Type:** finding
