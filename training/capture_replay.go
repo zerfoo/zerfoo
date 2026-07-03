@@ -1,21 +1,25 @@
 // Package training: CUDA-graph capture-replay for repeated identical
 // training steps.
 //
-// Capture-replay TRAINING is currently gated off. zerfoo#878 showed that
-// enabling CUDA-graph capture on the training walk silently produces wrong
-// gradients (losses ascend 10-20x while the identical eager config
-// converges), so NewCaptureReplayRunner refuses to build a capture-enabled
-// runner unless ZERFOO_UNSAFE_CAPTURE_TRAINING=1 is set to acknowledge the
-// hazard. Eager/passthrough construction (no GraphCapturer engine, or
-// capture disabled via ZERFOO_DISABLE_CUDA_GRAPH) is unaffected and needs no
-// override. This gate is containment only; the root-cause fix is tracked in
-// zerfoo#878. It does not touch inference-side capture (generate/,
-// inference/), which is a separate, unaffected path.
+// Capture-replay TRAINING was gated off from T129.2 through T133.3: zerfoo#878
+// showed that enabling CUDA-graph capture on the training walk silently
+// produced wrong gradients (losses ascend 10-20x while the identical eager
+// config converges). The root cause -- a cached loss seed built from the
+// engine's arena pool, so a later per-step ResetPool eventually aliased the
+// captured graph's baked device address with an unrelated intermediate -- is
+// fixed (T133.3, buildOnesSeed now allocates from a nil-pool GPUStorage,
+// allocation-stable across replays like every other piece of cross-step
+// training state). With the root cause fixed, the
+// ZERFOO_UNSAFE_CAPTURE_TRAINING containment gate has been removed (T133.4):
+// NewCaptureReplayRunner no longer refuses to build a capture-enabled runner.
+// ZERFOO_DISABLE_CUDA_GRAPH remains as a plain escape hatch for anyone who
+// wants to force eager/passthrough construction. This does not touch
+// inference-side capture (generate/, inference/), which is a separate,
+// unaffected path.
 package training
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 
@@ -28,20 +32,6 @@ import (
 // capture-replay when set to a non-empty value. It is read ONCE, at
 // NewCaptureReplayRunner time -- a debug toggle, not a hot-path read.
 const DisableCUDAGraphEnv = "ZERFOO_DISABLE_CUDA_GRAPH"
-
-// UnsafeCaptureTrainingEnv is the environment variable that overrides the
-// zerfoo#878 loud-fail gate. Constructing a capture-ENABLED training runner
-// returns ErrCaptureTrainingDisabled unless this is set to "1". It is read
-// ONCE, at NewCaptureReplayRunner time.
-const UnsafeCaptureTrainingEnv = "ZERFOO_UNSAFE_CAPTURE_TRAINING"
-
-// ErrCaptureTrainingDisabled is returned by NewCaptureReplayRunner when the
-// runner would enable CUDA-graph capture on the training walk but the
-// ZERFOO_UNSAFE_CAPTURE_TRAINING=1 override is not set. Capture-replay
-// training is disabled pending the zerfoo#878 silent-gradient-divergence fix.
-var ErrCaptureTrainingDisabled = errors.New(
-	"capture-replay training is disabled pending zerfoo#878 (silent gradient divergence); " +
-		"set ZERFOO_UNSAFE_CAPTURE_TRAINING=1 to override at your own risk")
 
 // CaptureReplayRunner drives a per-step training loop (forward + loss +
 // backward + gradient accumulation) through CUDA-graph capture-replay on
@@ -113,13 +103,11 @@ type CaptureReplayRunner[T tensor.Numeric] struct {
 // strategy.ComputeGradients and the counters stay at zero; that construction
 // path always succeeds.
 //
-// Loud-fail gate (zerfoo#878): capture-enabled TRAINING silently produces
-// wrong gradients, so when this constructor would enable capture (a
-// GraphCapturer engine and ZERFOO_DISABLE_CUDA_GRAPH unset) it returns
-// ErrCaptureTrainingDisabled unless ZERFOO_UNSAFE_CAPTURE_TRAINING=1 is set.
-// Enablement is fully decided here (the env reads and the interface assertion
-// all happen at construction), so this is the correct and only gate point --
-// Step never re-checks, keeping the hot path clean.
+// The error return exists for construction-time failure modes (e.g. a future
+// capturer-specific validation); today every path succeeds. Capture-enabled
+// construction is no longer gated: the zerfoo#878 silent-gradient-divergence
+// bug that motivated the ZERFOO_UNSAFE_CAPTURE_TRAINING containment gate is
+// fixed (T133.3), so the gate was removed in T133.4.
 func NewCaptureReplayRunner[T tensor.Numeric](
 	strategy *DefaultBackpropStrategy[T],
 	engine compute.Engine[T],
@@ -138,11 +126,6 @@ func NewCaptureReplayRunner[T tensor.Numeric](
 	}
 	if os.Getenv(DisableCUDAGraphEnv) != "" {
 		return r, nil
-	}
-	// Capture would be ENABLED from here: gate it behind the zerfoo#878
-	// override before wiring up the capturer.
-	if os.Getenv(UnsafeCaptureTrainingEnv) != "1" {
-		return nil, ErrCaptureTrainingDisabled
 	}
 	r.gc = gc
 	r.enabled = true
