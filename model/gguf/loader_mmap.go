@@ -2,7 +2,6 @@ package gguf
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -21,15 +20,9 @@ func LoadTensorsMmap(f *File, mapped []byte) (map[string]*tensor.TensorNumeric[f
 		ti := &f.Tensors[i]
 
 		// Compute number of elements with overflow checks.
-		var numElements int64 = 1
-		for _, d := range ti.Dimensions {
-			if d > math.MaxInt32 {
-				return nil, fmt.Errorf("tensor %q: dimension %d exceeds maximum (%d)", ti.Name, d, int64(math.MaxInt32))
-			}
-			numElements *= int64(d)
-			if numElements > 1<<34 {
-				return nil, fmt.Errorf("tensor %q: total elements %d exceeds maximum (%d)", ti.Name, numElements, int64(1<<34))
-			}
+		numElements, err := computeNumElements(ti.Name, ti.Dimensions)
+		if err != nil {
+			return nil, err
 		}
 
 		// Convert dimensions to int for tensor API.
