@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/rand/v2"
 	"os"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -114,7 +113,7 @@ func NewPatchTST(config PatchTSTConfig, engine compute.Engine[float32], ops nume
 	posData := make([]float32, numPatches*config.DModel)
 	scale := float32(math.Sqrt(2.0 / float64(config.DModel)))
 	for i := range posData {
-		posData[i] = float32(rand.NormFloat64()) * scale * 0.02
+		posData[i] = float32(weightInitNormFloat64()) * scale * 0.02
 	}
 	m.posEmb, err = tensor.New[float32]([]int{1, numPatches, config.DModel}, posData)
 	if err != nil {
