@@ -31,11 +31,26 @@ import (
 // produced on the engine stream is a cross-stream race -- the kernel can read
 // in-flight Q/K/V (observed as a silently-wrong training trajectory in Wolf's
 // CrossAsset GB10 run, fold-0 acc 0.7042 -> 0.4948 at identical seed).
+//
+// out is the caller-owned persistent output scratch cache (zerfoo#870,
+// docs/lore.md L-0006). The output used to be a fresh tensor.NewGPUStorage
+// (raw cudaMalloc) on every call with no per-call free -- safe in eager
+// execution (Go's GC finalizer eventually reclaims it once unreferenced) but
+// fatal under training.CaptureReplayRunner: the captured graph bakes in the
+// device address written by the ONE call made during capture, and once the
+// wrapping Go object becomes unreferenced the finalizer's Free() hands that
+// exact address back to the allocator for a later, unrelated allocation to
+// reuse -- the same "per-call scratch" landmine as a defer-free, just
+// GC-triggered and later. This crashed Wolf's CrossAsset training under
+// capture-replay around replay #141/511 (zerfoo#870). Reusing the same
+// cached buffer on every call means the address is never freed for the life
+// of the node. Callers pass nil only when they know CUDA is unavailable.
 func tryFlashForward[T tensor.Numeric](
 	q, k, v *tensor.TensorNumeric[T],
 	headDim int,
 	causal bool,
 	engStream unsafe.Pointer,
+	out *gpuScratchBuffer[T],
 ) (*tensor.TensorNumeric[T], error) {
 	if !cuda.Available() {
 		return nil, nil
@@ -97,9 +112,10 @@ func tryFlashForward[T tensor.Numeric](
 	batchHeads := shape[0]
 	seqLen := shape[1]
 
-	// Allocate output on the same GPU device.
+	// Persistent output buffer on the same GPU device (zerfoo#870): reused
+	// across calls instead of a fresh cudaMalloc each time.
 	n := batchHeads * seqLen * headDim
-	oGPU, err := tensor.NewGPUStorage[T](n, qGPU.DeviceID())
+	oGPU, err := out.view(n, qGPU.DeviceID())
 	if err != nil {
 		return nil, err
 	}

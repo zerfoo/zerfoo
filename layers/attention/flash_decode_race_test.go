@@ -170,7 +170,12 @@ func TestTryFlashDecodeEngineStreamParity(t *testing.T) {
 		t.Fatalf("NewWithStorage V: %v", err)
 	}
 
-	out, err := tryFlashDecode(q, k, v, headDim, numQHeads, numKVHeads, engStream.Ptr())
+	var (
+		outScratch        gpuScratchBuffer[float32]
+		partialOScratch   gpuScratchBuffer[float32]
+		partialLSEScratch gpuScratchBuffer[float32]
+	)
+	out, err := tryFlashDecode(q, k, v, headDim, numQHeads, numKVHeads, engStream.Ptr(), &outScratch, &partialOScratch, &partialLSEScratch)
 	if err != nil {
 		t.Fatalf("tryFlashDecode: %v", err)
 	}
