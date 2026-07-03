@@ -26,15 +26,20 @@ var openapiSpec []byte
 
 // Server wraps a loaded model and serves OpenAI-compatible HTTP endpoints.
 type Server struct {
-	model           *inference.Model
-	draftModel      *inference.Model // optional; enables speculative decoding
-	mux             *http.ServeMux
-	batch           *BatchScheduler // optional; nil means direct calls
-	unloaded        atomic.Bool     // true after DELETE /v1/models/:id
-	inflight        sync.WaitGroup  // tracks in-flight inference requests
-	transcriber     Transcriber     // optional; enables /v1/audio/transcriptions
-	classifier      Classifier      // optional; enables /v1/classify
-	guardEvaluator  GuardEvaluator  // optional; enables /v1/guard endpoints
+	model      *inference.Model
+	draftModel *inference.Model // optional; enables speculative decoding
+	mux        *http.ServeMux
+	batch      *BatchScheduler // optional; nil means direct calls
+	unloaded   atomic.Bool     // true after DELETE /v1/models/:id
+	// modelMu serializes handler access to model against DELETE /v1/models/:id.
+	// Handlers that touch the model take RLock for the duration of their work;
+	// delete takes Lock before flipping unloaded and closing the model. This
+	// makes both the use-after-close and the "Add after Wait started" races
+	// structurally impossible (see CONC-H2).
+	modelMu         sync.RWMutex
+	transcriber     Transcriber    // optional; enables /v1/audio/transcriptions
+	classifier      Classifier     // optional; enables /v1/classify
+	guardEvaluator  GuardEvaluator // optional; enables /v1/guard endpoints
 	logger          log.Logger
 	metrics         *ServerMetrics
 	classifyMetrics *ClassifyMetrics

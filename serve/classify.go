@@ -66,8 +66,12 @@ func NewClassifyMetrics(c runtime.Collector) *ClassifyMetrics {
 }
 
 func (s *Server) handleClassify(w http.ResponseWriter, r *http.Request) {
-	s.inflight.Add(1)
-	defer s.inflight.Done()
+	s.modelMu.RLock()
+	defer s.modelMu.RUnlock()
+	if s.unloaded.Load() {
+		writeError(w, http.StatusNotFound, "model not available")
+		return
+	}
 
 	if s.classifier == nil {
 		writeError(w, http.StatusNotImplemented, "text classification is not configured")

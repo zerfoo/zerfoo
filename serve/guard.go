@@ -29,19 +29,19 @@ func WithGuardEvaluator(e GuardEvaluator) ServerOption {
 
 // GuardRequest is the request body for POST /v1/guard.
 type GuardRequest struct {
-	Model  string              `json:"model"`
+	Model  string                 `json:"model"`
 	Input  guardian.GuardianInput `json:"input"`
-	Risks  []string            `json:"risks"`
-	Format string              `json:"format,omitempty"`
-	Think  bool                `json:"think,omitempty"`
+	Risks  []string               `json:"risks"`
+	Format string                 `json:"format,omitempty"`
+	Think  bool                   `json:"think,omitempty"`
 }
 
 // GuardResponse is the response body for POST /v1/guard.
 type GuardResponse struct {
-	Model     string         `json:"model"`
-	Flagged   bool           `json:"flagged"`
-	Verdicts  []VerdictData  `json:"verdicts"`
-	LatencyMs int64          `json:"latency_ms"`
+	Model     string        `json:"model"`
+	Flagged   bool          `json:"flagged"`
+	Verdicts  []VerdictData `json:"verdicts"`
+	LatencyMs int64         `json:"latency_ms"`
 }
 
 // VerdictData holds a single risk verdict in the API response.
@@ -54,9 +54,9 @@ type VerdictData struct {
 
 // GuardBatchRequest is the request body for POST /v1/guard/batch.
 type GuardBatchRequest struct {
-	Model  string                  `json:"model"`
+	Model  string                   `json:"model"`
 	Inputs []guardian.GuardianInput `json:"inputs"`
-	Risks  []string                `json:"risks"`
+	Risks  []string                 `json:"risks"`
 }
 
 // GuardBatchResponse is the response body for POST /v1/guard/batch.
@@ -75,7 +75,7 @@ type GuardBatchResult struct {
 
 // GuardScanRequest is the request body for POST /v1/guard/scan.
 type GuardScanRequest struct {
-	Model string                `json:"model"`
+	Model string                 `json:"model"`
 	Input guardian.GuardianInput `json:"input"`
 }
 
@@ -103,8 +103,12 @@ func NewGuardMetrics(c runtime.Collector) *GuardMetrics {
 }
 
 func (s *Server) handleGuard(w http.ResponseWriter, r *http.Request) {
-	s.inflight.Add(1)
-	defer s.inflight.Done()
+	s.modelMu.RLock()
+	defer s.modelMu.RUnlock()
+	if s.unloaded.Load() {
+		writeError(w, http.StatusNotFound, "model not available")
+		return
+	}
 
 	if s.guardEvaluator == nil {
 		writeError(w, http.StatusNotImplemented, "guardian evaluation is not configured")
@@ -182,8 +186,12 @@ func (s *Server) handleGuard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGuardBatch(w http.ResponseWriter, r *http.Request) {
-	s.inflight.Add(1)
-	defer s.inflight.Done()
+	s.modelMu.RLock()
+	defer s.modelMu.RUnlock()
+	if s.unloaded.Load() {
+		writeError(w, http.StatusNotFound, "model not available")
+		return
+	}
 
 	if s.guardEvaluator == nil {
 		writeError(w, http.StatusNotImplemented, "guardian evaluation is not configured")
@@ -264,8 +272,12 @@ func (s *Server) handleGuardBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGuardScan(w http.ResponseWriter, r *http.Request) {
-	s.inflight.Add(1)
-	defer s.inflight.Done()
+	s.modelMu.RLock()
+	defer s.modelMu.RUnlock()
+	if s.unloaded.Load() {
+		writeError(w, http.StatusNotFound, "model not available")
+		return
+	}
 
 	if s.guardEvaluator == nil {
 		writeError(w, http.StatusNotImplemented, "guardian evaluation is not configured")
