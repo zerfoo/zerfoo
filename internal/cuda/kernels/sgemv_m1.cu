@@ -11,6 +11,7 @@
  */
 
 #include <cuda_runtime.h>
+#include <cstdint>
 
 #define BLOCK_SIZE       256
 #define WARP_SIZE        32
@@ -40,21 +41,35 @@ __global__ void sgemv_m1_kernel(
     const float* row_ptr = A + (size_t)row * N;
     float acc = 0.0f;
 
-    /* Vectorized float4 path for the bulk of the row. */
-    int n4 = N / 4;
-    const float4* row4 = (const float4*)row_ptr;
-    const float4* sx4  = (const float4*)sx;
+    /* Vectorized float4 path for the bulk of the row -- ONLY when row_ptr is
+     * 16-byte aligned. row_ptr = A + row*N; A itself is at least 16-byte
+     * aligned (cudaMalloc), but when N is not a multiple of 4 the per-row
+     * byte offset (row*N*4) is not a multiple of 16 for most rows, so
+     * reinterpreting row_ptr as float4* and __ldg-loading it is a misaligned
+     * vector load -- a hard fault ("misaligned address"), not just slow, and
+     * it poisons the whole CUDA context for the rest of the process (#847
+     * tail, T135.3). Gate the vectorized path on actual pointer alignment
+     * instead of assuming N % 4 == 0; misaligned rows fall back to the
+     * scalar loop below, which is always correct regardless of N or row. */
+    bool row_aligned = ((reinterpret_cast<uintptr_t>(row_ptr) & 0xF) == 0);
 
-    for (int i = lane_id; i < n4; i += WARP_SIZE) {
-        float4 a4 = __ldg(&row4[i]);
-        float4 x4 = sx4[i];
-        acc = __fmaf_rn(a4.x, x4.x, acc);
-        acc = __fmaf_rn(a4.y, x4.y, acc);
-        acc = __fmaf_rn(a4.z, x4.z, acc);
-        acc = __fmaf_rn(a4.w, x4.w, acc);
+    int n4 = row_aligned ? (N / 4) : 0;
+    if (row_aligned) {
+        const float4* row4 = (const float4*)row_ptr;
+        const float4* sx4  = (const float4*)sx;
+
+        for (int i = lane_id; i < n4; i += WARP_SIZE) {
+            float4 a4 = __ldg(&row4[i]);
+            float4 x4 = sx4[i];
+            acc = __fmaf_rn(a4.x, x4.x, acc);
+            acc = __fmaf_rn(a4.y, x4.y, acc);
+            acc = __fmaf_rn(a4.z, x4.z, acc);
+            acc = __fmaf_rn(a4.w, x4.w, acc);
+        }
     }
 
-    /* Handle remainder elements (N not divisible by 4). */
+    /* Scalar remainder: the tail when row_aligned (N not divisible by 4), or
+     * the entire row when !row_aligned. */
     int rem_start = n4 * 4;
     for (int i = rem_start + lane_id; i < N; i += WARP_SIZE) {
         acc = __fmaf_rn(row_ptr[i], sx[i], acc);
