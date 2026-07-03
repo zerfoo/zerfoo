@@ -11,7 +11,7 @@ ifeq ($(CUDA_ARCH),sm_121)
 NVCC_FLAGS += -DFLASH_BLOCK_SIZE=64
 endif
 
-SRCS = counter.cu dequant_q4k.cu elementwise.cu elementwise_fp16.cu flash_attention.cu flash_decode.cu fp8_ops.cu fused_add_rmsnorm.cu fused_norm_add.cu fused_qk_norm_rope.cu fused_rope.cu fused_swiglu.cu gemm_int8.cu gemm_int4.cu gemm_q4.cu gemm_q8.cu gemv_q4k.cu gemv_q4k_sm121.cu gemv_q5k.cu gemv_q6k.cu offset_memcpy.cu rope_select.cu scaled_softmax.cu sgemv_m1.cu transpose.cu gather.cu rmsnorm.cu argmax.cu
+SRCS = counter.cu dequant_q4k.cu dropout.cu elementwise.cu elementwise_fp16.cu flash_attention.cu flash_decode.cu fp8_ops.cu fused_adamw.cu fused_add_rmsnorm.cu fused_norm_add.cu fused_qk_norm_rope.cu fused_rope.cu fused_swiglu.cu gemm_int8.cu gemm_int4.cu gemm_q4.cu gemm_q8.cu gemv_q4k.cu gemv_q4k_sm121.cu gemv_q5k.cu gemv_q6k.cu offset_memcpy.cu rope_select.cu scaled_softmax.cu sgemv_m1.cu tiny_batched_gemm.cu transpose.cu gather.cu rmsnorm.cu argmax.cu
 OBJS = $(SRCS:.cu=.o)
 PIC_OBJS = $(SRCS:.cu=.pic.o)
 LIB  = libkernels.a

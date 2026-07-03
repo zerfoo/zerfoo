@@ -65,6 +65,58 @@ __global__ void kernel_transpose_nd(const float* __restrict__ input,
     output[idx] = input[src_idx];
 }
 
+// ---------- bf16 transpose ----------
+// Transpose is pure data movement (no arithmetic), so the bf16 variants operate
+// on 16-bit elements via `unsigned short` -- a bitwise copy independent of the
+// bf16 numeric interpretation. This keeps bf16 transposes on-device so they are
+// CUDA-graph-capturable (the f32-only kernels forced bf16 onto the CPU engine,
+// whose host memcpy breaks stream capture). ADR-075 lever L4.
+
+__global__ void kernel_transpose_2d_bf16(const unsigned short* __restrict__ input,
+                                          unsigned short* __restrict__ output,
+                                          int rows, int cols) {
+    __shared__ unsigned short tile[TILE_DIM][TILE_DIM + 1];
+
+    int xIdx = blockIdx.x * TILE_DIM + threadIdx.x;
+    int yIdx = blockIdx.y * TILE_DIM + threadIdx.y;
+
+    for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS) {
+        if ((yIdx + j) < rows && xIdx < cols) {
+            tile[threadIdx.y + j][threadIdx.x] = input[(yIdx + j) * cols + xIdx];
+        }
+    }
+    __syncthreads();
+
+    int outX = blockIdx.y * TILE_DIM + threadIdx.x;
+    int outY = blockIdx.x * TILE_DIM + threadIdx.y;
+
+    for (int j = 0; j < TILE_DIM; j += BLOCK_ROWS) {
+        if ((outY + j) < cols && outX < rows) {
+            output[(outY + j) * rows + outX] = tile[threadIdx.x][threadIdx.y + j];
+        }
+    }
+}
+
+__global__ void kernel_transpose_nd_bf16(const unsigned short* __restrict__ input,
+                                          unsigned short* __restrict__ output,
+                                          const int* __restrict__ in_strides,
+                                          const int* __restrict__ out_strides,
+                                          const int* __restrict__ perm,
+                                          int ndim, int total) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total) return;
+
+    int remaining = idx;
+    int src_idx = 0;
+    for (int d = 0; d < ndim; d++) {
+        int coord = remaining / out_strides[d];
+        remaining = remaining % out_strides[d];
+        src_idx += coord * in_strides[perm[d]];
+    }
+
+    output[idx] = input[src_idx];
+}
+
 // ---------- Launcher functions (extern "C" for CGO) ----------
 
 extern "C" {
@@ -86,6 +138,26 @@ cudaError_t launch_transpose_nd(const float* input, float* output,
     int grid = (total + block - 1) / block;
     kernel_transpose_nd<<<grid, block, 0, stream>>>(input, output, in_strides,
                                                      out_strides, perm, ndim, total);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_transpose_2d_bf16(const unsigned short* input, unsigned short* output,
+                                      int rows, int cols, cudaStream_t stream) {
+    dim3 grid((cols + TILE_DIM - 1) / TILE_DIM,
+              (rows + TILE_DIM - 1) / TILE_DIM);
+    dim3 block(TILE_DIM, BLOCK_ROWS);
+    kernel_transpose_2d_bf16<<<grid, block, 0, stream>>>(input, output, rows, cols);
+    return cudaGetLastError();
+}
+
+cudaError_t launch_transpose_nd_bf16(const unsigned short* input, unsigned short* output,
+                                      const int* in_strides, const int* out_strides,
+                                      const int* perm, int ndim, int total,
+                                      cudaStream_t stream) {
+    int block = 256;
+    int grid = (total + block - 1) / block;
+    kernel_transpose_nd_bf16<<<grid, block, 0, stream>>>(input, output, in_strides,
+                                                         out_strides, perm, ndim, total);
     return cudaGetLastError();
 }
 
