@@ -61,7 +61,7 @@ spec:
         - name: MODELS_DIR
           value: "/var/lib/zerfoo/models"
         - name: CUDA_PKGS
-          value: "./internal/cuda/... ./tabular/... ./tests/parity/..."
+          value: "./internal/cuda/... ./internal/xblas/... ./tabular/..."
         - name: LD_LIBRARY_PATH
           value: "/usr/local/cuda/lib64:/opt/zerfoo/lib"
         - name: GOFLAGS
