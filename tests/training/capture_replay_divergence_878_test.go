@@ -59,10 +59,13 @@ import (
 //     GraphCapturer interface. On CPU-only hosts (e.g. darwin dev machines)
 //     the capture runner is a transparent passthrough, so there is nothing to
 //     diverge and the fixture would be meaningless -- we skip.
-//   - ZERFOO_RUN_878_FIXTURE=1 must be set. This fixture is EXPECTED RED on
-//     GPU until zerfoo#878 is fixed in Phase 1, so the env gate keeps standing
-//     validation/CI runs green while preserving the red proof for the E131
-//     GB10 job and the Phase 1 fix loop to run on demand.
+//   - ZERFOO_RUN_878_FIXTURE=1 must be set. The fixture trains 3x40 steps on
+//     the GPU and requires the ZERFOO_UNSAFE_CAPTURE_TRAINING override, so it
+//     stays opt-in rather than part of the standing gate's default sweep.
+//     (Historically it was also expected RED until the #878 root-cause fix --
+//     the allocation-stable loss seed, training/grad_accum.go buildOnesSeed --
+//     landed; it is GREEN on GB10 since that fix and now serves as the
+//     regression gate for it.)
 //
 // The test also sets ZERFOO_UNSAFE_CAPTURE_TRAINING=1: once E129's loud-fail
 // gate (T129.2) lands, constructing a capture-replay training runner will error
@@ -70,7 +73,7 @@ import (
 // through the gate so it can still serve as the Phase 1 red/green proof.
 func TestCaptureReplayGradientDivergence878(t *testing.T) {
 	if os.Getenv("ZERFOO_RUN_878_FIXTURE") != "1" {
-		t.Skip("zerfoo#878 fixture is opt-in and expected RED on GPU until the Phase 1 fix; set ZERFOO_RUN_878_FIXTURE=1 to run it")
+		t.Skip("zerfoo#878 regression fixture is opt-in (GPU training run); set ZERFOO_RUN_878_FIXTURE=1 to run it")
 	}
 
 	ops := numeric.Float32Ops{}
