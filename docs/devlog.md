@@ -2,6 +2,84 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-02: FusedSDPA replay-stable flash scratch (T133.2, #870)
+
+**Type:** fix
+**Tags:** attention, flash-attention, cuda-graph, capture-replay, gpu, gb10, T133.2, #870, #865, #866, L-0006
+
+**Problem:** Training through `training.CaptureReplayRunner` with FusedSDPA
+enabled captured successfully but crashed on replay (~#141 of 511):
+`cudaStreamSynchronize failed: an illegal memory access was encountered`.
+The identically-shaped discrete (non-fused) chain was clean under the same
+capture-replay harness.
+
+**Root cause:** `tryFlashForward` and `tryFlashDecode`
+(`layers/attention/flash.go`, `layers/attention/flash_decode.go`) allocate
+their scratch/output GPU buffers directly via `tensor.NewGPUStorage` (raw
+`cudaMalloc`), bypassing the engine arena entirely -- they operate on bare
+device pointers below the `compute.Engine[T]` abstraction. `tryFlashDecode`
+additionally freed its split-KV scratch (partialO/partialLSE) via a bare
+`defer` on every call; `tryFlashForward`'s output had no per-call free at
+all, relying on Go's GC finalizer to reclaim it once unreferenced. Either
+way, a CUDA graph bakes in the literal device address a captured kernel
+launch reads or writes. Freeing that address between replays -- via `defer`
+(decode) or a finalizer firing on some later, nondeterministic GC cycle
+(forward) -- hands the address to an unrelated later allocation while the
+graph keeps replaying kernels against it. This is exactly the L-0006 class
+("no per-call scratch with defer-frees inside the captured region"), and the
+GC-finalizer variant explains the non-deterministic ~141/511 crash point:
+whichever replay happened to follow the GC cycle that reclaimed the address.
+
+**Fix (contract level, persistent scratch):** Added `gpuScratchBuffer[T]`
+(`layers/attention/flash_scratch.go`), a small cache that allocates a GPU
+buffer once (lazily, on first use) and returns a non-owning `.View()` of it
+on every subsequent call instead of a fresh `cudaMalloc`/`cudaFree`. Cached
+instances live as fields on `ScaledDotProductAttention[T]` (one per
+output/scratch slot: forward output, decode output, decode partialO, decode
+partialLSE), so their lifetime matches the owning SDPA node -- which spans
+the whole capture-replay life of the graph it belongs to, exactly like the
+already-sanctioned "persistent gradient accumulator" / "lazy engine
+workspace" pattern ztensor's `compute.StepScope` doc calls out. Considered
+and rejected `GPUStorage.FreeAtEpoch` (the mechanism T133.1 used for
+epoch-checked pool frees): these buffers are not arena/pool-backed (raw
+`cudaMalloc`, no `EpochMemPool`), so applying it would require plumbing an
+engine/pool reference down into free functions that currently take only an
+`engStream unsafe.Pointer` -- a bigger, unscoped refactor for no benefit over
+simply never freeing the buffer for the node's lifetime.
+
+Growth (an actual `cudaFree` + `cudaMalloc`) only happens when a call needs
+more capacity than currently cached, which the `CaptureReplayRunner` static-
+shape contract guarantees never occurs after the eager warmup steps that
+precede capture (matching ztensor's own capture rule: "All tensors used
+during capture must be pre-allocated").
+
+`tryFlashDecode`'s pre-existing mid-graph `cudaStreamSynchronize` (needed for
+eager/inference callers, illegal under active stream capture) is a separate,
+already-documented limitation -- decode is an inference-time (KV-cache) path
+that `CaptureReplayRunner`'s training walk does not exercise, so it is left
+out of scope here (still tracked in the #865->#870->#878 cluster) rather than
+silently fixed alongside the scratch-lifetime issue.
+
+**Tests:** `layers/attention/flash_capture_replay_test.go` (new, the ADR-091
+regression fixture for #870):
+`TestFusedSDPAForwardReplayStableScratch` drives the real
+`compute.GraphCapturer` state machine (`BeginCapture`/`EndCapture`/
+`ReplayGraph`/`DestroyGraph`) around one `ScaledDotProductAttention.Forward`
+call and replays 511 times -- the issue's exact reproduction scale -- then
+asserts every replay succeeded, the output buffer's device address never
+moved, and the output still matches the CPU reference.
+`TestFlashDecodeScratchReusedAcrossCalls` verifies decode's three scratch
+buffers are reused (stable device address, correct output) across 20 eager
+calls, since decode's capture-compatibility remains out of scope. Both are
+GPU-only (skip without CUDA); the CPU-runnable bailout/fallback wiring is
+unchanged and still covered by `TestTryFlashForwardFallback` and
+`TestSDPAFlashFallbackParity`.
+
+**GB10 evidence:** ref `wave-2-task-T133.2`, `scripts/dgx-validate.sh -pkgs
+"-v -run TestFusedSDPAForwardReplayStableScratch|TestFlashDecodeScratchReusedAcrossCalls|TestTryFlashDecodeEngineStreamParity ./layers/attention/"`,
+pod `<POD_NAME>`: PASS (511/511 replays, no illegal memory access; decode
+scratch reuse verified over 20 calls).
+
 ## 2026-07-02: Fused encoder fwd/bwd audit -- FFN GELU-backward bug + zero gradcheck coverage on FusedSDPA/FFN closed (T135.4)
 
 **Type:** audit + bugfix + coverage
