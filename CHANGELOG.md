@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.57.0](https://github.com/zerfoo/zerfoo/compare/v1.56.0...v1.57.0) (2026-07-04)
+
+
+### Features
+
+* **cmd:** bench_train -seed flag + exact loss bit patterns (T135.5) ([d125201](https://github.com/zerfoo/zerfoo/commit/d125201c4464b61e50825457fb7f9d88894aece0))
+* **docs:** add EXTRA_ENV_PLACEHOLDER marker to validate-arm64 manifest ([2fff208](https://github.com/zerfoo/zerfoo/commit/2fff2081c94b210e006c8bc06fd0033c6dd35549))
+* **scripts:** plumb extra env vars through dgx-validate for env-gated fixtures ([40b6653](https://github.com/zerfoo/zerfoo/commit/40b6653034ab03790d6b0e79ae9fb281f311b511))
+* **timeseries:** seedable weight init + GPU determinism double-run proof (T135.5) ([0f6a316](https://github.com/zerfoo/zerfoo/commit/0f6a316354c3765f5b03914c58538debfd710b90))
+
+
+### Bug Fixes
+
+* **attention:** replay-stable FusedSDPA scratch (T133.2) ([5093a9b](https://github.com/zerfoo/zerfoo/commit/5093a9b71097f9250a618b0d8237d09cf8541aa4))
+* **attention:** stream-order flash-decode on the engine stream (T133.1) ([db8c7b9](https://github.com/zerfoo/zerfoo/commit/db8c7b92e1ea1ba6973ad5aa5777c6b7c58be5df))
+* **ci:** add least-privilege permissions blocks to PR-triggered workflows ([5ebc449](https://github.com/zerfoo/zerfoo/commit/5ebc449d32d61fae897501d825f95c6ce3554eb0))
+* **ci:** pin mutable govulncheck/pip installs to exact versions (CICD-2) ([3154617](https://github.com/zerfoo/zerfoo/commit/31546179d9a2c4c1c88d477b369d03062de2ffcb))
+* **cuda:** bump ztensor to v1.19.1 and guard darwin dlopen probe (T137.1) ([215fcef](https://github.com/zerfoo/zerfoo/commit/215fcefbd76b4872da92db4932bcaeb6ab31b91a))
+* **cuda:** guard FP16 graceful test from poisoning the CUDA context (T135.1) ([047f2cc](https://github.com/zerfoo/zerfoo/commit/047f2cc39607fc6e14897b0b69cc0cebbfc2ff7e))
+* **cuda:** guard sgemv_m1 float4 vectorized load on row pointer alignment ([94834c4](https://github.com/zerfoo/zerfoo/commit/94834c45d32637c392409211e07b22c7e0ee8180))
+* **cuda:** include cooperative_groups/reduce.h in gemv_q4k_sm121 ([d1dd5aa](https://github.com/zerfoo/zerfoo/commit/d1dd5aae9663a5e1d72bab574459c540a546cb3e))
+* **cuda:** port ztensor-required kernels missing from the fork (.so drift) ([46c412c](https://github.com/zerfoo/zerfoo/commit/46c412c210ac1b8f3640a34d18144f6349572e60))
+* **cuda:** port ztensor's flash_decode.cu into zerfoo's kernel fork ([3c02533](https://github.com/zerfoo/zerfoo/commit/3c02533524282d5afd5c94892afb268fb97f67d1))
+* **cuda:** remove CWD-relative dlopen candidates for the kernel library (CUDA-1, T141.1) ([3f0d2fd](https://github.com/zerfoo/zerfoo/commit/3f0d2fd1b90268a262d8ba1ccc92edaa9569f4eb))
+* **distributed:** wire mTLS into worker gRPC server, refuse non-loopback without TLS ([d6b2562](https://github.com/zerfoo/zerfoo/commit/d6b256212a381941020410508d0fb86f765db3e7))
+* **gguf:** bounds-check tensor offset before mmap slice (F2, T139.2) ([ab01d5d](https://github.com/zerfoo/zerfoo/commit/ab01d5dfc63edde2d735f29d8d974c6a2a6566d4))
+* **gguf:** check-before-multiply on tensor element-count overflow (F1, T139.1) ([285fafe](https://github.com/zerfoo/zerfoo/commit/285fafe445c96d09f60fe1ec25094e53fa378c21))
+* **gguf:** restore missing math import in loader_mmap.go and split_file.go ([ca1eb41](https://github.com/zerfoo/zerfoo/commit/ca1eb41d46cca95e8fb444c994fb141ee1f553bc))
+* **inference:** serialize SpeculativeGenerate through the graph mutex ([5e409a9](https://github.com/zerfoo/zerfoo/commit/5e409a988d8786309136c2e825d1ea5959943708))
+* **layers:** FFN GELU backward always differentiated the SwiGLU branch ([dd46acd](https://github.com/zerfoo/zerfoo/commit/dd46acde3ee5843aed4af5ce5de73dbf2808ec48))
+* **scripts:** fail loudly on zero matched tests (T135.1) ([9c8e4e4](https://github.com/zerfoo/zerfoo/commit/9c8e4e45243d4c8824c0446b5eef787415f32174))
+* **serve:** bound error-metric label cardinality via route normalization ([9922a0b](https://github.com/zerfoo/zerfoo/commit/9922a0bb602293ac0debca085bfc323fffecb071))
+* **serve:** close model-delete TOCTOU and WaitGroup-misuse race (CONC-H2) ([dcf1c90](https://github.com/zerfoo/zerfoo/commit/dcf1c90e25722b3aa4acbc4fbe22bb8bb99b75e1))
+* **serve:** validate LoRA adapter name against traversal (SERVE-2) ([3ad21c3](https://github.com/zerfoo/zerfoo/commit/3ad21c38ecd4e88e82c8793510e3a02501c1f9e1))
+* **training:** allocation-stable cached loss seed (non-arena device storage) ([42b87a9](https://github.com/zerfoo/zerfoo/commit/42b87a910282c7ef7cd3d1b9bc7789e71d875555))
+* **training:** remove [#878](https://github.com/zerfoo/zerfoo/issues/878) containment gate (T133.4) ([9968843](https://github.com/zerfoo/zerfoo/commit/9968843b1ec932ce8d1b24945067570822c9be5a))
+
 ## [1.56.0](https://github.com/zerfoo/zerfoo/compare/v1.55.1...v1.56.0) (2026-07-03)
 
 
