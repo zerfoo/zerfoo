@@ -2,6 +2,46 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-03: Wave Sec-1 landmine -- two parallel PRs editing the same file's imports broke main (T139.1/T139.2)
+
+**Type:** finding + hotfix
+**Tags:** ci, build-break, parallel-agents, gguf, T139.1, T139.2, deep-review-002
+
+**Problem:** After merging all 10 Wave Sec-1 security PRs (deep-review 002 remediation,
+dispatched as a single fully-parallel no-GPU wave), `main` failed to build:
+`model/gguf/loader_mmap.go:44:18: undefined: math` and the identical error in
+`split_file.go:164`. Caught by PR #948's (T142.1) CI run, not by any of the
+merges themselves -- every individual PR's CI was green in isolation.
+
+**Root cause:** T139.1 (fix F1, PR #945) and T139.2 (fix F2, PR #940) both
+touched `model/gguf/loader_mmap.go` and `split_file.go` independently, in
+parallel worktrees, unaware of each other's changes. T139.1's fix moved the
+element-count overflow check into a new shared `computeNumElements` helper in
+`loader.go`, which made `math` appear locally unused in `loader_mmap.go`/
+`split_file.go` from that agent's isolated view -- so its diff dropped the
+import. T139.2's fix (merged first, PR #940) added `math.MaxInt64` bounds
+checks to those same two files. Each PR's own CI ran against a version of
+`main` that didn't yet have the other's change, so neither individually
+looked broken; the combination -- T139.2's usage plus T139.1's (correct,
+in isolation) import removal -- only became invalid once both were on `main`
+together. Standard git rebase-before-push (which both agents did) does not
+catch this: rebasing replays your own diff onto the new base; it doesn't
+re-derive "is this import still used" against the sibling PR's changes.
+
+**Fix:** restored the `math` import in both files directly on `main`
+(commit ca1eb41d), verified `go build ./...`, `go vet ./model/gguf/...`,
+`go test ./model/gguf/...` all green, then rebased and re-verified the
+still-open PR (#948) before merging.
+
+**Lesson (promote to lore):** when dispatching multiple parallel agents
+that may touch the same file for *different, independent* fixes, a clean
+individual-PR CI run is not sufficient proof that `main` stays green after
+all of them land -- the coordinator must verify a full `go build ./...` /
+package test run on `main` itself after each merge in a densely-overlapping
+wave, not just trust each PR's own CI. This is a smaller-scale instance of
+the exact "wire the defense you write" / "verify the whole, not the part"
+theme deep-review 002 itself flagged.
+
 ## 2026-07-03: Capture/replay cluster closed -- containment gate removed, #865/#870/#878 all fixed at the contract level (T133.4)
 
 **Type:** fix + cluster closure
