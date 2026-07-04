@@ -2,6 +2,7 @@ package gguf
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"

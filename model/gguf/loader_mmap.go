@@ -2,6 +2,7 @@ package gguf
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/zerfoo/ztensor/tensor"
 )
