@@ -252,6 +252,16 @@ func NewGenerator[T tensor.Numeric](
 // Graph returns the underlying computation graph.
 func (gen *Generator[T]) Graph() *graph.Graph[T] { return gen.graph }
 
+// LockGraph acquires the generator's graph mutex. The graph is not
+// concurrency-safe, so any caller that runs Forward on gen.Graph() outside of
+// Generate/GenerateStream (e.g. a speculative-decode path that builds its own
+// generator over this Generator's graph) must hold this lock for the
+// duration of that work to serialize with normal generation.
+func (gen *Generator[T]) LockGraph() { gen.mu.Lock() }
+
+// UnlockGraph releases the generator's graph mutex acquired by LockGraph.
+func (gen *Generator[T]) UnlockGraph() { gen.mu.Unlock() }
+
 // PJRTPlan returns the PJRT plan, or nil if PJRT is not enabled.
 func (gen *Generator[T]) PJRTPlan() *graph.PJRTPlan[T] { return gen.pjrtPlan }
 

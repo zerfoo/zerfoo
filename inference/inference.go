@@ -869,6 +869,14 @@ func (m *Model) SpeculativeGenerate(
 		NumLayers:  m.config.NumLayers,
 	}
 
+	// The target graph is not concurrency-safe and is shared with every
+	// normal (non-speculative) generation path, which serializes on this
+	// same mutex (see generate.Generator.Generate / InferenceSession.Generate).
+	// Hold it for the whole speculative run so a concurrent normal request
+	// can't call Forward on the same graph at the same time (CONC-H1).
+	m.generator.LockGraph()
+	defer m.generator.UnlockGraph()
+
 	sg := generate.NewSpeculativeGenerator(
 		draft.generator.Graph(),
 		m.generator.Graph(),
