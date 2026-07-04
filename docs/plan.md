@@ -106,7 +106,7 @@ Component: training/attention + ztensor boundary. Acceptance: all three issues c
   - Root-cause the silent gradient divergence: suspect gradAccumulator.seeds / device-resident loss seed built via engine.Fill being captured with stale or aliased state across replays. Fix at the CONTRACT level (allocation-stable captured operands; SaveForBackward-style pinning for captured state), not consumer special-casing. Localize with ZTENSOR_ARENA_POISON=1 if needed.
   - Acceptance: tests/training/capture_replay_divergence_878_test.go (ZERFOO_RUN_878_FIXTURE=1) GREEN on GB10 via `scripts/dgx-validate.sh -pkgs "-v -run TestCaptureReplayGradientDivergence878 ./tests/training/"`; capture-on and eager trajectories converge alike.
 - [x] S133.3.1 GB10 green proof + devlog  Owner: agent  Est: 1h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T133.3]  (done 2026-07-03, delivered inline in PR #937: pods ...1783116105/...1783117013 bit-identical baseline/eager-reset/capture-reset trajectories; devlog entry included)
-- [ ] T133.4 Remove the containment gate; release; close the cluster  Owner: agent  Est: 2h  verifies: [UC-H2-003]  kind: agent  (code done 2026-07-03, PR pending review -- gate removed, fixture ungated, CPU suite green, docs/lore.md L-0006 updated; GB10 validation, issue closure #865/#870/#878, and release are held for coordinator: this task's sandbox has curl denied by permission policy so scripts/dgx-validate.sh could not be submitted, and closing issues/releasing are left as explicit coordinator confirmations per instruction)
+- [x] T133.4 Remove the containment gate; release; close the cluster  Owner: agent  Est: 2h  verifies: [UC-H2-003]  kind: agent  (done 2026-07-03, PR #946 -- gate removed, fixture ungated (SKIPs cleanly, not crashes, with the gate gone), docs/lore.md L-0006 updated; coordinator ran GB10 proof: {"build":"pass","vet":"pass","cuda_tests":"pass","failures":[]}; #865/#870/#878 closed with fix-summary comments referencing PRs #928/#933/#937; release-please will tag from the merged conventional commits)
   - Remove the T129.2 loud-fail gate from NewCaptureReplayRunner (keep the constructor's error return; keep ZERFOO_DISABLE_CUDA_GRAPH); un-gate the fixture (drop ZERFOO_UNSAFE_CAPTURE_TRAINING from it; keep ZERFOO_RUN_878_FIXTURE as a long-test gate only if runtime demands). Ship release; close #865, #870, #878 with fix summaries; update docs/lore.md L-0006 with the resolution.
 
 ### E134: gemma4e decode -- time-boxed disposition
@@ -169,10 +169,10 @@ Component: docs + tests/parity + bench. The public support claim becomes this ma
 
 Component: model/gguf + model/registry. Acceptance: F1/F2/F3 closed with a shared, tested helper; OCI-1/OCI-2 closed. Decision rationale: ADR-094 (treat the model file as first-class untrusted input). Source: docs/deep-reviews/002-full-codebase.md F1/F2/F3/OCI-1/OCI-2.
 
-- [ ] T139.1 Fix F1: GGUF element-count integer-overflow bypasses the size cap  Owner: TBD  Est: 3h  verifies: [UC-H2-007]  kind: agent
+- [x] T139.1 Fix F1: GGUF element-count integer-overflow bypasses the size cap  Owner: agent  Est: 3h  verifies: [UC-H2-007]  kind: agent  (done 2026-07-03, PR #945: shared computeNumElements helper, all 4 duplicate sites deduplicated; attack shape returns error not panic)
   - `model/gguf/loader.go:55-64` (dup in `loader_mmap.go:23-33`, `split_file.go:150-159,219-228`) multiplies then checks with strict `>`, so the running product can land on exactly `1<<34` and a later dimension overflows int64 to negative, passing the check and reaching `make([]byte, negativeSize)`. Fix: check `numElements > (1<<34)/int64(d)` BEFORE multiplying, at all four sites; extract into one shared `computeNumElements(ti) (int64, error)` helper so the fix exists in exactly one place (per ADR-094).
   - Acceptance: a crafted `Dimensions = [131072, 131072, 2147483647]` GGUF returns an error, not a panic, on every one of the four call sites.
-- [ ] T139.2 Fix F2: GGUF tensor offset signed-conversion out-of-bounds panic  Owner: TBD  Est: 2h  verifies: [UC-H2-007]  kind: agent
+- [x] T139.2 Fix F2: GGUF tensor offset signed-conversion out-of-bounds panic  Owner: agent  Est: 2h  verifies: [UC-H2-007]  kind: agent  (done 2026-07-03, PR #940: full bounds check before mmap slice at both sites; repro'd the exact panic pre-fix, confirmed clean error post-fix)
   - `model/gguf/loader_mmap.go:51-57` (dup `split_file.go:171-177`, the DEFAULT mmap load path) converts a file-controlled `uint64` offset to `int64` with no unsigned validation; a huge offset wraps negative and slips past the single `end >` check. Fix: validate `ti.Offset <= math.MaxInt64` and bounds-check `offset >= 0 && offset <= len(mapped) && sz <= len(mapped)-offset` before slicing.
   - Acceptance: `ti.Offset = 0x8000000000000000` returns an error, not a slice-bounds panic.
 - [ ] T139.3 Fix F3: cap GGUF tensor dimension count  Owner: TBD  Est: 1h  verifies: [UC-H2-007]  kind: agent
@@ -190,7 +190,7 @@ Component: model/gguf + model/registry. Acceptance: F1/F2/F3 closed with a share
 
 Component: distributed/. Acceptance: DIST-1 closed (mTLS wired, non-loopback requires TLS); DIST-2 closed (coordinator authenticates registration). Decision rationale: ADR-094 (the distributed wire is untrusted network, fail closed not open).
 
-- [ ] T140.1 Fix DIST-1: wire mTLS into the worker gRPC server  Owner: TBD  Est: 4h  verifies: [UC-H2-008]  kind: agent
+- [x] T140.1 Fix DIST-1: wire mTLS into the worker gRPC server  Owner: agent  Est: 4h  verifies: [UC-H2-008]  kind: agent  (done 2026-07-03, PR #947: TLS wired into worker_node.go, non-loopback bind without TLS refuses to start; also threaded TLS into GrpcStrategyConfig so the client-side dial is no longer forced insecure)
   - `distributed/worker_node.go:64` creates `grpc.NewServer()` with zero opts; `distributed/tlsconfig.go`'s `RequireAndVerifyClientCert` builder is correct but has no caller. Fix: if `wn.config.TLS != nil`, wire `wn.config.TLS.ServerCredentials()` via `grpc.Creds`; else refuse to start on a non-loopback `WorkerAddress`.
   - Acceptance: a loopback bind with no TLS config still starts (dev UX unchanged); a routable bind with no TLS config returns a startup error; a routable bind with TLS config starts and requires client certs.
 - [ ] T140.2 Default the worker CLI example to loopback; add --tls-* flags  Owner: TBD  Est: 2h  verifies: [UC-H2-008]  kind: agent  blocked-by: [T140.1]
@@ -204,7 +204,7 @@ Component: distributed/. Acceptance: DIST-1 closed (mTLS wired, non-loopback req
 
 Component: internal/cuda + internal/*/purego. Acceptance: CUDA-1 closed (no CWD/bare-soname dlopen); CUDA-2 closed or explicitly mitigated (absolute vendor paths / validated resolution). Decision rationale: ADR-094 (vetted absolute paths only).
 
-- [ ] T141.1 Fix CUDA-1: remove CWD dlopen candidates for the kernel library  Owner: TBD  Est: 2h  verifies: [UC-H2-009]  kind: agent
+- [x] T141.1 Fix CUDA-1: remove CWD dlopen candidates for the kernel library  Owner: agent  Est: 2h  verifies: [UC-H2-009]  kind: agent  (done 2026-07-03, PR #943: kernelLibPaths now trusted-absolute-only, with a validated non-world-writable env override for dev builds)
   - `internal/cuda/purego.go:164-169` includes `"./libkernels.so"` (and a bare `"libkernels.so"`) in `kernelLibPaths`, loaded by `DlopenKernels`; `dlopen` runs ELF constructors on load, so a planted file in the process's working directory gets code execution. Fix: drop both entries; keep only the trusted absolute path (`/opt/zerfoo/lib/libkernels.so`); if a configurable override is needed, read one absolute path from an env var and `os.Stat`-verify it is not world-writable before loading.
   - Acceptance: `kernelLibPaths` contains zero relative or CWD-implying entries; a test asserts the loader rejects a relative-path candidate.
 - [ ] T141.2 Fix CUDA-2: prefer absolute vendor-library paths  Owner: TBD  Est: 3h  verifies: [UC-H2-009]  kind: agent  blocked-by: [T141.1]
@@ -216,10 +216,10 @@ Component: internal/cuda + internal/*/purego. Acceptance: CUDA-1 closed (no CWD/
 
 Component: inference/, serve/. Acceptance: CONC-H1/H2 closed (High); CONC-M1/M2/L1 closed (Medium/Low). Decision rationale: existing `graphMu` design is correct; these are entrypoints that escaped it, not a broken model -- fix the entrypoints, do not redesign the lock.
 
-- [ ] T142.1 Fix CONC-H1: route SpeculativeGenerate through graphMu  Owner: TBD  Est: 3h  verifies: [UC-H2-010]  kind: agent
+- [x] T142.1 Fix CONC-H1: route SpeculativeGenerate through graphMu  Owner: agent  Est: 3h  verifies: [UC-H2-010]  kind: agent  (done 2026-07-03, PR #948: LockGraph/UnlockGraph exposed on Generator; race+corruption reproduced pre-fix, clean post-fix)
   - `inference/inference.go:872-882` builds a speculative generator over the shared singleton graphs and calls `Forward` with no lock, while every normal generation path serializes on `gen.mu` (`generate/session.go:91`). Two concurrent requests (one speculative, one normal) then mutate the same stateful graph simultaneously. Fix: expose `LockGraph()`/`UnlockGraph()` on `Generator` and wrap `SpeculativeGenerate`'s call with it.
   - Acceptance: with `WithDraftModel` enabled, a concurrent normal + speculative request pair under `-race` shows no race and no corruption.
-- [ ] T142.2 Fix CONC-H2: model-delete TOCTOU + WaitGroup misuse  Owner: TBD  Est: 3h  verifies: [UC-H2-010]  kind: agent
+- [x] T142.2 Fix CONC-H2: model-delete TOCTOU + WaitGroup misuse  Owner: agent  Est: 3h  verifies: [UC-H2-010]  kind: agent  (done 2026-07-03, PR #944: replaced inflight WaitGroup with an RWMutex across all 7 affected handlers, incl. guard.go/classify.go beyond the review's literal scope since they shared the same hazard)
   - `serve/handlers.go:19,172,343` call `s.inflight.Add(1)` at handler entry with no `unloaded` recheck, racing `handlers.go:331-333`'s `unloaded.Store(true)` -> `inflight.Wait()` -> `s.model.Close()`. Fix: recheck `s.unloaded.Load()` immediately after `Add(1)` and back out cleanly if set (or replace the Add/Wait pair with an RWMutex: `RLock` per handler, `Lock` before close).
   - Acceptance: a race test interleaving `DELETE /v1/models/{id}` with a concurrent chat request under `-race` shows neither a use-after-close nor a `WaitGroup misuse` panic.
 - [ ] T142.3 Fix CONC-M1: RateLimiter unbounded bucket map  Owner: TBD  Est: 2h  verifies: [UC-H2-010]  kind: agent
@@ -235,9 +235,9 @@ Component: inference/, serve/. Acceptance: CONC-H1/H2 closed (High); CONC-M1/M2/
 
 Component: serve/. Acceptance: SERVE-1/2 closed (High/conditional-High); SERVE-3/3b/4/5/6/7, SSRF-1, HF-1 closed (Medium/Low/Info). Decision rationale: mirror the traversal defense already correct on the HF/OCI download path (`pull.go:198-209`) rather than inventing a new pattern.
 
-- [ ] T143.1 Fix SERVE-2: LoRA adapter-name path traversal  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent
+- [x] T143.1 Fix SERVE-2: LoRA adapter-name path traversal  Owner: agent  Est: 2h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-03, PR #942: anchored regex + containment check mirroring pull.go's pattern)
   - `serve/adapter.go:33,44` splits the `model` field on `:` and joins the remainder verbatim into a file path with no validation; `filepath.Join` cleans `../` so a crafted name escapes the adapter directory. Fix: an anchored name regex (`^[A-Za-z0-9_-]{1,64}$`) plus a `filepath.Clean` + prefix-containment check, mirroring `model/registry/pull.go:198-209`.
-- [ ] T143.2 Fix SERVE-1: bound error-metric label cardinality  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent
+- [x] T143.2 Fix SERVE-1: bound error-metric label cardinality  Owner: agent  Est: 2h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-03, PR #941: normalizeRoute built from the actual mux routes; also fixed a residual leak in the review's own sketch where /v1/models/{id} would still echo the attacker-chosen id)
   - `serve/metrics.go:93-95`'s `RecordError` encodes the raw, pre-auth `r.URL.Path` into a permanent counter name (`server.go:366`, outside `authMiddleware`). Fix: normalize to a matched route template, collapsing unknown paths to a single `"other"` bucket.
 - [ ] T143.3 Fix SERVE-3: cap /v1/embeddings input array size  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
   - `handlers.go:342-400` has no element-count cap while `/v1/classify`/`/v1/guard/batch` cap at 256. Fix: mirror `maxClassifyBatch = 256`.
@@ -264,7 +264,7 @@ Component: .github/workflows, deploy/. Acceptance: CICD-1/2 closed (this phase, 
 
 - [x] T144.1 Fix CICD-1: add permissions blocks to PR-triggered workflows  Owner: agent  Est: 1h  verifies: [UC-H2-012]  kind: agent  (done 2026-07-03, PR #938: contents:read added to ci.yml/arm64-build.yml/golden-staleness.yml; no job in any of the three needed a broader scope)
   - `ci.yml`, `arm64-build.yml`, `golden-staleness.yml` run on `pull_request` (build/run PR code) with no `permissions:` block, so jobs inherit the repo/org default `GITHUB_TOKEN` scope. Fix: add `permissions: contents: read` to all three, matching the workflows that already do this correctly.
-- [ ] T144.2 Fix CICD-2: pin mutable tool/package installs in CI  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+- [x] T144.2 Fix CICD-2: pin mutable tool/package installs in CI  Owner: agent  Est: 1h  verifies: [UC-H2-012]  kind: agent  (done 2026-07-03, PR #939: govulncheck pinned to v1.5.0, torch/numpy pinned to verified-current versions on the CPU index)
   - `ci.yml:38` installs `govulncheck@latest`; `golden-staleness.yml:15` installs unpinned `torch`/`numpy` via pip. Fix: pin exact versions (or hash-checked installs) for both.
 - [ ] T144.3 Fix CICD-3: scope the benchmark PR-comment token  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
   - `benchmark.yml` grants `pull-requests: write` to the whole job that builds/runs PR code (same-repo branch PRs get the broad write scope; fork PRs already get read-only). Fix: scope the write permission to only the commenting step/job.
@@ -335,7 +335,7 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 
 ### Wave 4: Proof + ship (4 agents)
 - [x] S133.3.1 GB10 green proof -- DONE 2026-07-03 (PR #937)
-- [ ] T133.4 remove gate + release + close cluster
+- [x] T133.4 remove gate + release + close cluster -- DONE 2026-07-03 (PR #946; #865/#870/#878 closed)
 - [ ] T136.4 + S136.4.1 Ollama re-run  (GPU-serial with S133.3.1)
 - [ ] T135.6 close #847/#921
 
@@ -343,17 +343,17 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 - [ ] T136.5 publish matrix
 - [ ] T138.1 plan Phase 2
 
-### Wave Sec-1: Security fixes, tier 1 + top tier 2 (10 agents; no GPU; can run any time in parallel with Waves 1-5)
-- [ ] T139.1 fix F1 GGUF overflow  verifies: [UC-H2-007]
-- [ ] T139.2 fix F2 GGUF offset  verifies: [UC-H2-007]
-- [ ] T140.1 wire mTLS into worker  verifies: [UC-H2-008]
-- [ ] T141.1 remove CWD dlopen  verifies: [UC-H2-009]
-- [ ] T142.1 fix CONC-H1 speculative lock  verifies: [UC-H2-010]
-- [ ] T142.2 fix CONC-H2 delete TOCTOU  verifies: [UC-H2-010]
-- [ ] T143.1 fix SERVE-2 adapter traversal  verifies: [UC-H2-011]
-- [ ] T143.2 fix SERVE-1 metric cardinality  verifies: [UC-H2-011]
+### Wave Sec-1: Security fixes, tier 1 + top tier 2 (10 agents; no GPU; can run any time in parallel with Waves 1-5) -- 10/10 DONE 2026-07-03
+- [x] T139.1 fix F1 GGUF overflow  verifies: [UC-H2-007] -- DONE (PR #945)
+- [x] T139.2 fix F2 GGUF offset  verifies: [UC-H2-007] -- DONE (PR #940)
+- [x] T140.1 wire mTLS into worker  verifies: [UC-H2-008] -- DONE (PR #947)
+- [x] T141.1 remove CWD dlopen  verifies: [UC-H2-009] -- DONE (PR #943)
+- [x] T142.1 fix CONC-H1 speculative lock  verifies: [UC-H2-010] -- DONE (PR #948)
+- [x] T142.2 fix CONC-H2 delete TOCTOU  verifies: [UC-H2-010] -- DONE (PR #944)
+- [x] T143.1 fix SERVE-2 adapter traversal  verifies: [UC-H2-011] -- DONE (PR #942)
+- [x] T143.2 fix SERVE-1 metric cardinality  verifies: [UC-H2-011] -- DONE (PR #941)
 - [x] T144.1 fix CICD-1 permissions blocks  verifies: [UC-H2-012] -- DONE 2026-07-03 (PR #938)
-- [ ] T144.2 fix CICD-2 pin installs  verifies: [UC-H2-012]
+- [x] T144.2 fix CICD-2 pin installs  verifies: [UC-H2-012] -- DONE (PR #939)
 
 ### Wave Sec-2: Security fixes, tier 2 remainder + tier 3 start (10 agents)
 - [ ] T139.3 fix F3 dim cap  verifies: [UC-H2-007]
@@ -443,6 +443,13 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 ---
 
 ## Progress Log
+
+### 2026 07 03 (latest) -- Change Summary: Wave Sec-1 complete (10/10); T133.4 closes the capture cluster; E133 fully done
+
+- **E133 (capture/replay cluster) is CLOSED.** T133.4 (PR #946) removed the T129.2 containment gate and un-gated the #878 fixture (drops ZERFOO_UNSAFE_CAPTURE_TRAINING; ZERFOO_RUN_878_FIXTURE stays as a long-test opt-in). The agent's sandbox had curl denied by permission policy, so it correctly stopped short of GB10 validation/issue-closure/release rather than route around the restriction; the coordinator ran `scripts/dgx-validate.sh` directly ({"build":"pass","vet":"pass","cuda_tests":"pass","failures":[]}, fixture SKIPs cleanly with the gate gone) and closed #865 (already closed via T133.1), #870, #878 with fix-summary comments referencing PRs #928/#933/#937. Release-please will tag from the merged conventional commits.
+- **Wave Sec-1 is 10/10 DONE** (deep-review 002, dispatched as a fully parallel no-GPU wave): T139.1 F1 overflow (PR #945), T139.2 F2 offset bounds (PR #940), T140.1 DIST-1 mTLS (PR #947), T141.1 CUDA-1 CWD dlopen removal (PR #943), T142.1 CONC-H1 speculative lock (PR #948), T142.2 CONC-H2 delete TOCTOU (PR #944, extended scope to guard.go/classify.go beyond the review's literal enumeration since they shared the same WaitGroup hazard), T143.1 SERVE-2 adapter traversal (PR #942), T143.2 SERVE-1 metric cardinality (PR #941, also fixed a residual leak in the review's own fix sketch), T144.1 CICD-1 permissions (PR #938), T144.2 CICD-2 pinning (PR #939). All 9 High findings from deep-review 002 that were in scope for tier 1/2 are now fixed with repro tests; CICD-1/2 (Objective 6's explicit CICD bar) are fixed.
+- Infra note: multiple parallel agents (and the coordinator) hit intermittent `gh` CLI 401s during this wave -- confirmed NOT a real credential or rate-limit issue (token valid, 4997/5000 core rate remaining) but transient macOS Keychain contention under ~10+ concurrent `gh` processes; every occurrence resolved on retry within seconds. No action needed, but worth knowing if it recurs at larger fan-out.
+- Remaining for Objective 6 / D7: T139.3/4/5 + S139.3.1/S139.5.1 (OCI + F3), T140.2/3 + S140.3.1 (worker CLI flags + coordinator auth), T141.2 + S141.2.1 (CUDA-2), T142.3/4/5 + S142.5.1 (CONC-M1/M2/L1), T143.3-10 + S143.10.1 (remaining SERVE/SSRF/HF findings), T144.3-7 (remaining CICD + SLSA), T145.1/T145.2 (CLI flag wiring + closeout) -- these are Waves Sec-2 through Sec-5.
 
 ### 2026 07 03 (later still) -- Change Summary: T133.3 closes the capture cluster's keystone bug (#878)
 
