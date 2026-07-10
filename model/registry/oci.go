@@ -202,6 +202,13 @@ func (r *Registry) Pull(ctx context.Context, ref string, destPath string) error 
 		return fmt.Errorf("download blob: %w", err)
 	}
 
+	// Verify the blob content matches the requested digest before writing
+	// anything to disk. Without this check a malicious or MITM'd registry
+	// could serve arbitrary bytes for any digest.
+	if sum := sha256Digest(data); sum != ggufLayer.Digest {
+		return fmt.Errorf("oci: blob digest mismatch: got %s want %s", sum, ggufLayer.Digest)
+	}
+
 	if err := os.WriteFile(destPath, data, 0o600); err != nil {
 		return fmt.Errorf("write model file: %w", err)
 	}
