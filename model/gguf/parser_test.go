@@ -307,9 +307,9 @@ func TestGetUint32_WrongType(t *testing.T) {
 func TestParse_TensorCountOverflow(t *testing.T) {
 	var buf bytes.Buffer
 	bw(&buf, Magic)
-	bw(&buf, uint32(3))           // version
-	bw(&buf, uint64(100_001))     // tensor count exceeds limit
-	bw(&buf, uint64(0))           // metadata kv count
+	bw(&buf, uint32(3))       // version
+	bw(&buf, uint64(100_001)) // tensor count exceeds limit
+	bw(&buf, uint64(0))       // metadata kv count
 	_, err := Parse(bytes.NewReader(buf.Bytes()))
 	if err == nil {
 		t.Fatal("expected error for tensor count > 100000")
@@ -319,11 +319,106 @@ func TestParse_TensorCountOverflow(t *testing.T) {
 func TestParse_MetadataKVCountOverflow(t *testing.T) {
 	var buf bytes.Buffer
 	bw(&buf, Magic)
-	bw(&buf, uint32(3))           // version
-	bw(&buf, uint64(0))           // tensor count
-	bw(&buf, uint64(1_000_001))   // metadata kv count exceeds limit
+	bw(&buf, uint32(3))         // version
+	bw(&buf, uint64(0))         // tensor count
+	bw(&buf, uint64(1_000_001)) // metadata kv count exceeds limit
 	_, err := Parse(bytes.NewReader(buf.Bytes()))
 	if err == nil {
 		t.Fatal("expected error for metadata kv count > 1000000")
+	}
+}
+
+// TestParse_TensorDimsExceedsMax verifies a crafted tensor declaring more
+// than maxTensorDims dimensions is rejected with an error (deep-review 002,
+// finding F3) rather than allocating an unbounded []uint64 or crashing
+// later in shape-dependent code.
+func TestParse_TensorDimsExceedsMax(t *testing.T) {
+	tensors := []TensorInfo{{
+		Name:       "attack.too_many_dims",
+		Dimensions: make([]uint64, maxTensorDims+1), // 9 dims, all zero-valued
+		Type:       GGMLTypeF32,
+		Offset:     0,
+	}}
+	r := buildSyntheticGGUF(t, nil, tensors)
+	_, err := Parse(r)
+	if err == nil {
+		t.Fatal("expected error for tensor with more than maxTensorDims dimensions")
+	}
+}
+
+// TestParse_TensorDimsHugeCount verifies the numDims cap rejects a
+// file-controlled dimension count before attempting to allocate or read any
+// per-dimension values -- the actual F3 attack shape, where a corrupt file
+// declares an enormous numDims (e.g. near uint32 max) that would otherwise
+// force `make([]uint64, numDims)` to attempt a multi-gigabyte allocation.
+func TestParse_TensorDimsHugeCount(t *testing.T) {
+	var buf bytes.Buffer
+	bw(&buf, Magic)
+	bw(&buf, uint32(3)) // version
+	bw(&buf, uint64(1)) // tensor count
+	bw(&buf, uint64(0)) // metadata kv count
+	writeTestString(&buf, "attack.huge_ndims")
+	bw(&buf, uint32(0xFFFFFFFF)) // numDims: ~4 billion, no dimension data follows
+
+	_, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err == nil {
+		t.Fatal("expected error for tensor with huge (file-controlled) dimension count")
+	}
+}
+
+// TestParse_TensorDimsAtMax verifies exactly maxTensorDims dimensions is
+// still accepted -- the cap must not be stricter than documented.
+func TestParse_TensorDimsAtMax(t *testing.T) {
+	dims := make([]uint64, maxTensorDims)
+	for i := range dims {
+		dims[i] = 2
+	}
+	tensors := []TensorInfo{{
+		Name:       "test.at_max_dims",
+		Dimensions: dims,
+		Type:       GGMLTypeF32,
+		Offset:     0,
+	}}
+	r := buildSyntheticGGUF(t, nil, tensors)
+	f, err := Parse(r)
+	if err != nil {
+		t.Fatalf("Parse: unexpected error at exactly maxTensorDims dimensions: %v", err)
+	}
+	if len(f.Tensors) != 1 || len(f.Tensors[0].Dimensions) != maxTensorDims {
+		t.Fatalf("Tensors[0].Dimensions length = %d, want %d", len(f.Tensors[0].Dimensions), maxTensorDims)
+	}
+}
+
+// TestParse_TensorDimsLegitimateShapes verifies real-world tensor ranks
+// (1D bias through 4D conv-like kernels) all parse cleanly and are
+// unaffected by the maxTensorDims cap.
+func TestParse_TensorDimsLegitimateShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		dims []uint64
+	}{
+		{"1D bias", []uint64{4096}},
+		{"2D dense weight", []uint64{4096, 4096}},
+		{"3D conv-like kernel", []uint64{64, 3, 3}},
+		{"4D conv kernel", []uint64{64, 32, 3, 3}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tensors := []TensorInfo{{
+				Name:       "test." + tt.name,
+				Dimensions: tt.dims,
+				Type:       GGMLTypeF32,
+				Offset:     0,
+			}}
+			r := buildSyntheticGGUF(t, nil, tensors)
+			f, err := Parse(r)
+			if err != nil {
+				t.Fatalf("Parse: unexpected error: %v", err)
+			}
+			if len(f.Tensors) != 1 || len(f.Tensors[0].Dimensions) != len(tt.dims) {
+				t.Fatalf("Dimensions = %v, want length %d", f.Tensors[0].Dimensions, len(tt.dims))
+			}
+		})
 	}
 }

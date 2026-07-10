@@ -12,6 +12,16 @@ import (
 // Magic is the GGUF file magic number ("GGUF" in little-endian).
 const Magic uint32 = 0x46554747 // "GGUF" in little-endian
 
+// maxTensorDims is the maximum number of dimensions a single tensor may
+// declare. Real model tensors never exceed 4 dimensions (attention weights
+// are the deepest common case); 8 leaves generous headroom while still
+// bounding the file-controlled numDims value read below. Without this cap, a
+// crafted or corrupt GGUF file can set numDims to an arbitrarily large
+// uint32 (e.g. ~4 billion), forcing `make([]uint64, numDims)` to attempt a
+// multi-gigabyte allocation before a single dimension value has even been
+// validated -- a denial-of-service vector (deep-review 002, finding F3).
+const maxTensorDims = 8
+
 // GGUF metadata value types.
 const (
 	TypeUint8   uint32 = 0
@@ -34,20 +44,20 @@ type GGMLType uint32
 
 // Common GGML tensor types.
 const (
-	GGMLTypeF32  GGMLType = 0
-	GGMLTypeF16  GGMLType = 1
-	GGMLTypeQ4_0 GGMLType = 2
-	GGMLTypeQ4_1 GGMLType = 3
-	GGMLTypeQ5_0 GGMLType = 6
-	GGMLTypeQ5_1 GGMLType = 7
-	GGMLTypeQ8_0 GGMLType = 8
-	GGMLTypeQ8_1 GGMLType = 9
-	GGMLTypeQ2_K GGMLType = 10
-	GGMLTypeQ3_K GGMLType = 11
-	GGMLTypeQ4_K GGMLType = 12
-	GGMLTypeQ5_K GGMLType = 13
-	GGMLTypeQ6_K GGMLType = 14
-	GGMLTypeQ8_K  GGMLType = 15
+	GGMLTypeF32     GGMLType = 0
+	GGMLTypeF16     GGMLType = 1
+	GGMLTypeQ4_0    GGMLType = 2
+	GGMLTypeQ4_1    GGMLType = 3
+	GGMLTypeQ5_0    GGMLType = 6
+	GGMLTypeQ5_1    GGMLType = 7
+	GGMLTypeQ8_0    GGMLType = 8
+	GGMLTypeQ8_1    GGMLType = 9
+	GGMLTypeQ2_K    GGMLType = 10
+	GGMLTypeQ3_K    GGMLType = 11
+	GGMLTypeQ4_K    GGMLType = 12
+	GGMLTypeQ5_K    GGMLType = 13
+	GGMLTypeQ6_K    GGMLType = 14
+	GGMLTypeQ8_K    GGMLType = 15
 	GGMLTypeIQ2_XXS GGMLType = 16 // Importance-weighted 2-bit (E8 lattice codebook)
 	GGMLTypeIQ3_S   GGMLType = 21 // Importance-weighted 3-bit with sub-block scales
 	GGMLTypeIQ4_NL  GGMLType = 25 // Non-linear 4-bit with lookup table
@@ -131,6 +141,9 @@ func Parse(r io.ReadSeeker) (*File, error) {
 		var numDims uint32
 		if err := binary.Read(r, binary.LittleEndian, &numDims); err != nil {
 			return nil, fmt.Errorf("tensor[%d] ndims: %w", i, err)
+		}
+		if numDims > maxTensorDims {
+			return nil, fmt.Errorf("tensor[%d] %q: dimension count %d exceeds maximum (%d)", i, name, numDims, maxTensorDims)
 		}
 
 		dims := make([]uint64, numDims)
