@@ -160,6 +160,12 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 	if s.collector == nil {
 		s.collector = runtime.Nop()
 	}
+	// Start the rate limiter's background cleanup loop so its per-IP bucket
+	// map does not grow unbounded under sustained traffic from many distinct
+	// client IPs (CONC-M1). Close stops it again.
+	if s.rateLimiter != nil {
+		s.rateLimiter.Start()
+	}
 	// Auto-wire batch handler to use GenerateBatch when a BatchScheduler
 	// is attached but no handler has been configured.
 	if s.batch != nil && s.batch.config.Handler == nil {
@@ -419,6 +425,9 @@ func (s *Server) recoveryMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) Close(_ context.Context) error {
 	if s.batch != nil {
 		s.batch.Stop()
+	}
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
 	}
 	return nil
 }

@@ -1,9 +1,12 @@
 package security
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestRateLimiterAllow(t *testing.T) {
@@ -37,6 +40,120 @@ func TestRateLimiterCleanup(t *testing.T) {
 	rl.mu.Unlock()
 	if n != 0 {
 		t.Fatalf("expected 0 buckets after cleanup, got %d", n)
+	}
+}
+
+// TestRateLimiterSizeCapBackstop is a regression test for CONC-M1: without a
+// cap, rl.buckets grows one permanent entry per distinct client IP ever
+// seen. It simulates sustained traffic from far more distinct IPs than the
+// configured cap and asserts the map never grows past it, even though no
+// cleanup ever runs (no Start, no Cleanup call) -- the cap is a standalone
+// backstop, not merely a side effect of scheduled cleanup.
+func TestRateLimiterSizeCapBackstop(t *testing.T) {
+	rl := NewRateLimiter(10, 5)
+	rl.SetMaxBuckets(50)
+
+	for i := 0; i < 1000; i++ {
+		rl.Allow(fmt.Sprintf("10.%d.%d.%d", i/65536, (i/256)%256, i%256))
+	}
+
+	rl.mu.Lock()
+	n := len(rl.buckets)
+	rl.mu.Unlock()
+
+	if n > 50 {
+		t.Fatalf("bucket map grew past the configured cap: got %d entries, want <= 50", n)
+	}
+	if n == 0 {
+		t.Fatal("expected some buckets to remain after traffic")
+	}
+}
+
+// TestRateLimiterBackgroundCleanupBounded is a regression test for CONC-M1:
+// Cleanup existed but was never scheduled, so rl.buckets grew unbounded
+// under sustained traffic from many distinct client IPs. It drives traffic
+// from many distinct IPs, starts the background cleanup loop, then advances
+// past cleanTTL and confirms the bucket count shrinks back down instead of
+// growing without bound.
+func TestRateLimiterBackgroundCleanupBounded(t *testing.T) {
+	rl := NewRateLimiter(10, 5)
+	rl.cleanTTL = 30 * time.Millisecond
+	rl.Start()
+	defer rl.Stop()
+
+	// Sustained traffic from many distinct client IPs.
+	for i := 0; i < 500; i++ {
+		rl.Allow(fmt.Sprintf("192.168.%d.%d", i/256, i%256))
+	}
+
+	rl.mu.Lock()
+	grown := len(rl.buckets)
+	rl.mu.Unlock()
+	if grown == 0 {
+		t.Fatal("expected buckets to be populated after traffic")
+	}
+
+	// With no further traffic, every existing bucket becomes stale once
+	// cleanTTL elapses; the background ticker should sweep them all without
+	// any manual Cleanup call.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rl.mu.Lock()
+		n := len(rl.buckets)
+		rl.mu.Unlock()
+		if n == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("bucket map did not shrink after cleanTTL elapsed: still has %d entries (grew to %d)", n, grown)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestRateLimiterStartStopNoGoroutineLeak confirms the background cleanup
+// ticker goroutine started by Start is fully reaped by Stop, that Start and
+// Stop are each idempotent, and that Start/Stop can be safely repeated
+// (e.g. across server restarts in tests) without accumulating goroutines.
+func TestRateLimiterStartStopNoGoroutineLeak(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	rl := NewRateLimiter(10, 5)
+	rl.cleanTTL = 5 * time.Millisecond
+	rl.Start()
+	rl.Start() // idempotent: must not spawn a second ticker goroutine
+
+	time.Sleep(20 * time.Millisecond) // let a few ticks fire
+
+	rl.Stop()
+	rl.Stop() // idempotent: must not panic or block
+
+	if !waitForGoroutineCountAtMost(before, 2*time.Second) {
+		t.Fatalf("cleanup goroutine leaked after Stop: before=%d after=%d", before, runtime.NumGoroutine())
+	}
+
+	// Repeat the cycle to confirm no accumulation across restarts.
+	rl.Start()
+	time.Sleep(10 * time.Millisecond)
+	rl.Stop()
+
+	if !waitForGoroutineCountAtMost(before, 2*time.Second) {
+		t.Fatalf("cleanup goroutine leaked after restart: before=%d after=%d", before, runtime.NumGoroutine())
+	}
+}
+
+// waitForGoroutineCountAtMost polls runtime.NumGoroutine until it is <= want
+// or timeout elapses, to avoid flaking on transient scheduler goroutines.
+func waitForGoroutineCountAtMost(want int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if runtime.NumGoroutine() <= want {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

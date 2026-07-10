@@ -1833,6 +1833,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 	// Allow 2 requests with burst=2, rate=0 (no refill).
 	rl := security.NewRateLimiter(0, 2)
 	srv := NewServer(m, WithRateLimiter(rl))
+	defer srv.Close(context.Background())
 	handler := srv.Handler()
 
 	// First two requests should succeed.
