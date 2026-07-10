@@ -260,6 +260,69 @@ func TestRegistry_Pull(t *testing.T) {
 	}
 }
 
+// TestRegistry_Pull_DigestMismatch verifies that Pull rejects a blob whose
+// content does not hash to the digest recorded in the manifest, and that it
+// does not write anything to disk in that case (OCI-1).
+func TestRegistry_Pull_DigestMismatch(t *testing.T) {
+	mock := newMockOCIRegistry()
+	server := httptest.NewServer(mock.handler())
+	defer server.Close()
+
+	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+
+	repo := "models/evil"
+	tag := "v1"
+
+	// Simulate a malicious/MITM'd registry: the manifest claims a digest
+	// that does not match the bytes actually stored under it.
+	tamperedData := []byte("trojaned-gguf-bytes")
+	claimedDigest := sha256Digest([]byte("expected-original-bytes"))
+
+	mock.mu.Lock()
+	mock.blobs[claimedDigest] = tamperedData
+	mock.mu.Unlock()
+
+	manifest := Manifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeOCIManifest,
+		Config: Descriptor{
+			MediaType: MediaTypeModelConfig,
+			Digest:    sha256Digest([]byte("{}")),
+			Size:      2,
+		},
+		Layers: []Descriptor{
+			{
+				MediaType: MediaTypeGGUF,
+				Digest:    claimedDigest,
+				Size:      int64(len(tamperedData)),
+			},
+		},
+	}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+
+	mock.mu.Lock()
+	mock.manifests[repo+"/"+tag] = manifestData
+	mock.mu.Unlock()
+
+	dir := t.TempDir()
+	destPath := filepath.Join(dir, "pulled-model.gguf")
+
+	err = reg.Pull(context.Background(), "registry.example.com/"+repo+":"+tag, destPath)
+	if err == nil {
+		t.Fatal("Pull should reject a blob with a mismatched digest")
+	}
+	if !strings.Contains(err.Error(), "digest mismatch") {
+		t.Errorf("error should mention digest mismatch, got: %v", err)
+	}
+
+	if _, statErr := os.Stat(destPath); !os.IsNotExist(statErr) {
+		t.Error("Pull must not write the file to disk when the digest does not match")
+	}
+}
+
 func TestRegistry_Tags(t *testing.T) {
 	mock := newMockOCIRegistry()
 	server := httptest.NewServer(mock.handler())
