@@ -175,11 +175,11 @@ Component: model/gguf + model/registry. Acceptance: F1/F2/F3 closed with a share
 - [x] T139.2 Fix F2: GGUF tensor offset signed-conversion out-of-bounds panic  Owner: agent  Est: 2h  verifies: [UC-H2-007]  kind: agent  (done 2026-07-03, PR #940: full bounds check before mmap slice at both sites; repro'd the exact panic pre-fix, confirmed clean error post-fix)
   - `model/gguf/loader_mmap.go:51-57` (dup `split_file.go:171-177`, the DEFAULT mmap load path) converts a file-controlled `uint64` offset to `int64` with no unsigned validation; a huge offset wraps negative and slips past the single `end >` check. Fix: validate `ti.Offset <= math.MaxInt64` and bounds-check `offset >= 0 && offset <= len(mapped) && sz <= len(mapped)-offset` before slicing.
   - Acceptance: `ti.Offset = 0x8000000000000000` returns an error, not a slice-bounds panic.
-- [ ] T139.3 Fix F3: cap GGUF tensor dimension count  Owner: TBD  Est: 1h  verifies: [UC-H2-007]  kind: agent
+- [x] T139.3 Fix F3: cap GGUF tensor dimension count  Owner: agent  Est: 1h  verifies: [UC-H2-007]  kind: agent  (done 2026-07-10, PR #951: maxTensorDims=8 cap in parser.go, the sole TensorInfo construction site from untrusted input; attack shape and boundary cases tested)
   - `parser.go:131-136` reads an unbounded number of dimensions per tensor. Cap `numDims` at 8 and return an error above that.
 - [ ] S139.3.1 Malformed-GGUF fuzz corpus + table tests  Owner: TBD  Est: 3h  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.1, T139.2, T139.3]
   - Go native fuzzing (`go test -fuzz`) seeded with the F1/F2/F3 repro shapes above, plus a table test of legitimate tensor shapes proving no regression. Wire into CI as a bounded fuzz run (time-boxed), not a one-shot manual repro.
-- [ ] T139.4 Fix OCI-1: verify blob digest on OCI pull  Owner: TBD  Est: 2h  verifies: [UC-H2-007]  kind: agent
+- [x] T139.4 Fix OCI-1: verify blob digest on OCI pull  Owner: agent  Est: 2h  verifies: [UC-H2-007]  kind: agent  (done 2026-07-10, PR #949: sha256Digest recompute-and-compare wired into Pull before disk write; mismatch test confirms no file is written)
   - `model/registry/oci.go:199-207` `Pull` writes `getBlob` bytes to disk with no recompute-and-compare against `ggufLayer.Digest`, even though `sha256Digest` (`:367`) already exists (used only on push). Fix: recompute `sha256Digest(data)` and reject a mismatch.
 - [ ] T139.5 Fix OCI-2: reject non-https registry URLs  Owner: TBD  Est: 1h  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.4]
   - `oci.go:46-55` accepts plain `http://`. Reject non-`https://` unless an explicit insecure flag is set.
@@ -193,9 +193,9 @@ Component: distributed/. Acceptance: DIST-1 closed (mTLS wired, non-loopback req
 - [x] T140.1 Fix DIST-1: wire mTLS into the worker gRPC server  Owner: agent  Est: 4h  verifies: [UC-H2-008]  kind: agent  (done 2026-07-03, PR #947: TLS wired into worker_node.go, non-loopback bind without TLS refuses to start; also threaded TLS into GrpcStrategyConfig so the client-side dial is no longer forced insecure)
   - `distributed/worker_node.go:64` creates `grpc.NewServer()` with zero opts; `distributed/tlsconfig.go`'s `RequireAndVerifyClientCert` builder is correct but has no caller. Fix: if `wn.config.TLS != nil`, wire `wn.config.TLS.ServerCredentials()` via `grpc.Creds`; else refuse to start on a non-loopback `WorkerAddress`.
   - Acceptance: a loopback bind with no TLS config still starts (dev UX unchanged); a routable bind with no TLS config returns a startup error; a routable bind with TLS config starts and requires client certs.
-- [ ] T140.2 Default the worker CLI example to loopback; add --tls-* flags  Owner: TBD  Est: 2h  verifies: [UC-H2-008]  kind: agent  blocked-by: [T140.1]
+- [x] T140.2 Default the worker CLI example to loopback; add --tls-* flags  Owner: agent  Est: 2h  verifies: [UC-H2-008]  kind: agent  blocked-by: [T140.1]  (done 2026-07-10, PR #955: 127.0.0.1:9001 default, --tls-cert/--tls-key/--tls-ca flags wired via buildTLSConfig, openssl cert-gen docs in Usage())
   - `cmd/cli/worker.go:127` ships `--worker-address 0.0.0.0:9001` in its documented example. Change the example/default to `127.0.0.1:9001`; add `--tls-cert`/`--tls-key`/`--tls-ca` flags wired to `distributed.TLSConfig`; document a cert-gen helper for multi-host runs.
-- [ ] T140.3 Fix DIST-2: authenticate coordinator worker registration  Owner: TBD  Est: 3h  verifies: [UC-H2-008]  kind: agent  blocked-by: [T140.1]
+- [x] T140.3 Fix DIST-2: authenticate coordinator worker registration  Owner: agent  Est: 3h  verifies: [UC-H2-008]  kind: agent  blocked-by: [T140.1]  (done 2026-07-10, PR #956: coordinator wires the same TLSConfig pattern as the worker plus a defense-in-depth auth interceptor rejecting RPCs with no verified client cert, so RegisterWorker never discloses the peer list pre-auth)
   - `coordinator.go:71-93` is unauthenticated unless `SetServerOptions` is called (no caller exists today); `RegisterWorker` (`:160`) trusts any caller to claim a rank and returns the full peer list. Fix: require TLS creds by default (mirror T140.1's server-credential wiring) and gate `RegisterWorker` on a valid client cert/token before returning peers.
 - [ ] S140.3.1 Tests + lint  Owner: TBD  Est: 2h  verifies: [UC-H2-008]  kind: agent  blocked-by: [T140.3]
   - Integration test: a routable-bind worker/coordinator refuses to start without TLS; a TLS-configured pair completes a handshake and an AllReduce round-trip; an unauthenticated connection attempt to the coordinator is rejected before the peer list is returned.
@@ -209,7 +209,7 @@ Component: internal/cuda + internal/*/purego. Acceptance: CUDA-1 closed (no CWD/
   - Acceptance: `kernelLibPaths` contains zero relative or CWD-implying entries; a test asserts the loader rejects a relative-path candidate.
 - [ ] T141.2 Fix CUDA-2: prefer absolute vendor-library paths  Owner: TBD  Est: 3h  verifies: [UC-H2-009]  kind: agent  blocked-by: [T141.1]
   - All native libs (`libcudart.so.12`, `libcublas.so.12`, HIP, rocBLAS, MIOpen, OpenCL across `internal/*/purego.go`) load by bare soname, hijackable via `LD_LIBRARY_PATH`/RPATH given env control. Fix: prefer absolute vendor install paths where known (mirror T141.1's pattern); where a bare soname is unavoidable (system libs), document the residual trust assumption explicitly rather than leaving it silent.
-- [ ] S141.2.1 Tests + lint  Owner: TBD  Est: 1h  verifies: [UC-H2-009]  kind: agent  blocked-by: [T141.2]
+- [x] S141.2.1 Tests + lint  Owner: agent  Est: 1h  verifies: [UC-H2-009]  kind: agent  blocked-by: [T141.2]  (done 2026-07-10, in PR #958: dlopen_security_test.go per package, covering absolute-path-first ordering, override vetting, CWD-relative rejection)
   - Unit test asserting the dlopen path-candidate list contains no relative paths and no unconditional bare-soname-only fallback without a documented rationale.
 
 ### E142: Concurrency correctness (deep-review 002)
@@ -222,11 +222,11 @@ Component: inference/, serve/. Acceptance: CONC-H1/H2 closed (High); CONC-M1/M2/
 - [x] T142.2 Fix CONC-H2: model-delete TOCTOU + WaitGroup misuse  Owner: agent  Est: 3h  verifies: [UC-H2-010]  kind: agent  (done 2026-07-03, PR #944: replaced inflight WaitGroup with an RWMutex across all 7 affected handlers, incl. guard.go/classify.go beyond the review's literal scope since they shared the same hazard)
   - `serve/handlers.go:19,172,343` call `s.inflight.Add(1)` at handler entry with no `unloaded` recheck, racing `handlers.go:331-333`'s `unloaded.Store(true)` -> `inflight.Wait()` -> `s.model.Close()`. Fix: recheck `s.unloaded.Load()` immediately after `Add(1)` and back out cleanly if set (or replace the Add/Wait pair with an RWMutex: `RLock` per handler, `Lock` before close).
   - Acceptance: a race test interleaving `DELETE /v1/models/{id}` with a concurrent chat request under `-race` shows neither a use-after-close nor a `WaitGroup misuse` panic.
-- [ ] T142.3 Fix CONC-M1: RateLimiter unbounded bucket map  Owner: TBD  Est: 2h  verifies: [UC-H2-010]  kind: agent
+- [x] T142.3 Fix CONC-M1: RateLimiter unbounded bucket map  Owner: agent  Est: 2h  verifies: [UC-H2-010]  kind: agent  (done 2026-07-10, PR #957: RateLimiter.Start/Stop schedules Cleanup() on a ticker + maxBuckets eviction backstop; wired into server lifecycle mirroring BatchScheduler's Start/Stop)
   - `serve/security/network.go:98` `Cleanup()` exists but is never scheduled outside tests, so `rl.buckets` grows one permanent entry per distinct client IP. Fix: a background ticker calling `Cleanup()` every `cleanTTL`, plus a size cap as a backstop.
-- [ ] T142.4 Fix CONC-M2: KeyStore field race on Revoked/ExpiresAt  Owner: TBD  Est: 2h  verifies: [UC-H2-010]  kind: agent
+- [x] T142.4 Fix CONC-M2: KeyStore field race on Revoked/ExpiresAt  Owner: agent  Est: 2h  verifies: [UC-H2-010]  kind: agent  (done 2026-07-10, PR #953: Lookup returns a value copy under RLock rather than the live pointer -- chosen over atomic.Bool because APIKey is JSON-persisted to bbolt and atomic.Bool has no exported fields; race repro'd pre-fix, clean post-fix)
   - `authMiddleware` (`server.go:282-288`) reads `key.Valid()`/`HasScope()` lock-free while `Revoke`/`Rotate` write `k.Revoked`/`ExpiresAt` under lock (`apikey.go:186,205`) -- a data race plus a brief post-revoke authorization window. Fix: make `Revoked` an `atomic.Bool` (simplest), or have `Lookup` return a value copy under the existing lock.
-- [ ] T142.5 Fix CONC-L1: executeBatch ctx-wait goroutine leak  Owner: TBD  Est: 1h  verifies: [UC-H2-010]  kind: agent
+- [x] T142.5 Fix CONC-L1: executeBatch ctx-wait goroutine leak  Owner: agent  Est: 1h  verifies: [UC-H2-010]  kind: agent  (done 2026-07-10, PR #950: added a select on batchCtx.Done() so per-request goroutines are reaped when the batch completes, not only on the request's own ctx; regression test reproduced the exact leaked-goroutine count pre-fix)
   - `batch.go:166-173` accumulates per-request ctx-wait goroutines transiently. Fix: add a `select` on `batchCtx.Done()` so they are reaped when the batch returns.
 - [ ] S142.5.1 Race-detector test suite for this epic  Owner: TBD  Est: 2h  verifies: [UC-H2-010]  kind: agent  blocked-by: [T142.1, T142.2, T142.3, T142.4, T142.5]
   - `go test -race` covering: delete-during-inflight-request, speculative+normal concurrent generate, concurrent revoke+authenticate, sustained multi-IP rate-limit traffic (bucket count stays bounded), batch cancellation goroutine count returns to baseline.
@@ -239,7 +239,7 @@ Component: serve/. Acceptance: SERVE-1/2 closed (High/conditional-High); SERVE-3
   - `serve/adapter.go:33,44` splits the `model` field on `:` and joins the remainder verbatim into a file path with no validation; `filepath.Join` cleans `../` so a crafted name escapes the adapter directory. Fix: an anchored name regex (`^[A-Za-z0-9_-]{1,64}$`) plus a `filepath.Clean` + prefix-containment check, mirroring `model/registry/pull.go:198-209`.
 - [x] T143.2 Fix SERVE-1: bound error-metric label cardinality  Owner: agent  Est: 2h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-03, PR #941: normalizeRoute built from the actual mux routes; also fixed a residual leak in the review's own sketch where /v1/models/{id} would still echo the attacker-chosen id)
   - `serve/metrics.go:93-95`'s `RecordError` encodes the raw, pre-auth `r.URL.Path` into a permanent counter name (`server.go:366`, outside `authMiddleware`). Fix: normalize to a matched route template, collapsing unknown paths to a single `"other"` bucket.
-- [ ] T143.3 Fix SERVE-3: cap /v1/embeddings input array size  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+- [x] T143.3 Fix SERVE-3: cap /v1/embeddings input array size  Owner: agent  Est: 1h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-10, PR #954: maxEmbeddingsBatch=256 matching the existing classify/guard cap style; also fixed the test model to carry real embedding weights so the 200 path was actually exercised, not just 500s)
   - `handlers.go:342-400` has no element-count cap while `/v1/classify`/`/v1/guard/batch` cap at 256. Fix: mirror `maxClassifyBatch = 256`.
 - [ ] T143.4 Fix SERVE-3b: cap per-request image-fetch fan-out  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent
   - `handlers.go:99-110` -> `vision.go:245`: a 10 MB body can carry thousands of `image_url` entries, each fetched sequentially (up to 20 MB, 30s timeout). Fix: cap images per request (<=16), cap total decoded bytes, bound concurrency and overall wall-clock via `r.Context()` deadline.
@@ -355,17 +355,17 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 - [x] T144.1 fix CICD-1 permissions blocks  verifies: [UC-H2-012] -- DONE 2026-07-03 (PR #938)
 - [x] T144.2 fix CICD-2 pin installs  verifies: [UC-H2-012] -- DONE (PR #939)
 
-### Wave Sec-2: Security fixes, tier 2 remainder + tier 3 start (10 agents)
-- [ ] T139.3 fix F3 dim cap  verifies: [UC-H2-007]
-- [ ] T139.4 fix OCI-1 digest verify  verifies: [UC-H2-007]
-- [ ] T139.5 fix OCI-2 https-only  (after T139.4)  verifies: [UC-H2-007]
-- [ ] T140.2 worker loopback default + --tls flags  (after T140.1)  verifies: [UC-H2-008]
-- [ ] T140.3 fix DIST-2 coordinator auth  (after T140.1)  verifies: [UC-H2-008]
-- [ ] T141.2 fix CUDA-2 vendor paths  (after T141.1)  verifies: [UC-H2-009]
-- [ ] T142.3 fix CONC-M1 rate-limiter cleanup  verifies: [UC-H2-010]
-- [ ] T142.4 fix CONC-M2 keystore race  verifies: [UC-H2-010]
-- [ ] T142.5 fix CONC-L1 batch goroutine leak  verifies: [UC-H2-010]
-- [ ] T143.3 fix SERVE-3 embeddings cap  verifies: [UC-H2-011]
+### Wave Sec-2: Security fixes, tier 2 remainder + tier 3 start (10 agents) -- 9/10 DONE 2026-07-10 (T139.5 not yet dispatched, blocked-by T139.4 which is now done)
+- [x] T139.3 fix F3 dim cap  verifies: [UC-H2-007] -- DONE (PR #951)
+- [x] T139.4 fix OCI-1 digest verify  verifies: [UC-H2-007] -- DONE (PR #949)
+- [ ] T139.5 fix OCI-2 https-only  (after T139.4)  verifies: [UC-H2-007]  -- unblocked, not yet dispatched
+- [x] T140.2 worker loopback default + --tls flags  (after T140.1)  verifies: [UC-H2-008] -- DONE (PR #955)
+- [x] T140.3 fix DIST-2 coordinator auth  (after T140.1)  verifies: [UC-H2-008] -- DONE (PR #956)
+- [x] T141.2 fix CUDA-2 vendor paths  (after T141.1)  verifies: [UC-H2-009] -- DONE (PR #958)
+- [x] T142.3 fix CONC-M1 rate-limiter cleanup  verifies: [UC-H2-010] -- DONE (PR #957)
+- [x] T142.4 fix CONC-M2 keystore race  verifies: [UC-H2-010] -- DONE (PR #953)
+- [x] T142.5 fix CONC-L1 batch goroutine leak  verifies: [UC-H2-010] -- DONE (PR #950)
+- [x] T143.3 fix SERVE-3 embeddings cap  verifies: [UC-H2-011] -- DONE (PR #954)
 
 ### Wave Sec-3: Security fixes, tier 3 remainder (10 agents)
 - [ ] T143.4 fix SERVE-3b image fan-out cap  verifies: [UC-H2-011]
@@ -443,6 +443,13 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 ---
 
 ## Progress Log
+
+### 2026 07 10 -- Change Summary: Wave Sec-2 complete (9/10); ztensor v1.57.0 released
+
+- **Wave Sec-2 is 9/10 DONE** (deep-review 002 remediation, dispatched as a fully parallel no-GPU wave, same pattern as Sec-1): T139.3 F3 dim cap (PR #951), T139.4 OCI-1 digest verify (PR #949), T140.2 worker CLI loopback+TLS flags (PR #955), T140.3 DIST-2 coordinator auth (PR #956, added a defense-in-depth auth interceptor beyond transport TLS alone), T141.2 CUDA-2 vendor paths + S141.2.1 (PR #958, covered every native loader package: cublas, cudnn, hip, rocblas, miopen, tensorrt, opencl -- not just the kernel library T141.1 fixed), T142.3 CONC-M1 rate-limiter cleanup (PR #957, wired Start/Stop into the server lifecycle so T145.1's future --rate-limit flag has something to call), T142.4 CONC-M2 keystore race (PR #953, chose value-copy-from-Lookup over atomic.Bool after confirming the latter would silently break bbolt JSON persistence), T142.5 CONC-L1 batch goroutine leak (PR #950), T143.3 SERVE-3 embeddings cap (PR #954, also fixed the shared test model to carry real embedding weights so the 200 path was actually exercised). T139.5 (OCI-2 https-only) is now unblocked by T139.4 but was not dispatched in this wave -- pick it up in Sec-3.
+- Coordinator ran a full `go build ./... && go vet ./... && go test ./...` on `main` after all 8 merges (per the Wave Sec-1 lesson in devlog.md) -- all clean, no parallel-edit collisions this time.
+- Merged the automated release-please PR (v1.57.0, manifest + changelog only, tagged) that had been sitting open since Wave Sec-1.
+- Remaining for Objective 6 / D7: T139.5 + S139.5.1, T145.1/T145.2 fully, plus everything in Waves Sec-3/Sec-4/Sec-5 (T143.4-10 + S143.10.1, T144.3-7, T145.1/T145.2 closeout).
 
 ### 2026 07 03 (latest) -- Change Summary: Wave Sec-1 complete (10/10); T133.4 closes the capture cluster; E133 fully done
 
