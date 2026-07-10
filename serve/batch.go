@@ -165,9 +165,16 @@ func (s *BatchScheduler) executeBatch(batch []pendingRequest) {
 	remaining.Store(int32(len(live)))
 	for _, pr := range live {
 		go func(ctx context.Context) {
-			<-ctx.Done()
-			if remaining.Add(-1) <= 0 {
-				once.Do(batchCancel)
+			select {
+			case <-ctx.Done():
+				if remaining.Add(-1) <= 0 {
+					once.Do(batchCancel)
+				}
+			case <-batchCtx.Done():
+				// The batch has already completed (or been canceled by a
+				// sibling request); stop waiting on this request's context
+				// so the goroutine is reaped as soon as the batch returns
+				// instead of lingering until its own context is done.
 			}
 		}(pr.ctx)
 	}
