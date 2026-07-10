@@ -362,6 +362,11 @@ func (s *Server) handleModelDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// maxEmbeddingsBatch is the maximum number of inputs in a single embeddings
+// request. Without a cap, a 10 MB body of short strings can drive tens of
+// thousands of synchronous Embed calls (SERVE-3).
+const maxEmbeddingsBatch = 256
+
 func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	s.modelMu.RLock()
 	defer s.modelMu.RUnlock()
@@ -403,6 +408,11 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 
 	if len(inputs) == 0 {
 		writeError(w, http.StatusBadRequest, "input is required")
+		return
+	}
+
+	if len(inputs) > maxEmbeddingsBatch {
+		writeError(w, http.StatusBadRequest, "input exceeds maximum batch size of 256")
 		return
 	}
 
