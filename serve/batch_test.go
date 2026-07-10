@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -238,6 +239,86 @@ func TestBatchScheduler_FirstDisconnectDoesNotCancelBatch(t *testing.T) {
 		if vals[idx] != "done:req" {
 			t.Errorf("request %d value = %q, want %q", idx, vals[idx], "done:req")
 		}
+	}
+}
+
+// TestBatchScheduler_ExecuteBatch_ReapsCtxWaitGoroutines guards against
+// CONC-L1: executeBatch spawns one ctx-wait goroutine per live request to
+// build a merged batch context. Each goroutine used to block solely on its
+// own request's ctx.Done(), so if a request's context is never
+// independently canceled (e.g. context.Background(), or a long-lived
+// streaming context that outlives the batch), the goroutine lingered long
+// after the batch itself had already completed. The fix makes each
+// goroutine also select on batchCtx.Done() so it is reaped as soon as the
+// batch returns.
+func TestBatchScheduler_ExecuteBatch_ReapsCtxWaitGoroutines(t *testing.T) {
+	const n = 6
+
+	sched := NewBatchScheduler(BatchConfig{
+		MaxBatchSize: n,
+		BatchTimeout: 200 * time.Millisecond,
+		Handler: func(_ context.Context, reqs []BatchRequest) []BatchResult {
+			results := make([]BatchResult, len(reqs))
+			for i := range reqs {
+				results[i] = BatchResult{Value: "ok"}
+			}
+			return results
+		},
+	})
+
+	sched.Start()
+	defer sched.Stop()
+
+	// Warm up so the scheduler's own steady-state goroutines are already
+	// running before we take the baseline measurement.
+	if _, err := sched.Submit(context.Background(), BatchRequest{Prompt: "warmup"}); err != nil {
+		t.Fatalf("warmup submit: %v", err)
+	}
+	runtime.Gosched()
+	time.Sleep(50 * time.Millisecond)
+	runtime.GC()
+	baseline := runtime.NumGoroutine()
+
+	// Submit n requests concurrently, all using context.Background() so
+	// nothing ever independently cancels their context. The only thing that
+	// should stop the per-request ctx-wait goroutine is the batch itself
+	// completing.
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			if _, err := sched.Submit(context.Background(), BatchRequest{Prompt: "req"}); err != nil {
+				t.Errorf("submit %d: %v", idx, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// The batch handler has already returned by the time Submit unblocks its
+	// callers (results are delivered after the handler call), so the
+	// ctx-wait goroutines should be reaped almost immediately. Poll with a
+	// generous deadline; without the fix these goroutines never exit
+	// (context.Background() never fires Done()), so this will time out and
+	// fail instead of flaking.
+	deadline := time.Now().Add(2 * time.Second)
+	var final int
+	for {
+		runtime.Gosched()
+		time.Sleep(10 * time.Millisecond)
+		runtime.GC()
+		final = runtime.NumGoroutine()
+		if final <= baseline+1 { // small slack for test/runtime bookkeeping goroutines
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+	}
+
+	if final > baseline+1 {
+		t.Errorf("goroutine count did not settle back to baseline after batch completed: baseline=%d, final=%d (leaked ~%d ctx-wait goroutine(s))",
+			baseline, final, final-baseline)
 	}
 }
 
