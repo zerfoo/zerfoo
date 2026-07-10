@@ -165,13 +165,24 @@ func (s *KeyStore) Create(id string, scopes []Scope, expiresAt time.Time) (rawKe
 }
 
 // Lookup finds a key by its raw value. Returns nil if not found.
+//
+// The returned APIKey is a value copy taken under the KeyStore lock, not the
+// live record. Revoke/Rotate mutate the live record's Revoked/ExpiresAt
+// fields under s.mu; handing out the shared pointer would let callers read
+// those fields lock-free (a data race, and a window where a concurrently
+// revoked key still authorizes). Callers get a stable snapshot instead.
 func (s *KeyStore) Lookup(rawKey string) *APIKey {
 	h := sha256.Sum256([]byte(rawKey))
 	hash := hex.EncodeToString(h[:])
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.backend.Load(hash)
+	k := s.backend.Load(hash)
+	if k == nil {
+		return nil
+	}
+	cp := *k
+	return &cp
 }
 
 // Revoke marks a key as revoked by its ID.
