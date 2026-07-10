@@ -10,9 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zerfoo/zerfoo/distributed"
 	"github.com/zerfoo/zerfoo/distributed/pb"
 	"github.com/zerfoo/ztensor/log"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 // Coordinator implements the pb.CoordinatorServer interface.
@@ -31,6 +36,15 @@ type Coordinator struct {
 	timeout     time.Duration
 	stopCh      chan struct{}
 	stopOnce    sync.Once
+
+	// tls, when set via SetTLS, secures the coordinator's gRPC server the
+	// same way T140.1 secures the worker (distributed.TLSConfig.
+	// ServerCredentials). When nil, Start refuses to bind any non-loopback
+	// address -- see isLoopback. When tls.CACertPath is set (mutual TLS),
+	// every RPC is additionally gated on a verified client certificate via
+	// authInterceptor, closing DIST-2 (unauthenticated worker registration
+	// / peer-list disclosure).
+	tls *distributed.TLSConfig
 }
 
 // WorkerInfo holds information about a worker in the cluster.
@@ -67,8 +81,30 @@ func NewCoordinator(out io.Writer, timeout time.Duration) *Coordinator {
 	return c
 }
 
-// Start starts the coordinator service on the given address.
+// Start starts the coordinator service on the given address. A routable
+// (non-loopback) address requires TLS -- either via SetTLS or by passing
+// TLS credentials through SetServerOptions -- and Start refuses to bind
+// otherwise (DIST-2: the coordinator must not run unauthenticated on a
+// network-reachable address, mirroring WorkerNode.Start's isLoopback gate).
 func (c *Coordinator) Start(address string) error {
+	if c.tls != nil {
+		creds, err := c.tls.ServerCredentials()
+		if err != nil {
+			return fmt.Errorf("coordinator tls: %w", err)
+		}
+		c.serverOpts = append(c.serverOpts, grpc.Creds(creds))
+
+		// Mutual TLS (a CA cert configured) lets us verify the caller's
+		// identity; gate every RPC on a verified client certificate so
+		// RegisterWorker never discloses the peer list to an unauthenticated
+		// caller, even if the transport-level handshake were misconfigured.
+		if c.tls.CACertPath != "" {
+			c.serverOpts = append(c.serverOpts, grpc.ChainUnaryInterceptor(authInterceptor))
+		}
+	} else if !isLoopback(address) {
+		return errors.New("coordinator: refusing non-loopback bind without TLS; call SetTLS or bind 127.0.0.1")
+	}
+
 	// Use context-aware listener per linter guidance.
 	lc := net.ListenConfig{}
 	lis, err := lc.Listen(context.Background(), "tcp", address)
@@ -81,10 +117,86 @@ func (c *Coordinator) Start(address string) error {
 	return nil
 }
 
+// SetTLS configures mutual TLS for the coordinator's gRPC server, mirroring
+// WorkerNodeConfig.TLS from T140.1. Must be called before Start. Set
+// tls.CACertPath to require and verify a client certificate on every RPC
+// (see authInterceptor) -- without it, connections are encrypted but not
+// authenticated, and RegisterWorker remains open to any TLS client.
+func (c *Coordinator) SetTLS(tls *distributed.TLSConfig) {
+	c.tls = tls
+}
+
 // SetServerOptions sets gRPC server options (e.g. TLS credentials)
 // that will be applied when the server starts. Must be called before Start.
+//
+// Deprecated: prefer SetTLS, which also gates RegisterWorker on a verified
+// client certificate (DIST-2). SetServerOptions is retained for callers
+// that need to pass arbitrary gRPC server options directly.
 func (c *Coordinator) SetServerOptions(opts ...grpc.ServerOption) {
 	c.serverOpts = opts
+}
+
+// authInterceptor rejects any unary RPC whose peer did not present a
+// verified TLS client certificate. It is installed automatically by Start
+// whenever the coordinator is configured with mutual TLS (SetTLS with
+// CACertPath set), closing DIST-2 for every coordinator RPC -- including
+// RegisterWorker's peer-list disclosure -- not just RegisterWorker alone.
+func authInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if !peerAuthenticated(ctx) {
+		return nil, grpcstatus.Error(codes.Unauthenticated, "coordinator: rpc requires a verified client certificate")
+	}
+
+	return handler(ctx, req)
+}
+
+// peerAuthenticated reports whether ctx carries a peer that completed a TLS
+// handshake with at least one verified certificate chain (i.e. the peer
+// presented a client certificate signed by a CA the server trusts).
+func peerAuthenticated(ctx context.Context) bool {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.AuthInfo == nil {
+		return false
+	}
+
+	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return false
+	}
+
+	return len(tlsInfo.State.VerifiedChains) > 0
+}
+
+// isLoopback reports whether addr's host is restricted to the local
+// loopback interface (127.0.0.0/8 or ::1), including the "localhost"
+// hostname. Any other host -- a routable IP, a non-loopback hostname, or an
+// empty host (e.g. ":9001", which binds all interfaces) -- is treated as
+// non-loopback and fails closed by returning false. Mirrors
+// distributed.isLoopback (worker_node.go) for the coordinator's own bind.
+func isLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// No "host:port" structure found (e.g. a bare host); fall back to
+		// treating the whole string as the host.
+		host = addr
+	}
+
+	if host == "" {
+		// ":PORT" binds every interface, which is not loopback.
+		return false
+	}
+
+	if host == "localhost" {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Unresolved/non-IP hostname: fail closed rather than guess whether
+		// it resolves to loopback.
+		return false
+	}
+
+	return ip.IsLoopback()
 }
 
 // start starts the coordinator service on the given listener.
