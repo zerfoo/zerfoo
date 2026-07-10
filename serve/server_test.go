@@ -796,6 +796,80 @@ func TestHandleEmbeddings_BatchInput(t *testing.T) {
 	}
 }
 
+// buildEmbeddingTestModel builds a test model with embedding weights set,
+// so /v1/embeddings can complete a real (non-500) round trip.
+func buildEmbeddingTestModel(t *testing.T) *inference.Model {
+	t.Helper()
+	mdl := buildTestModel(t)
+	const vocabSize = 8
+	const hiddenSize = 4
+	weights := make([]float32, vocabSize*hiddenSize)
+	for i := range weights {
+		weights[i] = float32(i%7) * 0.1
+	}
+	mdl.SetEmbeddingWeights(weights, hiddenSize)
+	return mdl
+}
+
+// TestHandleEmbeddings_MaxBatchBoundary verifies that a request with exactly
+// maxEmbeddingsBatch inputs is accepted (SERVE-3).
+func TestHandleEmbeddings_MaxBatchBoundary(t *testing.T) {
+	mdl := buildEmbeddingTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	inputs := make([]string, maxEmbeddingsBatch)
+	for i := range inputs {
+		inputs[i] = "hello world"
+	}
+	reqBody, err := json.Marshal(EmbeddingRequest{Model: "test-model", Input: inputs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := doPost(t, ts.URL+"/v1/embeddings", "application/json", string(reqBody))
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d for %d inputs, want 200; body: %s", resp.StatusCode, maxEmbeddingsBatch, data)
+	}
+
+	var result EmbeddingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(result.Data) != maxEmbeddingsBatch {
+		t.Errorf("data length = %d, want %d", len(result.Data), maxEmbeddingsBatch)
+	}
+}
+
+// TestHandleEmbeddings_ExceedMaxBatch verifies that a request with more than
+// maxEmbeddingsBatch inputs is rejected with 400 before any Embed call runs
+// (SERVE-3: caps element count to avoid tens of thousands of synchronous
+// Embed calls from a single oversized request).
+func TestHandleEmbeddings_ExceedMaxBatch(t *testing.T) {
+	mdl := buildEmbeddingTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	inputs := make([]string, maxEmbeddingsBatch+1)
+	for i := range inputs {
+		inputs[i] = "hello world"
+	}
+	reqBody, err := json.Marshal(EmbeddingRequest{Model: "test-model", Input: inputs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := doPost(t, ts.URL+"/v1/embeddings", "application/json", string(reqBody))
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
 // --- Model Info ---
 
 func TestHandleModelInfo(t *testing.T) {
