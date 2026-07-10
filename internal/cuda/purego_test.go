@@ -197,6 +197,53 @@ func TestBuildKernelLibPathsUsesValidOverrideFirst(t *testing.T) {
 	}
 }
 
+// TestCudartPathsPreferAbsolute is the CUDA-2 regression guard
+// (docs/deep-reviews/002-full-codebase.md): the trusted absolute CUDA
+// toolkit locations must always be tried before the documented bare-soname
+// fallback, so that on any host matching zerfoo's deployment convention
+// dlopen never consults LD_LIBRARY_PATH/RPATH.
+func TestCudartPathsPreferAbsolute(t *testing.T) {
+	if len(cudartPaths) < len(trustedCudartLibPaths) {
+		t.Fatalf("expected at least %d candidates, got %v", len(trustedCudartLibPaths), cudartPaths)
+	}
+	for i, want := range trustedCudartLibPaths {
+		if cudartPaths[i] != want {
+			t.Fatalf("expected trusted absolute path %q at index %d, got %v", want, i, cudartPaths)
+		}
+	}
+	for _, p := range cudartPaths[len(trustedCudartLibPaths):] {
+		if filepath.IsAbs(p) {
+			continue
+		}
+		// Bare-soname fallback entries are expected here (documented CUDA-2
+		// residual trust assumption); just make sure none are CWD-relative.
+		if p == "." || (len(p) >= 2 && p[:2] == "./") {
+			t.Fatalf("cudartPaths fallback must not contain a CWD-relative entry: %q", p)
+		}
+	}
+}
+
+func TestBuildCudartPathsUsesValidOverrideFirst(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "libcudart.so.12")
+	if err := os.WriteFile(path, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("failed to write test fixture: %v", err)
+	}
+	t.Setenv(cudartLibPathOverrideEnv, path)
+	paths := buildCudartPaths()
+	if len(paths) == 0 || paths[0] != path {
+		t.Fatalf("expected override %q first, got %v", path, paths)
+	}
+}
+
+func TestBuildCudartPathsFallsBackOnInvalidOverride(t *testing.T) {
+	t.Setenv(cudartLibPathOverrideEnv, "./libcudart.so.12")
+	paths := buildCudartPaths()
+	if len(paths) == 0 || paths[0] != trustedCudartLibPaths[0] {
+		t.Fatalf("expected invalid override to be dropped, got %v", paths)
+	}
+}
+
 func TestDlopenImplWithLibSystem(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("libSystem test only runs on macOS")

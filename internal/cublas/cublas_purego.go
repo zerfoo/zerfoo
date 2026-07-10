@@ -2,6 +2,7 @@ package cublas
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"unsafe"
 
@@ -51,10 +52,44 @@ var (
 	errCblasLoad error
 )
 
-// cuBLAS library paths to try.
-var cublasLibPaths = []string{
-	"libcublas.so.12",
-	"libcublas.so",
+// cublasLibPathOverrideEnv names an environment variable that, if set to a
+// vetted absolute path, is tried before trustedCublasLibPaths. See
+// cuda.VetAbsoluteLibPath for the safety checks applied.
+const cublasLibPathOverrideEnv = "ZERFOO_CUBLAS_LIB_PATH"
+
+// trustedCublasLibPaths mirror the CUDA toolkit install location zerfoo's
+// own deployments use (docs/bench/manifests/*.yaml mount /usr/local/cuda
+// read-only and set LD_LIBRARY_PATH=/usr/local/cuda/lib64). Trying these
+// absolute paths first means dlopen never has to consult
+// LD_LIBRARY_PATH/RPATH at all on a host that matches this convention.
+var trustedCublasLibPaths = []string{
+	"/usr/local/cuda/lib64/libcublas.so.12",
+	"/usr/local/cuda/lib64/libcublas.so",
+}
+
+// cuBLAS library paths to try, in order.
+//
+// SECURITY (CUDA-2, docs/deep-reviews/002-full-codebase.md): the trailing
+// bare-soname entries are a DOCUMENTED residual trust assumption, not an
+// oversight -- see the equivalent comment on cudartPaths in
+// internal/cuda/purego.go for the full rationale (cuBLAS ships as part of
+// the CUDA toolkit, a third-party install whose location genuinely varies
+// across hosts, unlike zerfoo's own libkernels.so). We try the trusted
+// zerfoo-deployment path (and any vetted operator override) first, and
+// only fall back to a bare soname when no trusted absolute install is
+// found.
+var cublasLibPaths = buildCublasLibPaths()
+
+func buildCublasLibPaths() []string {
+	paths := make([]string, 0, len(trustedCublasLibPaths)+3)
+	if override := os.Getenv(cublasLibPathOverrideEnv); override != "" {
+		if vetted, ok := cuda.VetAbsoluteLibPath(override); ok {
+			paths = append(paths, vetted)
+		}
+	}
+	paths = append(paths, trustedCublasLibPaths...)
+	paths = append(paths, "libcublas.so.12", "libcublas.so")
+	return paths
 }
 
 func loadCublas() (*cublasLib, error) {

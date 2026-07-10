@@ -45,12 +45,53 @@ var (
 	errGlobal  error
 )
 
-// cudartPaths lists the shared library names to try, in order.
-// On Linux, libcudart.so is the standard name. The versioned
-// name (libcudart.so.12) is tried first for specificity.
-var cudartPaths = []string{
-	"libcudart.so.12",
-	"libcudart.so",
+// cudartLibPathOverrideEnv names an environment variable that, if set to a
+// vetted absolute path, is tried before trustedCudartLibPaths. See
+// VetAbsoluteLibPath for the safety checks applied.
+const cudartLibPathOverrideEnv = "ZERFOO_CUDART_LIB_PATH"
+
+// trustedCudartLibPaths are the CUDA toolkit install locations zerfoo's own
+// deployments use: docs/bench/manifests/*.yaml mount /usr/local/cuda
+// read-only and set LD_LIBRARY_PATH=/usr/local/cuda/lib64. Trying these
+// absolute paths first means dlopen never has to consult
+// LD_LIBRARY_PATH/RPATH at all on a host that matches this convention.
+var trustedCudartLibPaths = []string{
+	"/usr/local/cuda/lib64/libcudart.so.12",
+	"/usr/local/cuda/lib64/libcudart.so",
+}
+
+// cudartPaths lists the shared library candidates to try, in order.
+//
+// SECURITY (CUDA-2, docs/deep-reviews/002-full-codebase.md): the trailing
+// bare-soname entries are a residual, DOCUMENTED trust assumption, not an
+// oversight. Unlike libkernels.so (a zerfoo-built artifact with exactly one
+// vetted install location -- see kernelLibPaths and CUDA-1), the CUDA
+// toolkit is a third-party install whose location genuinely varies across
+// hosts (distro package managers, conda/pip environments, non-standard
+// prefixes), so there is no single absolute path we can force. We try the
+// trusted zerfoo-deployment path (and any vetted operator override) first,
+// eliminating the LD_LIBRARY_PATH/RPATH hijack window whenever the trusted
+// path resolves, and only fall back to a bare soname -- resolved via the
+// default dynamic-linker search path, hijackable via LD_LIBRARY_PATH -- when
+// no trusted absolute install is found. TestCudartPathsPreferAbsolute
+// enforces that the absolute candidates always precede the bare fallback.
+var cudartPaths = buildCudartPaths()
+
+// buildCudartPaths assembles the dlopen candidate list: an optional vetted
+// override, then the trusted absolute defaults, then the bare-soname
+// fallback documented above.
+func buildCudartPaths() []string {
+	paths := make([]string, 0, len(trustedCudartLibPaths)+3)
+	if override := os.Getenv(cudartLibPathOverrideEnv); override != "" {
+		if vetted, ok := VetAbsoluteLibPath(override); ok {
+			paths = append(paths, vetted)
+		}
+		// An invalid override is silently ignored (not fatal): we fall
+		// through to the trusted defaults rather than refusing to start.
+	}
+	paths = append(paths, trustedCudartLibPaths...)
+	paths = append(paths, "libcudart.so.12", "libcudart.so")
+	return paths
 }
 
 // Open loads libcudart via dlopen and resolves all CUDA runtime
@@ -203,13 +244,26 @@ func buildKernelLibPaths() []string {
 	return paths
 }
 
-// vetKernelLibOverride validates that path is safe to hand to dlopen: it
-// must be an absolute path (never CWD-relative or a bare soname), it must
-// exist, and it must not be world-writable -- a world-writable "trusted"
-// path is just as hijackable as a CWD-relative one, since any local user
-// could replace its contents with a malicious library whose ELF
-// constructors run on the next dlopen.
+// vetKernelLibOverride validates that path is safe to hand to dlopen for the
+// kernel library override. Kept as a thin, package-local alias of
+// VetAbsoluteLibPath so existing CUDA-1 regression tests keep working
+// unchanged.
 func vetKernelLibOverride(path string) (string, bool) {
+	return VetAbsoluteLibPath(path)
+}
+
+// VetAbsoluteLibPath validates that path is safe to hand to dlopen as an
+// operator-provided override for any native library candidate list in this
+// module (CUDA runtime, cuBLAS, cuDNN, HIP, rocBLAS, MIOpen, OpenCL,
+// TensorRT, and the zerfoo-built kernel shims -- see CUDA-2,
+// docs/deep-reviews/002-full-codebase.md). The path must be absolute (never
+// CWD-relative or a bare soname), it must exist, and it must not be
+// world-writable -- a world-writable "trusted" path is just as hijackable
+// as a CWD-relative one, since any local user could replace its contents
+// with a malicious library whose ELF constructors run on the next dlopen.
+// Exported so every internal/*/purego.go loader can share one vetting
+// implementation instead of re-deriving these checks.
+func VetAbsoluteLibPath(path string) (string, bool) {
 	if !filepath.IsAbs(path) {
 		return "", false
 	}

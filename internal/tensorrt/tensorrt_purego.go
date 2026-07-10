@@ -2,6 +2,7 @@ package tensorrt
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"unsafe"
 
@@ -154,10 +155,45 @@ var (
 	errGlobalTrt  error
 )
 
+// trustedTrtCapiLibPath is the vetted, absolute production location for the
+// zerfoo-built TensorRT C shim shared library, mirroring the
+// /opt/zerfoo/lib/libkernels.so convention already established for CUDA
+// custom kernels (internal/cuda/purego.go, CUDA-1, T141.1) -- both are
+// zerfoo-compiled artifacts with one intended install location, not
+// third-party vendor libraries.
+const trustedTrtCapiLibPath = "/opt/zerfoo/lib/libtrt_capi.so"
+
+// trtCapiLibPathOverrideEnv names an environment variable that, if set to a
+// vetted absolute path, is tried before trustedTrtCapiLibPath. See
+// cuda.VetAbsoluteLibPath for the safety checks applied.
+const trtCapiLibPathOverrideEnv = "ZERFOO_TRT_CAPI_LIB_PATH"
+
 // Library paths to try for the TensorRT C shim shared library.
-var trtLibPaths = []string{
-	"libtrt_capi.so",
-	"./libtrt_capi.so",
+//
+// SECURITY (CUDA-2, docs/deep-reviews/002-full-codebase.md): every entry
+// here MUST be an absolute path. dlopen executes a shared object's ELF
+// constructors at load time, so a bare soname (resolved via the default
+// loader search path) or a CWD-relative entry lets an attacker who can
+// write into the process's working directory (or influence
+// LD_LIBRARY_PATH) achieve code execution the moment TensorRT initializes.
+// This list previously included "libtrt_capi.so" and "./libtrt_capi.so" --
+// exactly the CUDA-1 pattern (docs/adr/094-untrusted-boundary-security-hardening.md),
+// but for the TensorRT shim instead of the CUDA kernel library. Do not
+// reintroduce a relative or bare-soname candidate;
+// TestTrtLibPathsAreAbsolute enforces this.
+var trtLibPaths = buildTrtLibPaths()
+
+func buildTrtLibPaths() []string {
+	paths := make([]string, 0, 2)
+	if override := os.Getenv(trtCapiLibPathOverrideEnv); override != "" {
+		if vetted, ok := cuda.VetAbsoluteLibPath(override); ok {
+			paths = append(paths, vetted)
+		}
+		// An invalid override is silently ignored (not fatal): we fall
+		// through to the trusted default rather than refusing to start.
+	}
+	paths = append(paths, trustedTrtCapiLibPath)
+	return paths
 }
 
 func loadTrtLib() (*trtLib, error) {

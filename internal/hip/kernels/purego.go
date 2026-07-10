@@ -2,6 +2,7 @@ package kernels
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
@@ -30,9 +31,38 @@ type KernelLib struct {
 	launchFlashAttentionF32 uintptr
 }
 
-// hipKernelPaths lists the shared library names to try, in order.
-var hipKernelPaths = []string{
-	"libhipkernels.so",
+// trustedHipKernelLibPath is the vetted, absolute production location for
+// the custom HIP kernels shared library, mirroring the
+// /opt/zerfoo/lib/libkernels.so convention already established for CUDA
+// custom kernels (internal/cuda/purego.go, CUDA-1, T141.1) -- both are
+// zerfoo-compiled artifacts with one intended install location, not
+// third-party vendor libraries.
+const trustedHipKernelLibPath = "/opt/zerfoo/lib/libhipkernels.so"
+
+// hipKernelLibPathOverrideEnv names an environment variable that, if set to
+// a vetted absolute path, is tried before trustedHipKernelLibPath. See
+// cuda.VetAbsoluteLibPath for the safety checks applied.
+const hipKernelLibPathOverrideEnv = "ZERFOO_HIP_KERNEL_LIB_PATH"
+
+// hipKernelPaths lists paths to try for the custom HIP kernels shared
+// library.
+//
+// SECURITY (CUDA-2, docs/deep-reviews/002-full-codebase.md): every entry
+// here MUST be an absolute path -- see the identical rationale on
+// kernelLibPaths in internal/cuda/purego.go (CUDA-1). Do not reintroduce a
+// relative or bare-soname candidate; TestHipKernelPathsAreAbsolute enforces
+// this.
+var hipKernelPaths = buildHipKernelLibPaths()
+
+func buildHipKernelLibPaths() []string {
+	paths := make([]string, 0, 2)
+	if override := os.Getenv(hipKernelLibPathOverrideEnv); override != "" {
+		if vetted, ok := cuda.VetAbsoluteLibPath(override); ok {
+			paths = append(paths, vetted)
+		}
+	}
+	paths = append(paths, trustedHipKernelLibPath)
+	return paths
 }
 
 var (

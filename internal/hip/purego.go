@@ -2,6 +2,7 @@ package hip
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
@@ -34,10 +35,42 @@ var (
 	errGlobal  error
 )
 
-// hipPaths lists the shared library names to try, in order.
-var hipPaths = []string{
-	"libamdhip64.so.6",
-	"libamdhip64.so",
+// hipLibPathOverrideEnv names an environment variable that, if set to a
+// vetted absolute path, is tried before trustedHipLibPaths. See
+// cuda.VetAbsoluteLibPath for the safety checks applied.
+const hipLibPathOverrideEnv = "ZERFOO_HIP_LIB_PATH"
+
+// trustedHipLibPaths use /opt/rocm/lib, AMD's standard ROCm install prefix
+// (documented ROCm convention, not zerfoo-specific -- no zerfoo deployment
+// mounts a ROCm host yet, see docs/adr/012-amd-rocm-backend.md: "GPU paths
+// untested without hardware"). Trying this absolute path first means dlopen
+// never has to consult LD_LIBRARY_PATH/RPATH at all on a standard ROCm
+// install.
+var trustedHipLibPaths = []string{
+	"/opt/rocm/lib/libamdhip64.so.6",
+	"/opt/rocm/lib/libamdhip64.so",
+}
+
+// hipPaths lists the shared library candidates to try, in order.
+//
+// SECURITY (CUDA-2, docs/deep-reviews/002-full-codebase.md): the trailing
+// bare-soname entries are a DOCUMENTED residual trust assumption -- see the
+// equivalent comment on cudartPaths in internal/cuda/purego.go for the full
+// rationale. ROCm packages sometimes install outside /opt/rocm (distro
+// packages, custom prefixes), so we keep the bare-soname fallback rather
+// than failing closed on hosts that don't match the standard convention.
+var hipPaths = buildHipLibPaths()
+
+func buildHipLibPaths() []string {
+	paths := make([]string, 0, len(trustedHipLibPaths)+3)
+	if override := os.Getenv(hipLibPathOverrideEnv); override != "" {
+		if vetted, ok := cuda.VetAbsoluteLibPath(override); ok {
+			paths = append(paths, vetted)
+		}
+	}
+	paths = append(paths, trustedHipLibPaths...)
+	paths = append(paths, "libamdhip64.so.6", "libamdhip64.so")
+	return paths
 }
 
 // Open loads libamdhip64 via dlopen and resolves all HIP runtime

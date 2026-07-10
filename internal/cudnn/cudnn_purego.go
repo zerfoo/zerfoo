@@ -2,6 +2,7 @@ package cudnn
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"unsafe"
 
@@ -278,11 +279,39 @@ var (
 	errCuDNN        error
 )
 
-// cudnnPaths lists the shared library names to try, in order.
-var cudnnPaths = []string{
-	"libcudnn.so.9",
-	"libcudnn.so.8",
-	"libcudnn.so",
+// cudnnLibPathOverrideEnv names an environment variable that, if set to a
+// vetted absolute path, is tried before trustedCudnnLibPaths. See
+// cuda.VetAbsoluteLibPath for the safety checks applied.
+const cudnnLibPathOverrideEnv = "ZERFOO_CUDNN_LIB_PATH"
+
+// trustedCudnnLibPaths mirror the CUDA toolkit install location zerfoo's
+// own deployments use (docs/bench/manifests/*.yaml mount /usr/local/cuda
+// read-only and set LD_LIBRARY_PATH=/usr/local/cuda/lib64).
+var trustedCudnnLibPaths = []string{
+	"/usr/local/cuda/lib64/libcudnn.so.9",
+	"/usr/local/cuda/lib64/libcudnn.so.8",
+	"/usr/local/cuda/lib64/libcudnn.so",
+}
+
+// cudnnPaths lists the shared library candidates to try, in order.
+//
+// SECURITY (CUDA-2, docs/deep-reviews/002-full-codebase.md): the trailing
+// bare-soname entries are a DOCUMENTED residual trust assumption -- see the
+// equivalent comment on cudartPaths in internal/cuda/purego.go for the full
+// rationale (cuDNN is a third-party CUDA toolkit component whose install
+// location genuinely varies across hosts).
+var cudnnPaths = buildCudnnLibPaths()
+
+func buildCudnnLibPaths() []string {
+	paths := make([]string, 0, len(trustedCudnnLibPaths)+4)
+	if override := os.Getenv(cudnnLibPathOverrideEnv); override != "" {
+		if vetted, ok := cuda.VetAbsoluteLibPath(override); ok {
+			paths = append(paths, vetted)
+		}
+	}
+	paths = append(paths, trustedCudnnLibPaths...)
+	paths = append(paths, "libcudnn.so.9", "libcudnn.so.8", "libcudnn.so")
+	return paths
 }
 
 // openCuDNN loads libcudnn via dlopen and resolves all function pointers.

@@ -2,6 +2,7 @@ package miopen
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
@@ -54,9 +55,37 @@ var (
 	errGlobal  error
 )
 
-var miopenPaths = []string{
-	"libMIOpen.so.1",
-	"libMIOpen.so",
+// miopenLibPathOverrideEnv names an environment variable that, if set to a
+// vetted absolute path, is tried before trustedMiopenLibPaths. See
+// cuda.VetAbsoluteLibPath for the safety checks applied.
+const miopenLibPathOverrideEnv = "ZERFOO_MIOPEN_LIB_PATH"
+
+// trustedMiopenLibPaths use /opt/rocm/lib, AMD's standard ROCm install
+// prefix (see the identical rationale on trustedHipLibPaths in
+// internal/hip/purego.go).
+var trustedMiopenLibPaths = []string{
+	"/opt/rocm/lib/libMIOpen.so.1",
+	"/opt/rocm/lib/libMIOpen.so",
+}
+
+// miopenPaths lists the shared library candidates to try, in order.
+//
+// SECURITY (CUDA-2, docs/deep-reviews/002-full-codebase.md): the trailing
+// bare-soname entries are a DOCUMENTED residual trust assumption -- see the
+// equivalent comment on hipPaths in internal/hip/purego.go for the full
+// rationale.
+var miopenPaths = buildMiopenLibPaths()
+
+func buildMiopenLibPaths() []string {
+	paths := make([]string, 0, len(trustedMiopenLibPaths)+3)
+	if override := os.Getenv(miopenLibPathOverrideEnv); override != "" {
+		if vetted, ok := cuda.VetAbsoluteLibPath(override); ok {
+			paths = append(paths, vetted)
+		}
+	}
+	paths = append(paths, trustedMiopenLibPaths...)
+	paths = append(paths, "libMIOpen.so.1", "libMIOpen.so")
+	return paths
 }
 
 // Open loads libMIOpen via dlopen and resolves all function pointers.

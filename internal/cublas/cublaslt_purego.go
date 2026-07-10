@@ -2,6 +2,7 @@ package cublas
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"unsafe"
 
@@ -110,10 +111,37 @@ var (
 	errLtLoad error
 )
 
-// cublasLt library paths to try.
-var cublasLtLibPaths = []string{
-	"libcublasLt.so.12",
-	"libcublasLt.so",
+// cublasLtLibPathOverrideEnv names an environment variable that, if set to
+// a vetted absolute path, is tried before trustedCublasLtLibPaths. See
+// cuda.VetAbsoluteLibPath for the safety checks applied.
+const cublasLtLibPathOverrideEnv = "ZERFOO_CUBLASLT_LIB_PATH"
+
+// trustedCublasLtLibPaths mirror the CUDA toolkit install location zerfoo's
+// own deployments use (docs/bench/manifests/*.yaml mount /usr/local/cuda
+// read-only and set LD_LIBRARY_PATH=/usr/local/cuda/lib64).
+var trustedCublasLtLibPaths = []string{
+	"/usr/local/cuda/lib64/libcublasLt.so.12",
+	"/usr/local/cuda/lib64/libcublasLt.so",
+}
+
+// cublasLt library paths to try, in order.
+//
+// SECURITY (CUDA-2, docs/deep-reviews/002-full-codebase.md): the trailing
+// bare-soname entries are a DOCUMENTED residual trust assumption -- see the
+// equivalent comment on cublasLibPaths above and on cudartPaths in
+// internal/cuda/purego.go for the full rationale.
+var cublasLtLibPaths = buildCublasLtLibPaths()
+
+func buildCublasLtLibPaths() []string {
+	paths := make([]string, 0, len(trustedCublasLtLibPaths)+3)
+	if override := os.Getenv(cublasLtLibPathOverrideEnv); override != "" {
+		if vetted, ok := cuda.VetAbsoluteLibPath(override); ok {
+			paths = append(paths, vetted)
+		}
+	}
+	paths = append(paths, trustedCublasLtLibPaths...)
+	paths = append(paths, "libcublasLt.so.12", "libcublasLt.so")
+	return paths
 }
 
 func loadCublasLt() (*cublasLtLib, error) {

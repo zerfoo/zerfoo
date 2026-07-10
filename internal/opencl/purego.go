@@ -2,6 +2,7 @@ package opencl
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/zerfoo/zerfoo/internal/cuda"
@@ -44,10 +45,37 @@ var (
 	errGlobal  error
 )
 
-// openclPaths lists the shared library names to try, in order.
-var openclPaths = []string{
-	"libOpenCL.so.1",
-	"libOpenCL.so",
+// openclLibPathOverrideEnv names an environment variable that, if set to a
+// vetted absolute path, is tried before the bare-soname candidates below.
+// See cuda.VetAbsoluteLibPath for the safety checks applied.
+const openclLibPathOverrideEnv = "ZERFOO_OPENCL_LIB_PATH"
+
+// openclPaths lists the shared library candidates to try, in order.
+//
+// SECURITY (CUDA-2, docs/deep-reviews/002-full-codebase.md): unlike the
+// CUDA/ROCm loaders above, this list has NO trusted absolute default, and
+// that is a deliberate, documented decision rather than an oversight.
+// OpenCL is architected around the system ICD loader: libOpenCL.so is a
+// thin dispatcher that discovers vendor implementations at runtime via
+// /etc/OpenCL/vendors/*.icd (an NVIDIA driver package, ocl-icd, an
+// Intel/AMD vendor SDK, ...). There is no single "the OpenCL library" path
+// that is correct across hosts the way /usr/local/cuda or /opt/rocm are for
+// their ecosystems, so forcing an absolute path here would just be wrong on
+// most machines rather than more secure. We accept the residual
+// LD_LIBRARY_PATH/RPATH hijack exposure of the bare-soname resolution below
+// as inherent to the ICD design; an operator who wants to pin a specific,
+// vetted absolute build can still do so via openclLibPathOverrideEnv.
+var openclPaths = buildOpenclLibPaths()
+
+func buildOpenclLibPaths() []string {
+	paths := make([]string, 0, 3)
+	if override := os.Getenv(openclLibPathOverrideEnv); override != "" {
+		if vetted, ok := cuda.VetAbsoluteLibPath(override); ok {
+			paths = append(paths, vetted)
+		}
+	}
+	paths = append(paths, "libOpenCL.so.1", "libOpenCL.so")
+	return paths
 }
 
 // Open loads libOpenCL via dlopen and resolves all OpenCL runtime
