@@ -2,6 +2,8 @@ package security
 
 import (
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -145,4 +147,105 @@ func TestKeyStoreCreateEmptyID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty ID")
 	}
+}
+
+// TestKeyStoreLookupRaceConcurrentRevoke reproduces CONC-M2: a reader
+// pattern shaped exactly like authMiddleware (server.go) -- Lookup, then
+// Valid()/HasScope() with no lock held -- running concurrently with Revoke,
+// which mutates the live APIKey record's Revoked/RevokedAt fields under
+// KeyStore's mutex.
+//
+// Before the fix, Lookup returned the shared *APIKey stored in the backend,
+// so this raced under `go test -race`: Revoke's locked write to k.Revoked
+// raced with this goroutine's lock-free k.Valid() read of the same field.
+// Lookup now returns a value copy taken under the read lock, so the reader
+// never touches the live, concurrently-mutated struct.
+func TestKeyStoreLookupRaceConcurrentRevoke(t *testing.T) {
+	ks := NewKeyStore()
+	raw, _, err := ks.Create("race-key", []Scope{ScopeInference}, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const iterations = 500
+	var wg sync.WaitGroup
+
+	// Writer: repeatedly revoke, mimicking an admin revoking a key while
+	// live traffic is in flight for it.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = ks.Revoke("race-key")
+		}
+	}()
+
+	// Reader: the authMiddleware pattern -- Lookup, then read Valid()/
+	// HasScope() with no lock held.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			key := ks.Lookup(raw)
+			if key == nil {
+				continue
+			}
+			_ = key.Valid(time.Now())
+			_ = key.HasScope(ScopeInference)
+		}
+	}()
+
+	wg.Wait()
+}
+
+// TestKeyStoreLookupRaceConcurrentRotate is the Rotate analogue of
+// TestKeyStoreLookupRaceConcurrentRevoke: Rotate revokes the old record and
+// publishes a new raw key/record under the same ID, concurrently with
+// authMiddleware-style Lookup+Valid()/HasScope() reads.
+//
+// The current raw key is published via atomic.Value so the reader picks up
+// rotations without racing on the Go string variable itself -- any race
+// here must come from the KeyStore, not from this test's bookkeeping.
+func TestKeyStoreLookupRaceConcurrentRotate(t *testing.T) {
+	ks := NewKeyStore()
+	raw, _, err := ks.Create("rotate-race-key", []Scope{ScopeInference}, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var currentRaw atomic.Value
+	currentRaw.Store(raw)
+
+	const iterations = 500
+	var wg sync.WaitGroup
+
+	// Writer: repeatedly rotate, mimicking an admin rotating a key while
+	// live traffic is in flight for it.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			newRaw, _, err := ks.Rotate("rotate-race-key", time.Time{})
+			if err != nil {
+				return
+			}
+			currentRaw.Store(newRaw)
+		}
+	}()
+
+	// Reader: the authMiddleware pattern -- Lookup, then read Valid()/
+	// HasScope() with no lock held.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			key := ks.Lookup(currentRaw.Load().(string))
+			if key == nil {
+				continue
+			}
+			_ = key.Valid(time.Now())
+			_ = key.HasScope(ScopeInference)
+		}
+	}()
+
+	wg.Wait()
 }
