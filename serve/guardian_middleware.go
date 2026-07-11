@@ -5,9 +5,15 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/zerfoo/zerfoo/inference/guardian"
 )
+
+// guardianMaxRequestBodyBytes caps the request body GuardianMiddleware will
+// buffer for parsing. Matches the 10 MB cap used elsewhere in serve/ (see
+// handlers.go, classify.go, guard.go).
+const guardianMaxRequestBodyBytes = 10 << 20 // 10 MB
 
 // GuardianMiddlewareConfig controls how the Guardian safety middleware
 // intercepts chat completion requests.
@@ -21,7 +27,7 @@ type GuardianMiddlewareConfig struct {
 
 // guardianFlaggedResponse is returned when content is flagged and BlockOnFlag is true.
 type guardianFlaggedResponse struct {
-	Error    string       `json:"error"`
+	Error    string        `json:"error"`
 	Verdicts []VerdictData `json:"verdicts"`
 }
 
@@ -38,10 +44,16 @@ func GuardianMiddleware(evaluator GuardEvaluator, config GuardianMiddlewareConfi
 			}
 
 			// Read and buffer the request body so we can parse it and
-			// still forward it to the inner handler.
+			// still forward it to the inner handler. Bound the read so an
+			// attacker can't force unbounded memory growth (SERVE-4).
+			r.Body = http.MaxBytesReader(w, r.Body, guardianMaxRequestBodyBytes)
 			body, err := io.ReadAll(r.Body)
 			r.Body.Close()
 			if err != nil {
+				if isMaxBytesError(err) {
+					writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+					return
+				}
 				writeError(w, http.StatusBadRequest, "failed to read request body")
 				return
 			}
@@ -91,9 +103,21 @@ func GuardianMiddleware(evaluator GuardEvaluator, config GuardianMiddlewareConfi
 				return
 			}
 
-			// Capture the inner handler's response for output checking.
-			rec := &responseBuffer{header: make(http.Header)}
+			// Capture the inner handler's response for output checking. If
+			// the handler turns out to be streaming a Server-Sent Events
+			// response, the buffer switches to passing bytes straight
+			// through to the real ResponseWriter (flushing as it goes)
+			// instead of accumulating the whole response in memory, since
+			// SSE streams can be unbounded/long-lived and output scanning
+			// requires a complete response body (SERVE-4).
+			rec := &responseBuffer{header: make(http.Header), underlying: w}
 			next.ServeHTTP(rec, r)
+
+			if rec.passthrough {
+				// Response was already streamed directly to the client;
+				// there is nothing left to check or forward.
+				return
+			}
 
 			// --- Output check ---
 			assistantMsg := extractAssistantContent(rec.body.Bytes())
@@ -128,22 +152,62 @@ func GuardianMiddleware(evaluator GuardEvaluator, config GuardianMiddlewareConfi
 	}
 }
 
-// responseBuffer captures an HTTP response in memory.
+// responseBuffer captures an HTTP response in memory so GuardianMiddleware
+// can inspect it before forwarding to the client. If the response turns out
+// to be a Server-Sent Events stream (Content-Type: text/event-stream), it
+// switches to passthrough mode: bytes are written directly to the
+// underlying ResponseWriter (and flushed) instead of being buffered, so
+// streaming responses are neither delayed nor unboundedly accumulated in
+// memory.
 type responseBuffer struct {
-	header http.Header
-	body   bytes.Buffer
-	status int
+	underlying    http.ResponseWriter
+	header        http.Header
+	body          bytes.Buffer
+	status        int
+	headerWritten bool
+	passthrough   bool
 }
 
 func (rb *responseBuffer) Header() http.Header { return rb.header }
 
-func (rb *responseBuffer) WriteHeader(code int) { rb.status = code }
+func (rb *responseBuffer) WriteHeader(code int) {
+	if rb.headerWritten {
+		return
+	}
+	rb.commit(code)
+}
 
 func (rb *responseBuffer) Write(b []byte) (int, error) {
-	if rb.status == 0 {
-		rb.status = http.StatusOK
+	if !rb.headerWritten {
+		rb.commit(http.StatusOK)
+	}
+	if rb.passthrough {
+		n, err := rb.underlying.Write(b)
+		if f, ok := rb.underlying.(http.Flusher); ok {
+			f.Flush()
+		}
+		return n, err
 	}
 	return rb.body.Write(b)
+}
+
+// commit finalizes the response status/headers on first WriteHeader/Write
+// and decides whether to switch into SSE passthrough mode.
+func (rb *responseBuffer) commit(code int) {
+	rb.status = code
+	rb.headerWritten = true
+	if isEventStream(rb.header) {
+		rb.passthrough = true
+		copyHeader(rb.underlying.Header(), rb.header)
+		rb.underlying.WriteHeader(code)
+	}
+}
+
+// isEventStream reports whether the given response header declares an SSE
+// (text/event-stream) body.
+func isEventStream(h http.Header) bool {
+	ct := h.Get("Content-Type")
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "text/event-stream")
 }
 
 // lastUserMessage returns the content of the last message with role "user".
