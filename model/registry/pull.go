@@ -38,6 +38,17 @@ type HFPullOptions struct {
 	OnProgress ProgressFunc
 	// Client overrides the HTTP client used for downloads.
 	Client *http.Client
+	// ExpectedHashes optionally pins the expected SHA-256 checksum (lowercase
+	// hex) for specific files, keyed by the repository-relative filename
+	// (e.g. "model-Q4_K_M.gguf"). When a filename has an entry here, it is
+	// verified against this out-of-band value INSTEAD of any hash derived
+	// from the download response's own ETag/X-Linked-Etag/Content-Sha256
+	// headers -- trusting the serving origin's own headers as the "expected"
+	// hash provides no integrity guarantee against a compromised or MITM'd
+	// server (HF-1). A mismatch is a hard error. Files not present in this
+	// map fall back to the prior trust-on-first-download ETag behavior for
+	// backward compatibility.
+	ExpectedHashes map[string]string
 }
 
 // HFSibling represents a file entry in a HuggingFace model listing.
@@ -211,8 +222,20 @@ func downloadFile(ctx context.Context, opts HFPullOptions, modelID, filename, ta
 		return 0, err
 	}
 
-	// Extract expected SHA-256 from response headers if available.
-	expectedHash := extractSHA256(resp)
+	// Determine the expected SHA-256. An out-of-band pin (opts.ExpectedHashes)
+	// takes precedence over anything derived from the response headers, since
+	// the headers originate from the same server the content was just
+	// fetched from and offer no protection against a compromised or MITM'd
+	// origin (HF-1). Absent a pin, fall back to the prior ETag-derived trust
+	// behavior for backward compatibility.
+	var expectedHash string
+	pinned := false
+	if h, ok := opts.ExpectedHashes[filename]; ok && h != "" {
+		expectedHash = strings.ToLower(h)
+		pinned = true
+	} else {
+		expectedHash = extractSHA256(resp)
+	}
 
 	// Atomic write: download to a temp file, then rename on success.
 	tmpPath := cleaned + ".tmp"
@@ -249,13 +272,19 @@ func downloadFile(ctx context.Context, opts HFPullOptions, modelID, filename, ta
 		return 0, err
 	}
 
-	// Verify checksum if the server provided one.
+	// Verify checksum. A pinned hash is always enforced. Otherwise, verify
+	// against the ETag-derived hash if the server provided one.
 	gotHash := hex.EncodeToString(hasher.Sum(nil))
-	if expectedHash != "" {
+	switch {
+	case pinned:
+		if gotHash != expectedHash {
+			return 0, fmt.Errorf("checksum mismatch for %s: expected %s (pinned), got %s", filename, expectedHash, gotHash)
+		}
+	case expectedHash != "":
 		if gotHash != expectedHash {
 			return 0, fmt.Errorf("checksum mismatch for %s: expected %s, got %s", filename, expectedHash, gotHash)
 		}
-	} else {
+	default:
 		slog.Warn("no SHA-256 checksum available from server, skipping verification", "file", filename)
 	}
 
