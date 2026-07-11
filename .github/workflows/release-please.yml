@@ -12,6 +12,9 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@7987652d64b4581673a76e33ad5e98e3dd56832f # v4
         id: release
@@ -21,18 +24,54 @@ jobs:
           # anchors last-release-sha). Manifest mode reads the repo config.
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # SLSA (T144.7): generate a CycloneDX SBOM for the release and sign it with
+  # cosign keyless (Sigstore Fulcio/Rekor via GitHub OIDC -- no long-lived
+  # signing key to provision or rotate). Split into its own job, scoped to
+  # only the permissions signing needs (id-token: write for the OIDC token,
+  # contents: write to attach assets to the release), rather than inheriting
+  # the release-please job's broader `pull-requests: write`.
+  #
+  # NOTE (human follow-up, out of scope for this task): this repo ships a
+  # .goreleaser.yml (binary builds for cmd/zerfoo, cmd/zerfoo-tokenize,
+  # cmd/zerfoo-predict) but no workflow currently invokes GoReleaser -- no
+  # job runs `goreleaser release` on tag push, so today's GitHub Release has
+  # no built binaries attached, only source archives GitHub generates
+  # automatically. The SBOM below is therefore a source-tree SBOM, not a
+  # binary SBOM, and there are no binaries/container images in the pipeline
+  # yet to cosign-sign. Once GoReleaser (or an image build/push workflow) is
+  # wired in, extend this job to also `cosign sign-blob`/`cosign sign` each
+  # produced binary and/or image digest, and switch the SBOM scan target to
+  # the built artifacts.
+  sbom-and-sign:
+    name: SBOM + keyless cosign signing
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach SBOM + signature to the GitHub Release
+      id-token: write # mint the OIDC token cosign uses for keyless signing
+    steps:
       - name: Checkout code
-        if: ${{ steps.release.outputs.release_created }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - name: Generate SBOM
-        if: ${{ steps.release.outputs.release_created }}
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           format: cyclonedx-json
           output-file: sbom-cyclonedx.json
-      - name: Upload SBOM to release
-        if: ${{ steps.release.outputs.release_created }}
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign SBOM (keyless, Sigstore Fulcio/Rekor)
+        run: |
+          cosign sign-blob --yes \
+            --output-signature sbom-cyclonedx.json.sig \
+            --output-certificate sbom-cyclonedx.json.pem \
+            sbom-cyclonedx.json
+      - name: Upload SBOM + signature to release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
-          tag_name: ${{ steps.release.outputs.tag_name }}
-          files: sbom-cyclonedx.json
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: |
+            sbom-cyclonedx.json
+            sbom-cyclonedx.json.sig
+            sbom-cyclonedx.json.pem
