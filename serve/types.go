@@ -161,12 +161,23 @@ type ModelDeleteResponse struct {
 
 // --- Validation and helper functions ---
 
+// maxTemperature is the server-side upper bound for the temperature sampling
+// parameter. Values above this are clamped rather than rejected, matching the
+// clamp convention already used for max_tokens' upper bound and top_p.
+const maxTemperature = 2.0
+
 // validateSamplingParams checks temperature, top_p, and top_k values.
-// Temperature must be >= 0 (rejected otherwise). TopP is clamped to [0, 1].
+// Temperature must be >= 0 (rejected otherwise) and is clamped to
+// maxTemperature on the high end. TopP is clamped to [0, 1].
 // TopK must be >= 0 (rejected otherwise).
 func validateSamplingParams(temperature *float64, topP *float64, topK *int) error {
-	if temperature != nil && *temperature < 0 {
-		return fmt.Errorf("temperature must be >= 0, got %g", *temperature)
+	if temperature != nil {
+		if *temperature < 0 {
+			return fmt.Errorf("temperature must be >= 0, got %g", *temperature)
+		}
+		if *temperature > maxTemperature {
+			*temperature = maxTemperature
+		}
 	}
 	if topP != nil {
 		if *topP < 0 {
@@ -177,6 +188,15 @@ func validateSamplingParams(temperature *float64, topP *float64, topK *int) erro
 	}
 	if topK != nil && *topK < 0 {
 		return fmt.Errorf("top_k must be >= 0, got %d", *topK)
+	}
+	return nil
+}
+
+// validateMaxTokens rejects non-positive max_tokens values. The upper bound is
+// enforced separately by clamping to the server's configured maximum.
+func validateMaxTokens(maxTokens *int) error {
+	if maxTokens != nil && *maxTokens <= 0 {
+		return fmt.Errorf("max_tokens must be > 0, got %d", *maxTokens)
 	}
 	return nil
 }

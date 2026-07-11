@@ -46,6 +46,10 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validateMaxTokens(req.MaxTokens); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// Validate tools and tool_choice.
 	if len(req.Tools) > 0 {
@@ -223,6 +227,10 @@ func (s *Server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Validate sampling parameters.
 	if err := validateSamplingParams(req.Temperature, req.TopP, req.TopK); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateMaxTokens(req.MaxTokens); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

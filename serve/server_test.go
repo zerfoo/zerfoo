@@ -1901,6 +1901,140 @@ func TestMaxTokensClamp(t *testing.T) {
 	})
 }
 
+func TestMaxTokensNonPositiveRejected(t *testing.T) {
+	mdl := buildTestModel(t)
+
+	t.Run("negative_rejected_chat", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}],"max_tokens":-1}`
+		resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("zero_rejected_chat", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}],"max_tokens":0}`
+		resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("negative_rejected_completions", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","prompt":"hello","max_tokens":-5}`
+		resp := doPost(t, ts.URL+"/v1/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("zero_rejected_completions", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","prompt":"hello","max_tokens":0}`
+		resp := doPost(t, ts.URL+"/v1/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("positive_still_works", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}],"max_tokens":5}`
+		resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, b)
+		}
+	})
+}
+
+func TestTemperatureUpperBoundClamp(t *testing.T) {
+	mdl := buildTestModel(t)
+
+	t.Run("out_of_range_clamped_not_rejected_chat", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}],"temperature":10,"max_tokens":5}`
+		resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("out_of_range_clamped_not_rejected_completions", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","prompt":"hello","temperature":10,"max_tokens":5}`
+		resp := doPost(t, ts.URL+"/v1/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("negative_still_rejected", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}],"temperature":-1,"max_tokens":5}`
+		resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 400; body = %s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("valid_temperature_still_works", func(t *testing.T) {
+		srv := NewServer(mdl)
+		ts := httptest.NewServer(srv.Handler())
+		defer ts.Close()
+
+		body := `{"model":"test-model","messages":[{"role":"user","content":"hello"}],"temperature":0.7,"max_tokens":5}`
+		resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d, want 200; body = %s", resp.StatusCode, b)
+		}
+	})
+}
+
 func TestRateLimitMiddleware(t *testing.T) {
 	m := buildTestModel(t)
 
@@ -2088,7 +2222,57 @@ func TestValidateSamplingParams(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
+
+	t.Run("temperature clamped high", func(t *testing.T) {
+		temp := 5.0
+		if err := validateSamplingParams(&temp, nil, nil); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if temp != maxTemperature {
+			t.Errorf("temperature = %g, want %g", temp, maxTemperature)
+		}
+	})
+
+	t.Run("temperature at upper bound allowed", func(t *testing.T) {
+		temp := maxTemperature
+		if err := validateSamplingParams(&temp, nil, nil); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if temp != maxTemperature {
+			t.Errorf("temperature = %g, want %g", temp, maxTemperature)
+		}
+	})
 }
+
+func TestValidateMaxTokens(t *testing.T) {
+	t.Run("nil allowed", func(t *testing.T) {
+		if err := validateMaxTokens(nil); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("positive allowed", func(t *testing.T) {
+		n := 100
+		if err := validateMaxTokens(&n); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("zero rejected", func(t *testing.T) {
+		n := 0
+		if err := validateMaxTokens(&n); err == nil {
+			t.Error("expected error for zero max_tokens")
+		}
+	})
+
+	t.Run("negative rejected", func(t *testing.T) {
+		n := -5
+		if err := validateMaxTokens(&n); err == nil {
+			t.Error("expected error for negative max_tokens")
+		}
+	})
+}
+
 func TestHandleHealthz(t *testing.T) {
 	mdl := buildTestModel(t)
 	srv := NewServer(mdl)
