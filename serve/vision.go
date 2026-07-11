@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -137,55 +136,6 @@ var imageHTTPClient = &http.Client{
 		}
 		return nil
 	},
-}
-
-// ssrfValidator is kept for test compatibility. It defaults to a no-op
-// because SSRF protection is now enforced at connect time via
-// ssrfSafeDialContext in the HTTP transport.
-var ssrfValidator = func(ctx context.Context, rawURL string) error { return nil }
-
-// validateImageURL checks the given URL for SSRF attacks by resolving
-// the hostname and blocking requests to loopback, private, link-local,
-// and cloud metadata addresses. It additionally blocks known dangerous
-// hostnames (e.g. metadata.google.internal).
-//
-// Note: This function performs a pre-flight check. The primary SSRF
-// protection is the connect-time validation in ssrfSafeDialContext.
-func validateImageURL(ctx context.Context, rawURL string) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("parse URL: %w", err)
-	}
-
-	hostname := parsed.Hostname()
-
-	// Block known dangerous hostnames.
-	if blockedSSRFHosts[hostname] {
-		return fmt.Errorf("blocked SSRF target: %s", hostname)
-	}
-
-	// Block known dangerous IPs before DNS resolution.
-	if blockedSSRFIPs[hostname] {
-		return fmt.Errorf("blocked SSRF target: %s", hostname)
-	}
-
-	// Resolve hostname to IPs and check each one.
-	ips, err := net.DefaultResolver.LookupHost(ctx, hostname)
-	if err != nil {
-		return fmt.Errorf("resolve hostname %q: %w", hostname, err)
-	}
-
-	for _, ipStr := range ips {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-		if err := isBlockedIP(ip); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // ContentPart represents a single element in a multi-part content array.
