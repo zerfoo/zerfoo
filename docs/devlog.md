@@ -2,6 +2,141 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-07-10: E135 closed -- fork-parity symbol check + #921 disposition (T135.6)
+
+**Type:** closeout + tooling
+**Tags:** T135.6, #847, #921, T135.3, fork-drift, cuda, kernels, gb10
+
+**What this task was.** T135.6 is the closeout of E135 (docs/plan.md) and its
+authoritative sub-breakdown docs/plan-gpu-training-hardening.md: T135.1
+(#922 bisect+fix), T135.2 (fixed-order fp32 reductions, ztensor v1.19.2),
+T135.3 (oracle-gate remaining kernels, sgemv_m1/gemv_q4k_sm121 build fixes,
+docs/kernel-tolerances.md), T135.4 (fused encoder audit), and T135.5
+(ZTENSOR_DETERMINISTIC mode) were all already done and merged; this pass is
+documentation + one small CI addition + a GitHub-visible-actions handoff, not
+new substantive kernel work.
+
+**docs/plan-gpu-training-hardening.md marked COMPLETE.** All ten deliverables
+(D1-D10) are done; every task box (T1.x-T5.x) is now checked, including a
+doc-consistency fix: T3.2/S3.2.1 and the stale Wave 1-4 checklists had fallen
+behind the per-task entries above them (the underlying work -- T135.2's
+fixed-order reductions -- was already done and evidenced; the boxes just
+hadn't been ticked). Left the one genuinely-continuous item (T6.1, the
+build/vet/gofmt/tests-green standing gate) unchecked by design -- it lives on
+as CI + scripts/dgx-validate.sh + the new fork-parity check, not as a
+one-time deliverable in a closed plan.
+
+**Fork-parity symbol check (the T133.3-flagged follow-up).** T135.3's first
+from-scratch `libkernels.so` rebuild silently dropped five symbols
+`github.com/zerfoo/ztensor`'s own `internal/cuda/kernels/purego.go` dlsym's
+unconditionally (`launch_transpose_2d_bf16`, `launch_transpose_nd_bf16`,
+`dropout_f32`, `fused_adamw_f32`, `tiny_batched_gemm_f32`) because their
+`.cu` sources were never in zerfoo's own Makefile `SRCS` list -- one missing
+required symbol fails ztensor's dlsym loop wholesale, so every
+`compute.GPUEngine` op reported "kernels not available" on the host while
+zerfoo's own fork-loader tests (which never referenced those symbols) stayed
+green. See the 2026-07-03 devlog entries for the full incident.
+
+Added `internal/cuda/kernels/symbol_parity_test.go` (`TestForkParitySymbols`):
+1. Parses this repo's own `purego.go` `syms`/`optionalSyms` literals (via
+   regex over the well-known `openKernelLib` shape) to get the symbol names
+   this package's loader requires.
+2. Resolves `github.com/zerfoo/ztensor`'s exact pinned version via
+   `go list -m -f '{{.Dir}}'` and parses ITS `purego.go` the same way, to get
+   the (larger) symbol set ztensor's own engine loader requires -- this is
+   the half that actually caught the T135.3 drift, since zerfoo's own loader
+   never referenced those five symbols at all.
+3. Default (CI) mode: greps the concatenated `.cu` sources listed in the
+   Makefile's `SRCS` line for each required symbol name at a function-call
+   shape (`\bname\s*\(`) -- crude but sufficient to catch "the source file
+   that defines this symbol was never added to SRCS", which is exactly the
+   T135.3 failure. No CUDA, no nvcc, no built `.so` needed; runs in ordinary
+   `go test ./...` on any host (verified green on darwin/CPU in this repo).
+4. Dynamic (DGX) mode: `ZERFOO_KERNELS_SO=/opt/zerfoo/lib/libkernels.so` runs
+   `nm -D` against a real built `.so` instead of the static source scan --
+   the true check, to be run after every kernel rebuild via
+   `scripts/dgx-validate.sh -env "ZERFOO_KERNELS_SO=..." -pkgs "-run TestForkParitySymbols ./internal/cuda/kernels/"`.
+   Fails loudly (not skip) on any `nm` error once the caller opts in via the
+   env var.
+
+**Red-proof.** Temporarily removed `dropout.cu` from the Makefile `SRCS`
+list locally: `TestForkParitySymbols` failed, naming exactly `dropout_f32`
+as the missing required symbol -- reproducing the class of bug the test
+exists to catch. Restored `SRCS`; green again. `gofmt`/`go vet`/`go build
+./...`/`go test ./internal/cuda/kernels/...` all clean on darwin (CPU-only,
+no CUDA needed for this test).
+
+**#921 disposition (recommendation only -- not executed).** #921
+("`-tags cuda` CGo path is unbuildable from a module checkout") should be
+**closed as documented DGX-only build policy**, not wired into the standing
+gate. The CGo path is not zerfoo's shipped runtime path (purego/dlopen is,
+per this repo's CLAUDE.md "No CGo by default"); wiring `-tags cuda`
+continuously would require an nvcc-toolchain pod image, an in-tree
+`libkernels.so` build step duplicating what the purego path's DGX
+build-pod protocol already does, and a ztensor-side fix to ship or generate
+the `FEW_COUNT`-family generated kernel headers its CGo build currently
+lacks entirely outside zerfoo's control. `scripts/dgx-validate.sh` already
+exercises the production purego path end-to-end on the GB10; `-tags cuda`
+would only continuously validate a path nothing ships. Full reasoning in
+docs/plan-gpu-training-hardening.md's new "2026 07 10 -- Plan CLOSED" entry.
+
+**New finding, NOT fixed here: zerfoo's OWN kernel fork never got T3.1's
+fast-math removal.** While verifying the plan doc before marking it
+COMPLETE, found that T3.1 ("remove global `--use_fast_math`") was done only
+in `github.com/zerfoo/ztensor`'s own copy of the kernel sources (ztensor#143,
+2026-06-12). THIS repo's separate, hand-maintained fork --
+`internal/cuda/kernels/Makefile:7`, the exact path T3.1 names -- still reads
+`NVCC_FLAGS ?= -O3 --use_fast_math -arch=$(CUDA_ARCH)` on `main` today
+(added by `d1ed26ae`, never reverted). Per the T135.3/T133.3 incidents
+above, `/opt/zerfoo/lib/libkernels.so` is now built FROM ZERFOO'S OWN
+MAKEFILE (the first from-scratch rebuild used it, 2026-07-03), so every
+overlapping kernel this Makefile's `SRCS` covers (elementwise, softmax,
+tanh, etc.) in the artifact CURRENTLY DEPLOYED on the DGX host is still
+compiled WITH global fast-math -- contradicting the "kernels build without
+global fast-math" bar #847/T3.1 exists to set. T5.1's Wolf clean fold
+(2026-06-11) predates ztensor#143 (2026-06-12) entirely, so it does not
+vouch for this either way. Not fixed here: this is a Makefile edit + full
+`.so` rebuild/redeploy + fresh GB10 oracle-gate run, i.e. real GPU work, out
+of scope for a docs+CI closeout task. Documented in
+docs/plan-gpu-training-hardening.md's T3.1 entry; **recommend the
+coordinator open a fresh follow-up issue/task** (E135 itself is closed) to
+port ztensor#143's `NVCC_FLAGS` change into zerfoo's own Makefile and
+re-verify via the oracle gate.
+
+**Prepared #847 close comment (for the coordinator to post, not posted
+here):**
+
+> E135 (docs/plan-gpu-training-hardening.md) is complete. All ten
+> deliverables shipped: gradcheck/OpInfo harness (ztensor#129), GPU-vs-CPU
+> parity-under-arena-stress harness (ztensor#133), PyTorch-oracle harness
+> (ztensor#131), arena poison-on-reset mode (ztensor#130), SaveForBackward +
+> arena pin/unpin (ztensor#132), full Backward-impl audit+migration
+> (zerfoo#848), fixed-order fp32 reductions (ztensor v1.19.2 / zerfoo
+> T135.2), kernels oracle-gated with divergences fixed (ztensor#143,
+> zerfoo T135.3, docs/kernel-tolerances.md), fused-encoder audit (zerfoo
+> T135.4), ZTENSOR_DETERMINISTIC mode (ztensor#179 + zerfoo T135.5), and the
+> Wolf CrossAsset GB10 f32 end-to-end validation (0 NaN, fold-0 acc 0.6760
+> vs CPU 0.6765, two consecutive runs) with dependency-ordered releases
+> (ztensor v1.11.0, zerfoo v1.49.0) and a Wolf bump. #922 (the
+> kernels-package CUDA-context-poisoning bug the standing gate caught) is
+> resolved as part of T135.1. A fork-parity symbol check
+> (`internal/cuda/kernels/symbol_parity_test.go`) now guards against the
+> T135.3-class `.so` drift going forward. Closing this umbrella; #921
+> (`-tags cuda` CGo path) is tracked and dispositioned separately.
+>
+> **One residual carried forward, not blocking this close:** zerfoo's own
+> `internal/cuda/kernels` fork (distinct from ztensor's copy) never received
+> ztensor#143's `--use_fast_math` removal -- its Makefile still builds with
+> it, and since the deployed `.so` is now built from this fork's Makefile,
+> the currently-deployed kernels are not fast-math-free. Filing a follow-up
+> issue to port the NVCC_FLAGS change and re-run the oracle gate; not
+> reopening this umbrella for it.
+
+**Not done here (by design):** #847 and #921 were NOT closed/commented by
+this task -- both are GitHub-visible actions left for the coordinator, per
+the same handoff pattern T133.4 used for the capture cluster. Filing the
+fast-math follow-up issue is likewise left to the coordinator.
+
 ## 2026-07-03: Wave Sec-1 landmine -- two parallel PRs editing the same file's imports broke main (T139.1/T139.2)
 
 **Type:** finding + hotfix

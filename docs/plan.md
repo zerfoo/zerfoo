@@ -131,10 +131,10 @@ Component: kernels (mostly ztensor) + internal/cuda/kernels. Task-level detail l
 - [x] S135.2.1 Tests + lint (ztensor)  Owner: agent  Est: 2h  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.2]  (done 2026-07-02, ztensor main CI green through v1.19.2 release)
 - [x] T135.3 Oracle-gate remaining kernels (T3.3)  Owner: agent  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]  (done 2026-07-03, PR wave-2-task-T135.3: sgemv_m1.cu alignment fix, gemv_q4k_sm121.cu build fix, .so rebuilt via Spark build pod, honest per-op tolerance table docs/kernel-tolerances.md, full ./internal/cuda/kernels/ green on GB10)
   - Sweep the kernel inventory through the ztensor oracle harness on GB10; fix out-of-tolerance ops; commit the standing per-op tolerance table.
-- [ ] T135.4 Fused encoder fwd/bwd audit (T3.4)  Owner: TBD  Est: 1d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]
+- [x] T135.4 Fused encoder fwd/bwd audit (T3.4)  Owner: agent  Est: 1d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.1]  (done 2026-07-02: see devlog "Fused encoder fwd/bwd audit -- FFN GELU-backward bug + zero gradcheck coverage on FusedSDPA/FFN closed (T135.4)"; this box was left stale despite the Waves-section entry and devlog already recording completion -- fixed as part of T135.6's doc-consistency pass)
 - [x] T135.5 ZTENSOR_DETERMINISTIC mode (T4.1)  Owner: agent  Est: 1.5d  verifies: [UC-H2-003]  kind: agent  blocked-by: [T135.2]  (done 2026-07-03: ztensor#179 (branch feat-deterministic-mode, awaiting review) + zerfoo branch wave-3-task-T135.5; GB10 proof 2 pods x 2 processes, 3/3 epoch losses bitwise-identical under the flag; honest exclusion: FusedEncoderBackward atomicAdd path errors under the flag; scope table in ztensor docs/design.md; devlog 2026-07-03)
   - Acceptance: two seeded GB10 epochs bitwise-identical per-epoch losses; scope documented honestly.
-- [ ] T135.6 Close #847 + #921 disposition + devlog  Owner: TBD  Est: 2h  verifies: [infrastructure]  kind: agent  blocked-by: [T135.3, T135.4, T135.5]
+- [x] T135.6 Close #847 + #921 disposition + devlog  Owner: agent  Est: 2h  verifies: [infrastructure]  kind: agent  blocked-by: [T135.3, T135.4, T135.5]  (done 2026-07-10, PR wave-sec3-task-T135.6: docs/plan-gpu-training-hardening.md marked COMPLETE incl. retroactively checking T3.2/S3.2.1 + stale Wave 1-4 boxes that lagged the per-task entries; #921 recommendation -- close as documented DGX-only build policy, not wire -tags cuda into the standing gate; fork-parity symbol check added -- internal/cuda/kernels/symbol_parity_test.go TestForkParitySymbols, red-proofed against the T135.3 drift class; #847 close-summary comment prepared in devlog for the coordinator to post; #847/#921 NOT closed here -- coordinator action. NEW FINDING carried forward, not fixed: zerfoo's own internal/cuda/kernels/Makefile:7 still has --use_fast_math -- T3.1's removal only ever landed in ztensor's copy; since the deployed .so is now built from zerfoo's own Makefile [T135.3], the live artifact is not actually fast-math-free. Recommend a fresh follow-up issue/task, not reopening E135.)
   - Close the umbrella with a completion summary; decide #921 (wire -tags cuda into the pod with an nvcc image + in-tree build, or close as documented build-on-DGX-only policy); update plan-gpu-training-hardening.md status to COMPLETE.
 
 ### E136: Verified-model matrix + reproducible benchmarks
@@ -337,7 +337,7 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 - [x] S133.3.1 GB10 green proof -- DONE 2026-07-03 (PR #937)
 - [x] T133.4 remove gate + release + close cluster -- DONE 2026-07-03 (PR #946; #865/#870/#878 closed)
 - [ ] T136.4 + S136.4.1 Ollama re-run  (GPU-serial with S133.3.1)
-- [ ] T135.6 close #847/#921
+- [x] T135.6 close #847/#921  -- DONE 2026-07-10 (docs/devlog + plan-gpu-training-hardening.md COMPLETE; #847/#921 disposition prepared for coordinator, not executed)
 
 ### Wave 5: Surface + plan next (2 agents)
 - [ ] T136.5 publish matrix
