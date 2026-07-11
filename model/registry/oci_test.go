@@ -160,12 +160,71 @@ func readBody(r *http.Request) ([]byte, error) {
 	return data, nil
 }
 
+// TestNewRegistry_RejectsHTTPByDefault verifies that a plain http://
+// registry URL is rejected unless the caller explicitly opts in via
+// WithInsecureHTTP (OCI-2).
+func TestNewRegistry_RejectsHTTPByDefault(t *testing.T) {
+	reg, err := NewRegistry("http://registry.example.com")
+	if err == nil {
+		t.Fatal("NewRegistry should reject a plain http:// URL by default")
+	}
+	if reg != nil {
+		t.Error("NewRegistry should return a nil Registry on error")
+	}
+	if !strings.Contains(err.Error(), "http://") {
+		t.Errorf("error should mention http://, got: %v", err)
+	}
+}
+
+// TestNewRegistry_AllowsHTTPWithInsecureOptIn verifies that WithInsecureHTTP
+// re-allows a plain http:// registry URL, so local dev servers and
+// httptest-based tests can still opt in explicitly.
+func TestNewRegistry_AllowsHTTPWithInsecureOptIn(t *testing.T) {
+	reg, err := NewRegistry("http://registry.example.com", WithInsecureHTTP())
+	if err != nil {
+		t.Fatalf("NewRegistry with WithInsecureHTTP should accept http://, got error: %v", err)
+	}
+	if reg == nil {
+		t.Fatal("NewRegistry should return a non-nil Registry")
+	}
+}
+
+// TestNewRegistry_AllowsHTTPS verifies that https:// registry URLs are
+// always accepted, with or without the insecure opt-in.
+func TestNewRegistry_AllowsHTTPS(t *testing.T) {
+	if _, err := NewRegistry("https://registry.example.com"); err != nil {
+		t.Errorf("NewRegistry should accept https:// by default, got error: %v", err)
+	}
+	if _, err := NewRegistry("https://registry.example.com", WithInsecureHTTP()); err != nil {
+		t.Errorf("NewRegistry should accept https:// with WithInsecureHTTP too, got error: %v", err)
+	}
+}
+
+// TestNewRegistry_RejectsUnsupportedScheme verifies that schemes other than
+// http/https (e.g. ftp://) are rejected outright.
+func TestNewRegistry_RejectsUnsupportedScheme(t *testing.T) {
+	if _, err := NewRegistry("ftp://registry.example.com"); err == nil {
+		t.Fatal("NewRegistry should reject non-http(s) schemes")
+	}
+}
+
+// TestNewRegistry_RejectsMissingScheme verifies that a URL with no scheme
+// at all is rejected rather than silently treated as insecure.
+func TestNewRegistry_RejectsMissingScheme(t *testing.T) {
+	if _, err := NewRegistry("registry.example.com"); err == nil {
+		t.Fatal("NewRegistry should reject a URL with no scheme")
+	}
+}
+
 func TestRegistry_Push(t *testing.T) {
 	mock := newMockOCIRegistry()
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
 	// Create a fake GGUF model file.
 	dir := t.TempDir()
@@ -175,7 +234,7 @@ func TestRegistry_Push(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := reg.Push(context.Background(), "registry.example.com/myrepo:v1.0", modelPath)
+	err = reg.Push(context.Background(), "registry.example.com/myrepo:v1.0", modelPath)
 	if err != nil {
 		t.Fatalf("Push error: %v", err)
 	}
@@ -230,7 +289,10 @@ func TestRegistry_Pull(t *testing.T) {
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
 	// First push a model.
 	dir := t.TempDir()
@@ -268,7 +330,10 @@ func TestRegistry_Pull_DigestMismatch(t *testing.T) {
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
 	repo := "models/evil"
 	tag := "v1"
@@ -328,7 +393,10 @@ func TestRegistry_Tags(t *testing.T) {
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
 	// Push two versions.
 	dir := t.TempDir()
@@ -367,7 +435,10 @@ func TestRegistry_Resolve(t *testing.T) {
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
 	dir := t.TempDir()
 	modelPath := filepath.Join(dir, "model.gguf")
@@ -397,16 +468,22 @@ func TestRegistry_Resolve(t *testing.T) {
 }
 
 func TestRegistry_Push_FileNotFound(t *testing.T) {
-	reg := NewRegistry("http://localhost:0")
-	err := reg.Push(context.Background(), "registry.example.com/repo:v1", "/nonexistent/model.gguf")
+	reg, err := NewRegistry("http://localhost:0", WithInsecureHTTP())
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
+	err = reg.Push(context.Background(), "registry.example.com/repo:v1", "/nonexistent/model.gguf")
 	if err == nil {
 		t.Error("Push should fail for nonexistent file")
 	}
 }
 
 func TestRegistry_Push_InvalidRef(t *testing.T) {
-	reg := NewRegistry("http://localhost:0")
-	err := reg.Push(context.Background(), "invalidref", "/nonexistent/model.gguf")
+	reg, err := NewRegistry("http://localhost:0", WithInsecureHTTP())
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
+	err = reg.Push(context.Background(), "invalidref", "/nonexistent/model.gguf")
 	if err == nil {
 		t.Error("Push should fail for invalid reference")
 	}
@@ -417,9 +494,12 @@ func TestRegistry_Pull_ManifestNotFound(t *testing.T) {
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
-	err := reg.Pull(context.Background(), "registry.example.com/repo:nonexistent", "/tmp/out.gguf")
+	err = reg.Pull(context.Background(), "registry.example.com/repo:nonexistent", "/tmp/out.gguf")
 	if err == nil {
 		t.Error("Pull should fail for nonexistent manifest")
 	}
@@ -430,7 +510,10 @@ func TestRegistry_Tags_EmptyRepo(t *testing.T) {
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
 	tags, err := reg.Tags(context.Background(), "empty/repo")
 	if err != nil {
@@ -449,12 +532,16 @@ func TestRegistry_WithCredentials(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reg := NewRegistry(server.URL,
+	reg, err := NewRegistry(server.URL,
+		WithInsecureHTTP(),
 		WithCredentials("myuser", "mypass"),
 		WithHTTPClient(server.Client()),
 	)
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
-	_, err := reg.Tags(context.Background(), "repo")
+	_, err = reg.Tags(context.Background(), "repo")
 	if err != nil {
 		t.Fatalf("Tags error: %v", err)
 	}
@@ -472,7 +559,10 @@ func TestRegistry_DefaultTag(t *testing.T) {
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
 	dir := t.TempDir()
 	modelPath := filepath.Join(dir, "model.gguf")
@@ -486,7 +576,7 @@ func TestRegistry_DefaultTag(t *testing.T) {
 	}
 
 	// Resolve using explicit "latest".
-	_, err := reg.Resolve(context.Background(), "registry.example.com/repo:latest")
+	_, err = reg.Resolve(context.Background(), "registry.example.com/repo:latest")
 	if err != nil {
 		t.Fatalf("Resolve(latest) error: %v", err)
 	}
@@ -497,7 +587,10 @@ func TestRegistry_DigestReference(t *testing.T) {
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
 	dir := t.TempDir()
 	modelPath := filepath.Join(dir, "model.gguf")
@@ -606,9 +699,12 @@ func TestRegistry_GetBlob_OversizedResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reg := NewRegistry(server.URL, WithHTTPClient(server.Client()))
+	reg, err := NewRegistry(server.URL, WithInsecureHTTP(), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatalf("NewRegistry error: %v", err)
+	}
 
-	_, err := reg.getBlob(context.Background(), "repo", "sha256:fake")
+	_, err = reg.getBlob(context.Background(), "repo", "sha256:fake")
 	if err == nil {
 		t.Fatal("getBlob should reject oversized blob")
 	}
