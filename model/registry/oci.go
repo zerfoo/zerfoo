@@ -18,10 +18,11 @@ var maxBlobSize = 20 << 30
 // Registry is an OCI distribution spec client for pushing and pulling
 // GGUF models as OCI artifacts.
 type Registry struct {
-	url      string
-	username string
-	password string
-	client   *http.Client
+	url          string
+	username     string
+	password     string
+	client       *http.Client
+	insecureHTTP bool
 }
 
 // Option configures a Registry.
@@ -42,16 +43,50 @@ func WithHTTPClient(client *http.Client) Option {
 	}
 }
 
-// NewRegistry creates a new OCI registry client.
-func NewRegistry(url string, opts ...Option) *Registry {
+// WithInsecureHTTP allows the registry client to talk to a plain http://
+// endpoint instead of https://. By default NewRegistry rejects non-https
+// registry URLs: an http registry lets a network attacker read
+// credentials and blob contents, or tamper with manifests/blobs in
+// transit (CWE-319). Only opt in for local development or test servers
+// that cannot serve TLS (e.g. httptest.Server).
+func WithInsecureHTTP() Option {
+	return func(r *Registry) {
+		r.insecureHTTP = true
+	}
+}
+
+// NewRegistry creates a new OCI registry client for the given base URL.
+//
+// The URL must use the https:// scheme. Plain http:// is rejected unless
+// WithInsecureHTTP is passed, since an insecure connection lets a
+// network attacker observe credentials and model bytes, or tamper with
+// them in transit. Use WithInsecureHTTP() to opt in for localhost
+// development or test servers that do not serve TLS.
+func NewRegistry(rawURL string, opts ...Option) (*Registry, error) {
 	r := &Registry{
-		url:    strings.TrimRight(url, "/"),
+		url:    strings.TrimRight(rawURL, "/"),
 		client: http.DefaultClient,
 	}
 	for _, opt := range opts {
 		opt(r)
 	}
-	return r
+
+	scheme, _, ok := strings.Cut(r.url, "://")
+	if !ok {
+		return nil, fmt.Errorf("oci: registry URL %q must include a scheme (https:// or http://)", rawURL)
+	}
+	switch strings.ToLower(scheme) {
+	case "https":
+		// Always allowed.
+	case "http":
+		if !r.insecureHTTP {
+			return nil, fmt.Errorf("oci: registry URL %q uses http://; refusing to connect insecurely, use WithInsecureHTTP() to opt in", rawURL)
+		}
+	default:
+		return nil, fmt.Errorf("oci: registry URL %q has unsupported scheme %q; only https:// is allowed (or http:// with WithInsecureHTTP)", rawURL, scheme)
+	}
+
+	return r, nil
 }
 
 // Reference holds a parsed OCI reference (registry/repo:tag or registry/repo@digest).
