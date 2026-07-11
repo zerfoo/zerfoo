@@ -1,0 +1,34 @@
+# Docker build context root is the repo root (see deploy/aws/README.md:
+# `docker build -f deploy/aws/Dockerfile .`). The build stage only runs
+# `go mod download` and `go build ./cmd/zerfoo` — never `go test` — so test
+# sources, fixtures, docs, and unrelated tooling artifacts are safe to drop
+# from the context sent to the daemon.
+#
+# Do NOT exclude go.mod or go.sum: the Dockerfile COPYs them explicitly
+# before the full `COPY . .`.
+
+# Version control
+.git
+.github
+
+# Claude Code session state, worktrees, and checkpoint scratch files
+.claude
+.claude-checkpoint*.md
+
+# Documentation -- not needed to build the binary
+docs
+*.md
+
+# Test sources and fixtures -- never compiled into `go build` output
+**/*_test.go
+**/testdata
+
+# Pre-built debug binaries checked into the repo (unrelated to the serve image)
+/debug-infer
+/gguf-info
+/ts_train
+/bin
+
+# Editor / OS scratch
+*.swp
+.DS_Store
