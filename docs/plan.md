@@ -528,6 +528,19 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 
 ## Hand-off Notes
 
+### SESSION HANDOFF 2026-07-11 (live state for the next session)
+
+Phase 1 security remediation (E139-E145) is essentially complete; only the Wave Sec-5 closeout remains. Pick up here:
+
+- **main is clean at `e1d35140`.** `go build/vet/test ./...` were green after the last merge. Only open PR is release `#952` (chore(main): release 1.57.1) -- release-please, merge when ready.
+- **T145.1 (wire --rate-limit/--keystore/--tls serve CLI flags) is IN PROGRESS but UNMERGED.** A background Sonnet agent left uncommitted WIP in worktree `.claude/worktrees/agent-a2bf0851ce89533da` (branch `wave-sec5-task-T145.1`): modified `cmd/cli/serve.go` + `cmd/cli/serve_test.go`, NO commits yet. That background agent does NOT survive into your session. The diff so far is correct in shape: `--rate-limit`/`--rate-limit-burst` -> `serve.WithRateLimiter(security.NewRateLimiter(...))`; `--keystore` -> `serve.WithKeyStore`; registers a `bboltCloser` with the shutdown coordinator BEFORE the server so reverse-order shutdown drains listener -> stops rate-limiter goroutine (T142.3) -> closes bbolt last. But it was still resolving compile errors (undefined `Command`, `startLoading`, `bboltCloser`, unused `math` import). DECIDE: finish it in that worktree (build + `go test ./cmd/...`, commit, open PR, rebase-merge) OR discard the worktree and redo cleanly. The `refs/claims/T145.1` claim is still held -- release it (`/claim T145.1 --release`) or re-own it before working.
+- **T145.2 (deep-review 002 closeout) is BLOCKED on T145.1.** Once T145.1 merges: re-verify each of the 9 High findings still has a passing repro test on main, update the status header of docs/deep-reviews/002-full-codebase.md to "remediated" with the PR map, and reference the deferred tech-debt issues already filed: **#974** (fast-math Makefile fork-drift), **#975** (/metrics gating, SERVE-7 residual), **#976** (distroless multi-arch index digest, CICD-4 residual). Then flip T145.1 + T145.2 boxes.
+- **After Sec-5 closes, T138.1 (plan Phase 2) unblocks** except it also lists T136.5 as a blocker, and T136.5 -> T136.3 -> **T136.2 (human GGUF provisioning on the DGX, still OPEN)**. So either (a) get David to do T136.2, or (b) descope the matrix-dependent blocker from T138.1 and plan Phase 2 now. Per the "plan the next phase and repeat" directive, confirm scope with David before starting Phase 2 planning.
+- **Worktree hygiene:** ~40 stale agent worktrees from merged Sec-1..Sec-4 tasks are still on disk (`git worktree list`). Safe to `git worktree prune` / remove the merged ones; keep only agent-a2bf0851ce89533da if you choose to finish T145.1 there. `.claude-checkpoint.*.md` files in the root are untracked scratch -- ignorable.
+- **Standing lesson (do not skip):** after any dense same-file parallel wave, run full `go build ./...` on main after merges -- individual PR CI passed green while their COMBINATION broke main's build once (the `math` import collision in model/gguf, commit ca1eb41d).
+
+### Standing notes
+
 1. Read docs/product-strategy-2026-H2.md first; ADR-093 is the decision record. docs/lore.md is mandatory pre-debugging reading for anything touching capture, arena, dst, or the GB10.
 2. The ONE external dependency is T136.2 (GGUF provisioning on the DGX host) -- a human task. Ask David early; do not let Tracks B/D silently stall on it.
 3. GPU runs: `scripts/dgx-validate.sh` is the standing gate (supports -pkgs for targeted runs, -keep/-delete for pod inspection, -dry-run). One pod at a time. Known footgun: zero-matched tests count as pass (guard added in T135.1).
