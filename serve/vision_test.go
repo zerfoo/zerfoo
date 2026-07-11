@@ -632,6 +632,10 @@ func TestIsBlockedIP(t *testing.T) {
 		{"private_192", "192.168.1.1", "private"},
 		{"link_local", "169.254.1.1", "link-local"},
 		{"metadata_ip", "169.254.169.254", "blocked SSRF"},
+		{"unspecified_v4", "0.0.0.0", "unspecified"},
+		{"unspecified_v6", "::", "unspecified"},
+		{"cgnat_low", "100.64.0.1", "CGNAT"},
+		{"cgnat_high", "100.127.255.254", "CGNAT"},
 		{"public", "93.184.216.34", ""},
 	}
 

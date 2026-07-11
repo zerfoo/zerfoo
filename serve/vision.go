@@ -31,13 +31,28 @@ var blockedSSRFIPs = map[string]bool{
 // when downloading an image.
 const maxImageRedirects = 3
 
+// cgnatBlock is the shared address space reserved for carrier-grade NAT
+// (RFC 6598). Requests into this range can reach infrastructure that is not
+// meant to be internet-reachable, so it is treated the same as RFC 1918
+// private space for SSRF purposes.
+var cgnatBlock = func() *net.IPNet {
+	_, block, err := net.ParseCIDR("100.64.0.0/10")
+	if err != nil {
+		panic(fmt.Sprintf("invalid CGNAT CIDR: %v", err))
+	}
+	return block
+}()
+
 // isBlockedIP checks whether an IP address should be blocked for SSRF protection.
-// It returns a non-nil error if the IP is loopback, private, link-local, or a
-// known cloud metadata address.
+// It returns a non-nil error if the IP is loopback, private, link-local,
+// unspecified, CGNAT (RFC 6598), or a known cloud metadata address.
 func isBlockedIP(ip net.IP) error {
 	ipStr := ip.String()
 	if blockedSSRFIPs[ipStr] {
 		return fmt.Errorf("blocked SSRF target: %s", ipStr)
+	}
+	if ip.IsUnspecified() {
+		return fmt.Errorf("blocked SSRF target: unspecified address %s", ipStr)
 	}
 	if ip.IsLoopback() {
 		return fmt.Errorf("blocked SSRF target: loopback address %s", ipStr)
@@ -50,6 +65,9 @@ func isBlockedIP(ip net.IP) error {
 	}
 	if ip.IsLinkLocalMulticast() {
 		return fmt.Errorf("blocked SSRF target: link-local multicast address %s", ipStr)
+	}
+	if cgnatBlock.Contains(ip) {
+		return fmt.Errorf("blocked SSRF target: CGNAT address %s", ipStr)
 	}
 	return nil
 }
