@@ -41,6 +41,8 @@ jobs:
           govulncheck ./...
       - name: Unit tests
         run: go test -short ./... -race -timeout 300s
+      - name: Malformed-GGUF fuzz (bounded)
+        run: go test -run '^$' -fuzz=FuzzParse -fuzztime=30s -timeout 90s ./model/gguf/
       - name: Architecture enforcement
         run: go test ./tests/architecture/ -race -timeout 120s
       - name: Parity tests (PyTorch golden files)
