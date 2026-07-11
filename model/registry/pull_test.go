@@ -528,6 +528,157 @@ func TestDownloadFile_InterruptedDownload_NoPartialFile(t *testing.T) {
 	}
 }
 
+func TestDownloadFile_PinnedHashOverridesETag_Match(t *testing.T) {
+	content := []byte("out-of-band pinned content")
+	hash := sha256.Sum256(content)
+	hexHash := hex.EncodeToString(hash[:])
+
+	// Server ETag intentionally does NOT match the real content hash. If the
+	// pinned hash correctly takes precedence, the download must still
+	// succeed because the pin matches the content -- the (wrong) ETag must
+	// be ignored entirely.
+	wrongETag := strings.Repeat("cd", 32)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, _ *http.Request) {
+		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "config.json"}}}
+		json.NewEncoder(w).Encode(info) //nolint:errcheck
+	})
+	mux.HandleFunc("/org/model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("ETag", fmt.Sprintf("%q", wrongETag))
+		w.Write(content) //nolint:errcheck
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	dir := t.TempDir()
+	pullFn := NewHFPullFunc(HFPullOptions{
+		APIURL: server.URL + "/api/models",
+		CDNURL: server.URL,
+		Client: server.Client(),
+		ExpectedHashes: map[string]string{
+			"config.json": hexHash,
+		},
+	})
+
+	_, err := pullFn(context.Background(), "org/model", dir)
+	if err != nil {
+		t.Fatalf("Pull should succeed when pinned hash matches content, regardless of ETag: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(content) {
+		t.Errorf("file content = %q, want %q", data, content)
+	}
+}
+
+func TestDownloadFile_PinnedHashMismatch_Rejected(t *testing.T) {
+	content := []byte("some content that will not match the pin")
+	hash := sha256.Sum256(content)
+	realHexHash := hex.EncodeToString(hash[:])
+	wrongPin := strings.Repeat("ef", 32)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, _ *http.Request) {
+		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "config.json"}}}
+		json.NewEncoder(w).Encode(info) //nolint:errcheck
+	})
+	mux.HandleFunc("/org/model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		// Server's ETag correctly matches the content (i.e. it is NOT the
+		// cause of the failure) -- only the caller-supplied pin is wrong.
+		w.Header().Set("ETag", fmt.Sprintf("%q", realHexHash))
+		w.Write(content) //nolint:errcheck
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	dir := t.TempDir()
+	pullFn := NewHFPullFunc(HFPullOptions{
+		APIURL: server.URL + "/api/models",
+		CDNURL: server.URL,
+		Client: server.Client(),
+		ExpectedHashes: map[string]string{
+			"config.json": wrongPin,
+		},
+	})
+
+	_, err := pullFn(context.Background(), "org/model", dir)
+	if err == nil {
+		t.Fatal("Pull should fail when pinned hash does not match downloaded content")
+	}
+	if !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Errorf("error should mention checksum mismatch, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "pinned") {
+		t.Errorf("error should indicate the mismatch came from a pinned hash, got: %v", err)
+	}
+
+	finalPath := filepath.Join(dir, "config.json")
+	if _, err := os.Stat(finalPath); !os.IsNotExist(err) {
+		t.Error("final file should not exist after pinned checksum mismatch")
+	}
+	tmpPath := filepath.Join(dir, "config.json.tmp")
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Error("temp file should not exist after pinned checksum mismatch")
+	}
+}
+
+func TestDownloadFile_NoPin_FallsBackToETagBehavior(t *testing.T) {
+	// With no ExpectedHashes entry for the file, behavior must be unchanged
+	// from before: a correct ETag is verified and accepted, matching
+	// TestDownloadFile_ChecksumMatch's expectations exactly, but this time
+	// with a (nil) ExpectedHashes map explicitly passed to exercise the
+	// "no out-of-band hash provided" path end-to-end.
+	content := []byte("etag fallback content")
+	hash := sha256.Sum256(content)
+	hexHash := hex.EncodeToString(hash[:])
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/models/org/model", func(w http.ResponseWriter, _ *http.Request) {
+		info := HFModelInfo{ID: "org/model", Siblings: []HFSibling{{Filename: "config.json"}, {Filename: "tokenizer.json"}}}
+		json.NewEncoder(w).Encode(info) //nolint:errcheck
+	})
+	mux.HandleFunc("/org/model/resolve/main/config.json", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("ETag", fmt.Sprintf("%q", hexHash))
+		w.Write(content) //nolint:errcheck
+	})
+	mux.HandleFunc("/org/model/resolve/main/tokenizer.json", func(w http.ResponseWriter, _ *http.Request) {
+		// No ETag at all: should warn-and-accept exactly as before.
+		w.Write([]byte(`{"ok": true}`)) //nolint:errcheck
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	dir := t.TempDir()
+	pullFn := NewHFPullFunc(HFPullOptions{
+		APIURL: server.URL + "/api/models",
+		CDNURL: server.URL,
+		Client: server.Client(),
+		// ExpectedHashes only pins a different, unrelated file -- config.json
+		// and tokenizer.json must both fall back to ETag-based behavior.
+		ExpectedHashes: map[string]string{
+			"some-other-file.gguf": strings.Repeat("11", 32),
+		},
+	})
+
+	_, err := pullFn(context.Background(), "org/model", dir)
+	if err != nil {
+		t.Fatalf("Pull should succeed via unchanged ETag fallback behavior: %v", err)
+	}
+
+	for _, name := range []string{"config.json", "tokenizer.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); os.IsNotExist(err) {
+			t.Errorf("expected file %s to exist", name)
+		}
+	}
+}
+
 func TestExtractSHA256(t *testing.T) {
 	tests := []struct {
 		name   string
