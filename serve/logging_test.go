@@ -147,6 +147,44 @@ func TestLogging_NopLogger(t *testing.T) {
 	// No panic or error means Nop logger works correctly.
 }
 
+// TestLogging_EscapesControlCharsInPath guards against SERVE-6: logMiddleware
+// must log the percent-encoded request path (r.URL.EscapedPath()), not the
+// percent-decoded r.URL.Path, so a request path carrying CR/LF (or other
+// control characters) cannot forge or split log lines.
+func TestLogging_EscapesControlCharsInPath(t *testing.T) {
+	mdl := buildTestModel(t)
+	var buf bytes.Buffer
+	logger := log.New(&buf, log.LevelInfo, log.FormatText)
+	srv := NewServer(mdl, WithLogger(logger))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	const injected = "FAKE-INJECTED-LOG-LINE"
+	resp := doGet(t, ts.URL+"/v1/models%0D%0A"+injected)
+	_ = resp.Body.Close()
+
+	output := buf.String()
+
+	// The decoded form must never appear: a raw CR/LF immediately followed
+	// by attacker-controlled text would fabricate what looks like a second,
+	// independent log line.
+	if strings.Contains(output, "\r\n"+injected) {
+		t.Fatalf("raw control chars leaked into log output (log injection): %q", output)
+	}
+
+	// Exactly one log line should have been written; a raw CR/LF in the path
+	// would otherwise split it into two.
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly one log line, got %d: %q", len(lines), output)
+	}
+
+	// The escaped, percent-encoded form must be present in the path field.
+	if !strings.Contains(lines[0], "path=/v1/models%0D%0A"+injected) {
+		t.Errorf("expected escaped path in log line, got: %q", lines[0])
+	}
+}
+
 func TestLogging_StructuredFields(t *testing.T) {
 	tests := []struct {
 		name       string
