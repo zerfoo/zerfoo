@@ -388,7 +388,10 @@ func (s *Server) logMiddleware(next http.Handler) http.Handler {
 
 		fields := []string{
 			"method", r.Method,
-			"path", r.URL.Path,
+			// EscapedPath (not the percent-decoded Path) is logged here: an
+			// attacker-controlled path can otherwise embed control characters
+			// (e.g. CR/LF) that split or forge log lines (SERVE-6, CWE-117).
+			"path", r.URL.EscapedPath(),
 			"model", modelID,
 			"prompt_tokens", "0",
 			"completion_tokens", "0",
