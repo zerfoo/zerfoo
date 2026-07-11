@@ -181,7 +181,7 @@ Component: model/gguf + model/registry. Acceptance: F1/F2/F3 closed with a share
   - Go native fuzzing (`go test -fuzz`) seeded with the F1/F2/F3 repro shapes above, plus a table test of legitimate tensor shapes proving no regression. Wire into CI as a bounded fuzz run (time-boxed), not a one-shot manual repro.
 - [x] T139.4 Fix OCI-1: verify blob digest on OCI pull  Owner: agent  Est: 2h  verifies: [UC-H2-007]  kind: agent  (done 2026-07-10, PR #949: sha256Digest recompute-and-compare wired into Pull before disk write; mismatch test confirms no file is written)
   - `model/registry/oci.go:199-207` `Pull` writes `getBlob` bytes to disk with no recompute-and-compare against `ggufLayer.Digest`, even though `sha256Digest` (`:367`) already exists (used only on push). Fix: recompute `sha256Digest(data)` and reject a mismatch.
-- [ ] T139.5 Fix OCI-2: reject non-https registry URLs  Owner: TBD  Est: 1h  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.4]
+- [x] T139.5 Fix OCI-2: reject non-https registry URLs  Owner: TBD  Est: 1h  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.4]  (done 2026-07-10, PR #968: reject non-https OCI registry URLs by default, WithInsecureHTTP() opt-in; NewRegistry now returns an error)
   - `oci.go:46-55` accepts plain `http://`. Reject non-`https://` unless an explicit insecure flag is set.
 - [ ] S139.5.1 Tests + lint  Owner: TBD  Est: 1h  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.5]
   - Unit tests: digest-mismatch rejected, http:// rejected without the flag, https:// and matching-digest accepted unchanged.
@@ -241,19 +241,19 @@ Component: serve/. Acceptance: SERVE-1/2 closed (High/conditional-High); SERVE-3
   - `serve/metrics.go:93-95`'s `RecordError` encodes the raw, pre-auth `r.URL.Path` into a permanent counter name (`server.go:366`, outside `authMiddleware`). Fix: normalize to a matched route template, collapsing unknown paths to a single `"other"` bucket.
 - [x] T143.3 Fix SERVE-3: cap /v1/embeddings input array size  Owner: agent  Est: 1h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-10, PR #954: maxEmbeddingsBatch=256 matching the existing classify/guard cap style; also fixed the test model to carry real embedding weights so the 200 path was actually exercised, not just 500s)
   - `handlers.go:342-400` has no element-count cap while `/v1/classify`/`/v1/guard/batch` cap at 256. Fix: mirror `maxClassifyBatch = 256`.
-- [ ] T143.4 Fix SERVE-3b: cap per-request image-fetch fan-out  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent
+- [x] T143.4 Fix SERVE-3b: cap per-request image-fetch fan-out  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-10, PR #967: cap images/request (16), 64MB shared byte budget, 60s wall-clock bound on the fan-out)
   - `handlers.go:99-110` -> `vision.go:245`: a 10 MB body can carry thousands of `image_url` entries, each fetched sequentially (up to 20 MB, 30s timeout). Fix: cap images per request (<=16), cap total decoded bytes, bound concurrency and overall wall-clock via `r.Context()` deadline.
-- [ ] T143.5 Fix SERVE-4: GuardianMiddleware unbounded body read  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+- [x] T143.5 Fix SERVE-4: GuardianMiddleware unbounded body read  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-10, PR #964: http.MaxBytesReader (10MB) + SSE passthrough (no buffering of text/event-stream))
   - `guardian_middleware.go:42,95-126` does `io.ReadAll(r.Body)` with no cap and buffers the full response, breaking SSE. Latent (not wired into `NewServer` today, but fix before it is). Fix: `http.MaxBytesReader` before read; skip response buffering for `text/event-stream`.
-- [ ] T143.6 Fix SERVE-5: validate sampling parameter bounds  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+- [x] T143.6 Fix SERVE-5: validate sampling parameter bounds  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-10, PR #969: reject max_tokens<=0, clamp temperature<=2)
   - `handlers.go:59-62` only clamps the upper bound of `max_tokens`; `temperature` (`types.go:167-182`) has no upper bound. Fix: reject `max_tokens <= 0`; clamp `temperature <= 2`.
-- [ ] T143.7 Fix SSRF-1: extend the SSRF IP blocklist  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+- [x] T143.7 Fix SSRF-1: extend the SSRF IP blocklist  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-10, PR #961: isBlockedIP now blocks IsUnspecified (0.0.0.0/::) and CGNAT 100.64.0.0/10)
   - `vision.go:37-55`'s `isBlockedIP` omits `IsUnspecified()` (`0.0.0.0`/`::`) and CGNAT `100.64.0.0/10`. Fix: add both. The core connect-time SSRF defense is otherwise excellent (keep it as-is).
-- [ ] T143.8 Fix SERVE-6: stop logging percent-decoded request paths  Owner: TBD  Est: 30m  verifies: [UC-H2-011]  kind: agent
+- [x] T143.8 Fix SERVE-6: stop logging percent-decoded request paths  Owner: TBD  Est: 30m  verifies: [UC-H2-011]  kind: agent  (done 2026-07-10, PR #966: log r.URL.EscapedPath() instead of decoded path (log-injection fix))
   - `server.go:376` logs the decoded `r.URL.Path` (log-injection risk). Fix: log `r.URL.EscapedPath()` or strip control characters.
-- [ ] T143.9 Fix SERVE-7: remove dead validation code; evaluate /metrics gating  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent
+- [x] T143.9 Fix SERVE-7: remove dead validation code; evaluate /metrics gating  Owner: TBD  Est: 1h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-10, PR #960: removed dead validateImageURL/ssrfValidator (grep-confirmed zero callers); /metrics gating deferred as tracked tech debt (it is intentional, test-asserted behavior))
   - `validateImageURL`/`ssrfValidator` (`vision.go:127,136`) are never called -- remove to avoid a false sense that URL-level validation runs. Separately evaluate gating `/metrics` (`server.go:262`) behind auth or a separate listener; if not done this phase, file as tech debt.
-- [ ] T143.10 Fix HF-1: support an out-of-band expected hash for HF downloads  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent
+- [x] T143.10 Fix HF-1: support an out-of-band expected hash for HF downloads  Owner: TBD  Est: 2h  verifies: [UC-H2-011]  kind: agent  (done 2026-07-10, PR #962: optional ExpectedHashes pin verified over the server ETag for HF pulls)
   - `pull.go:254-260`'s integrity check is trust-on-first-download (expected SHA comes from the same server's ETag; absent ETag warns and accepts). Fix: accept an optional out-of-band expected-hash parameter/pin that, when provided, is verified instead of trusting the ETag.
 - [ ] S143.10.1 API tests for this epic  Owner: TBD  Est: 3h  verifies: [UC-H2-011]  kind: agent  blocked-by: [T143.1, T143.2, T143.3, T143.4, T143.5, T143.6, T143.7, T143.8, T143.9, T143.10]
   - Real-request tests against the HTTP boundary: adapter traversal name rejected (400, no file opened), oversized embeddings/image-fan-out batch rejected, SSE response not buffered by GuardianMiddleware, negative max_tokens rejected, request to `http://0.0.0.0/` blocked by the SSRF dialer.
@@ -266,11 +266,11 @@ Component: .github/workflows, deploy/. Acceptance: CICD-1/2 closed (this phase, 
   - `ci.yml`, `arm64-build.yml`, `golden-staleness.yml` run on `pull_request` (build/run PR code) with no `permissions:` block, so jobs inherit the repo/org default `GITHUB_TOKEN` scope. Fix: add `permissions: contents: read` to all three, matching the workflows that already do this correctly.
 - [x] T144.2 Fix CICD-2: pin mutable tool/package installs in CI  Owner: agent  Est: 1h  verifies: [UC-H2-012]  kind: agent  (done 2026-07-03, PR #939: govulncheck pinned to v1.5.0, torch/numpy pinned to verified-current versions on the CPU index)
   - `ci.yml:38` installs `govulncheck@latest`; `golden-staleness.yml:15` installs unpinned `torch`/`numpy` via pip. Fix: pin exact versions (or hash-checked installs) for both.
-- [ ] T144.3 Fix CICD-3: scope the benchmark PR-comment token  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+- [x] T144.3 Fix CICD-3: scope the benchmark PR-comment token  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent  (done 2026-07-10, PR #959: split comment-posting into a separate job holding the sole pull-requests:write; build job runs contents:read only)
   - `benchmark.yml` grants `pull-requests: write` to the whole job that builds/runs PR code (same-repo branch PRs get the broad write scope; fork PRs already get read-only). Fix: scope the write permission to only the commenting step/job.
-- [ ] T144.4 Fix CICD-4: digest-pin container base images  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+- [x] T144.4 Fix CICD-4: digest-pin container base images  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent  (done 2026-07-10, PR #963: deploy/aws/Dockerfile base images digest-pinned (@sha256))
   - `deploy/aws/Dockerfile:2,20` pins by mutable tag, not digest. Fix: `FROM ...@sha256:<digest>`.
-- [ ] T144.5 Fix CICD-5: add .dockerignore  Owner: TBD  Est: 30m  verifies: [UC-H2-012]  kind: agent
+- [x] T144.5 Fix CICD-5: add .dockerignore  Owner: TBD  Est: 30m  verifies: [UC-H2-012]  kind: agent  (done 2026-07-10, PR #965: .dockerignore at repo build-context root; go build -deps verified nothing needed is excluded)
   - `deploy/aws/Dockerfile:10` `COPY . .` has no `.dockerignore`. Add one excluding `.git`, test fixtures, local scratch.
 - [ ] T144.6 Fix CICD-6: track the bbolt advisory instead of blanket continue-on-error  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
   - `go.etcd.io/bbolt v1.4.3` has GO-2026-4923 with no fix available; the CI vuln check is currently blanket `continue-on-error`. Fix: add a scoped govulncheck ignore for only that advisory ID, and re-enable failing on any other vulnerability.
@@ -358,7 +358,7 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 ### Wave Sec-2: Security fixes, tier 2 remainder + tier 3 start (10 agents) -- 9/10 DONE 2026-07-10 (T139.5 not yet dispatched, blocked-by T139.4 which is now done)
 - [x] T139.3 fix F3 dim cap  verifies: [UC-H2-007] -- DONE (PR #951)
 - [x] T139.4 fix OCI-1 digest verify  verifies: [UC-H2-007] -- DONE (PR #949)
-- [ ] T139.5 fix OCI-2 https-only  (after T139.4)  verifies: [UC-H2-007]  -- unblocked, not yet dispatched
+- [x] T139.5 fix OCI-2 https-only  (after T139.4)  verifies: [UC-H2-007] -- DONE 2026-07-10 (PR #968, in Wave Sec-3)
 - [x] T140.2 worker loopback default + --tls flags  (after T140.1)  verifies: [UC-H2-008] -- DONE (PR #955)
 - [x] T140.3 fix DIST-2 coordinator auth  (after T140.1)  verifies: [UC-H2-008] -- DONE (PR #956)
 - [x] T141.2 fix CUDA-2 vendor paths  (after T141.1)  verifies: [UC-H2-009] -- DONE (PR #958)
@@ -367,17 +367,17 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 - [x] T142.5 fix CONC-L1 batch goroutine leak  verifies: [UC-H2-010] -- DONE (PR #950)
 - [x] T143.3 fix SERVE-3 embeddings cap  verifies: [UC-H2-011] -- DONE (PR #954)
 
-### Wave Sec-3: Security fixes, tier 3 remainder (10 agents)
-- [ ] T143.4 fix SERVE-3b image fan-out cap  verifies: [UC-H2-011]
-- [ ] T143.5 fix SERVE-4 guardian body cap  verifies: [UC-H2-011]
-- [ ] T143.6 fix SERVE-5 sampling bounds  verifies: [UC-H2-011]
-- [ ] T143.7 fix SSRF-1 blocklist  verifies: [UC-H2-011]
-- [ ] T143.8 fix SERVE-6 log escaping  verifies: [UC-H2-011]
-- [ ] T143.9 fix SERVE-7 dead code + metrics gating  verifies: [UC-H2-011]
-- [ ] T143.10 fix HF-1 hash pin  verifies: [UC-H2-011]
-- [ ] T144.3 fix CICD-3 token scope  verifies: [UC-H2-012]
-- [ ] T144.4 fix CICD-4 digest-pin images  verifies: [UC-H2-012]
-- [ ] T144.5 fix CICD-5 .dockerignore  verifies: [UC-H2-012]
+### Wave Sec-3: Security fixes, tier 3 remainder (10 agents) -- 10/10 DONE 2026-07-10 (+ T139.5 leftover from Sec-2)
+- [x] T143.4 fix SERVE-3b image fan-out cap  verifies: [UC-H2-011] -- DONE (PR #967)
+- [x] T143.5 fix SERVE-4 guardian body cap  verifies: [UC-H2-011] -- DONE (PR #964)
+- [x] T143.6 fix SERVE-5 sampling bounds  verifies: [UC-H2-011] -- DONE (PR #969)
+- [x] T143.7 fix SSRF-1 blocklist  verifies: [UC-H2-011] -- DONE (PR #961)
+- [x] T143.8 fix SERVE-6 log escaping  verifies: [UC-H2-011] -- DONE (PR #966)
+- [x] T143.9 fix SERVE-7 dead code + metrics gating  verifies: [UC-H2-011] -- DONE (PR #960; /metrics gating deferred as tracked tech debt)
+- [x] T143.10 fix HF-1 hash pin  verifies: [UC-H2-011] -- DONE (PR #962)
+- [x] T144.3 fix CICD-3 token scope  verifies: [UC-H2-012] -- DONE (PR #959)
+- [x] T144.4 fix CICD-4 digest-pin images  verifies: [UC-H2-012] -- DONE (PR #963)
+- [x] T144.5 fix CICD-5 .dockerignore  verifies: [UC-H2-012] -- DONE (PR #965)
 
 ### Wave Sec-4: Tests, tech-debt tier, closeout (6 agents)
 - [ ] S139.3.1 GGUF fuzz corpus  (after T139.1/2/3)  verifies: [UC-H2-007]
@@ -443,6 +443,14 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 ---
 
 ## Progress Log
+
+### 2026 07 10 (later) -- Change Summary: Wave Sec-3 complete (10/10 + T139.5); deep-review 002 tiers 1-3 fixes all landed
+
+- **Wave Sec-3 is 10/10 DONE** plus the T139.5 leftover from Sec-2, all merged: T139.5 OCI-2 https-only (PR #968), T143.4 SERVE-3b image fan-out cap (PR #967), T143.5 SERVE-4 guardian body cap + SSE passthrough (PR #964), T143.6 SERVE-5 sampling bounds (PR #969), T143.7 SSRF-1 unspecified+CGNAT blocklist (PR #961), T143.8 SERVE-6 log-injection fix (PR #966), T143.9 SERVE-7 dead-code removal (PR #960), T143.10 HF-1 out-of-band hash pin (PR #962), T144.3 CICD-3 token scoping (PR #959), T144.4 CICD-4 digest-pinned images (PR #963), T144.5 CICD-5 .dockerignore (PR #965).
+- Heavy file overlap this wave (three agents on serve/vision.go, two on serve/handlers.go, two on serve/server.go) -- merged the 7 distinct-file PRs first, then the vision.go/handlers.go cluster; GitHub auto-rebased all cleanly since each agent kept its diff to a distinct region. Post-merge `go build ./... && go vet ./... && go test ./serve/... ./model/...` all clean on main (the Wave Sec-1 collision lesson).
+- Deferred as tracked tech debt (per agent recommendation, conservative path): T143.9's `/metrics` auth-gating -- unauthenticated `/metrics` is intentional, test-asserted behavior (scope_auth_test.go) and gating it risks breaking Prometheus scraping; file a follow-up issue in T145.2. T144.4's gcr.io distroless pin is per-arch (amd64) rather than the multi-arch index digest, because this environment has no docker/crane/skopeo -- revisit if multi-arch runtime portability is needed.
+- **Remaining for Objective 6 / D7 closeout:** T135.6 (kernel umbrella + fork-parity check, in flight), then Wave Sec-4 (S139.3.1 GGUF fuzz corpus + the per-epic S-tests, T144.6 bbolt advisory, T144.7 SLSA signing) and Wave Sec-5 (T145.1 wire --rate-limit/--keystore/--tls CLI flags, T145.2 re-verify every High finding + update the review doc status header + file tech-debt issues). After that, T138.1 (plan Phase 2) unblocks.
+
 
 ### 2026 07 10 -- Change Summary: Wave Sec-2 complete (9/10); ztensor v1.57.0 released
 
