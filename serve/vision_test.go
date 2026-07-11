@@ -141,6 +141,148 @@ func TestAPIVisionInput_HTTPImage(t *testing.T) {
 	}
 }
 
+// TestAPIVisionInput_TooManyImages verifies that a chat-completion request
+// referencing more than maxImagesPerRequest image_url entries is rejected
+// with a 400 before any image is fetched (SERVE-3b). A naive fan-out would
+// otherwise sequentially fetch every entry (each up to maxImageSize, with a
+// 30s timeout) before failing, which is the resource-exhaustion DoS this
+// cap prevents.
+func TestAPIVisionInput_TooManyImages(t *testing.T) {
+	pngData := testPNG(t)
+
+	var fetchCount atomic.Int64
+	imgServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetchCount.Add(1)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngData)
+	}))
+	defer imgServer.Close()
+
+	withBypassedSSRF(t)
+
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	var parts []string
+	parts = append(parts, `{"type": "text", "text": "describe these"}`)
+	for i := 0; i < maxImagesPerRequest+1; i++ {
+		parts = append(parts, `{"type": "image_url", "image_url": {"url": "`+imgServer.URL+`/test.png"}}`)
+	}
+	body := `{"messages": [{"role": "user", "content": [` + strings.Join(parts, ",") + `]}], "max_tokens": 5}`
+
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", resp.StatusCode, http.StatusBadRequest, data)
+	}
+	if !containsAny(string(data), "too many images") {
+		t.Errorf("error body = %s, want mention of image count cap", data)
+	}
+	if got := fetchCount.Load(); got != 0 {
+		t.Errorf("fetchCount = %d, want 0 (request should be rejected before any fetch)", got)
+	}
+}
+
+// TestAPIVisionInput_TooManyImages_AcrossMessages verifies the image count
+// cap is enforced across the whole request (summed over every message),
+// not just within a single message.
+func TestAPIVisionInput_TooManyImages_AcrossMessages(t *testing.T) {
+	pngData := testPNG(t)
+
+	var fetchCount atomic.Int64
+	imgServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetchCount.Add(1)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngData)
+	}))
+	defer imgServer.Close()
+
+	withBypassedSSRF(t)
+
+	mdl := buildTestModel(t)
+	srv := NewServer(mdl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	imgPart := `{"type": "image_url", "image_url": {"url": "` + imgServer.URL + `/test.png"}}`
+	perMessage := maxImagesPerRequest/2 + 1 // two messages of this size exceed the cap
+	var imgParts []string
+	for i := 0; i < perMessage; i++ {
+		imgParts = append(imgParts, imgPart)
+	}
+	content := "[" + strings.Join(imgParts, ",") + "]"
+	body := `{"messages": [
+		{"role": "user", "content": ` + content + `},
+		{"role": "user", "content": ` + content + `}
+	], "max_tokens": 5}`
+
+	resp := doPost(t, ts.URL+"/v1/chat/completions", "application/json", body)
+	defer func() { _ = resp.Body.Close() }()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", resp.StatusCode, http.StatusBadRequest, data)
+	}
+	if got := fetchCount.Load(); got != 0 {
+		t.Errorf("fetchCount = %d, want 0 (request should be rejected before any fetch)", got)
+	}
+}
+
+// TestFetchImages_ByteBudgetExceeded verifies that fetchImages enforces the
+// shared byte budget across multiple images in a single call, rejecting a
+// fetch once the cumulative decoded size would exceed the remaining budget
+// -- even though each individual image stays under maxImageSize.
+func TestFetchImages_ByteBudgetExceeded(t *testing.T) {
+	mkDataURI := func(n int) string {
+		payload := bytes.Repeat([]byte{0x42}, n)
+		return "data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(payload)
+	}
+
+	urls := []ImageURL{
+		{URL: mkDataURI(100)},
+		{URL: mkDataURI(100)},
+	}
+
+	budget := newImageFetchBudget(150) // first image fits, second does not
+	_, err := fetchImages(context.Background(), urls, budget)
+	if err == nil {
+		t.Fatal("expected error when cumulative image bytes exceed budget, got nil")
+	}
+	if !containsAny(err.Error(), "budget") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestFetchImages_WithinByteBudget verifies that fetchImages succeeds and
+// correctly decrements the shared budget when total bytes stay within it.
+func TestFetchImages_WithinByteBudget(t *testing.T) {
+	mkDataURI := func(n int) string {
+		payload := bytes.Repeat([]byte{0x42}, n)
+		return "data:application/octet-stream;base64," + base64.StdEncoding.EncodeToString(payload)
+	}
+
+	urls := []ImageURL{
+		{URL: mkDataURI(100)},
+		{URL: mkDataURI(100)},
+	}
+
+	budget := newImageFetchBudget(1000)
+	images, err := fetchImages(context.Background(), urls, budget)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(images) != 2 || len(images[0]) != 100 || len(images[1]) != 100 {
+		t.Fatalf("unexpected image sizes: %v", images)
+	}
+	if budget.remaining != 800 {
+		t.Errorf("budget.remaining = %d, want 800", budget.remaining)
+	}
+}
+
 func TestAPIVisionInput_StringContent(t *testing.T) {
 	mdl := buildTestModel(t)
 	srv := NewServer(mdl)
@@ -214,7 +356,7 @@ func TestDecodeDataURI(t *testing.T) {
 	encoded := base64.StdEncoding.EncodeToString(original)
 	uri := "data:image/png;base64," + encoded
 
-	got, err := decodeDataURI(uri)
+	got, err := decodeDataURI(uri, maxImageSize)
 	if err != nil {
 		t.Fatalf("decodeDataURI error: %v", err)
 	}
@@ -224,7 +366,7 @@ func TestDecodeDataURI(t *testing.T) {
 }
 
 func TestDecodeDataURI_InvalidFormat(t *testing.T) {
-	_, err := decodeDataURI("data:image/png;base64")
+	_, err := decodeDataURI("data:image/png;base64", maxImageSize)
 	if err == nil {
 		t.Error("expected error for missing comma separator")
 	}
@@ -281,7 +423,7 @@ func TestChatMessageUnmarshal_EmptyString(t *testing.T) {
 
 func TestSSRF_BlockLoopback(t *testing.T) {
 	ctx := context.Background()
-	_, err := downloadImage(ctx, "http://127.0.0.1/secret")
+	_, err := downloadImage(ctx, "http://127.0.0.1/secret", maxImageSize)
 	if err == nil {
 		t.Fatal("expected error for loopback address, got nil")
 	}
@@ -292,7 +434,7 @@ func TestSSRF_BlockLoopback(t *testing.T) {
 
 func TestSSRF_BlockMetadataIP(t *testing.T) {
 	ctx := context.Background()
-	_, err := downloadImage(ctx, "http://169.254.169.254/latest/meta-data/")
+	_, err := downloadImage(ctx, "http://169.254.169.254/latest/meta-data/", maxImageSize)
 	if err == nil {
 		t.Fatal("expected error for metadata IP, got nil")
 	}
@@ -303,7 +445,7 @@ func TestSSRF_BlockMetadataIP(t *testing.T) {
 
 func TestSSRF_BlockMetadataHostname(t *testing.T) {
 	ctx := context.Background()
-	_, err := downloadImage(ctx, "http://metadata.google.internal/computeMetadata/v1/")
+	_, err := downloadImage(ctx, "http://metadata.google.internal/computeMetadata/v1/", maxImageSize)
 	if err == nil {
 		t.Fatal("expected error for metadata.google.internal, got nil")
 	}
@@ -314,7 +456,7 @@ func TestSSRF_BlockMetadataHostname(t *testing.T) {
 
 func TestSSRF_BlockPrivateAddress(t *testing.T) {
 	ctx := context.Background()
-	_, err := downloadImage(ctx, "http://10.0.0.1/internal")
+	_, err := downloadImage(ctx, "http://10.0.0.1/internal", maxImageSize)
 	if err == nil {
 		t.Fatal("expected error for private address, got nil")
 	}
@@ -335,7 +477,7 @@ func TestSSRF_AllowPublicURL(t *testing.T) {
 	withBypassedSSRF(t)
 
 	ctx := context.Background()
-	got, err := downloadImage(ctx, imgServer.URL+"/image.png")
+	got, err := downloadImage(ctx, imgServer.URL+"/image.png", maxImageSize)
 	if err != nil {
 		t.Fatalf("unexpected error downloading from mock server: %v", err)
 	}

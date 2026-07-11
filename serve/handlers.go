@@ -2,6 +2,7 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -98,12 +99,35 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		opts = append(opts, grammarOpt)
 	}
 
-	// Convert messages and fetch any images.
+	// Cap the total number of images referenced across all messages before
+	// fetching any of them (SERVE-3b): a small request body can otherwise
+	// enumerate thousands of image_url entries, each fetched sequentially.
+	totalImages := 0
+	for _, m := range req.Messages {
+		totalImages += len(m.ImageURLs)
+	}
+	if totalImages > maxImagesPerRequest {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("too many images: %d exceeds maximum of %d per request", totalImages, maxImagesPerRequest))
+		return
+	}
+
+	// Convert messages and fetch any images. All image fetches for this
+	// request share one byte budget and one wall-clock deadline derived
+	// from the request context, bounding total memory and total time spent
+	// on the fan-out regardless of how many images are requested.
+	imgCtx := r.Context()
+	if totalImages > 0 {
+		var cancel context.CancelFunc
+		imgCtx, cancel = context.WithTimeout(r.Context(), maxImageFetchWallClock)
+		defer cancel()
+	}
+	imgBudget := newImageFetchBudget(maxTotalImageBytes)
+
 	messages := make([]inference.Message, len(req.Messages))
 	for i, m := range req.Messages {
 		messages[i] = inference.Message{Role: m.Role, Content: m.Content}
 		if len(m.ImageURLs) > 0 {
-			images, err := fetchImages(r.Context(), m.ImageURLs)
+			images, err := fetchImages(imgCtx, m.ImageURLs, imgBudget)
 			if err != nil {
 				s.logger.Debug("image fetch error", "error", err.Error())
 				writeError(w, http.StatusBadRequest, "image fetch failed")
