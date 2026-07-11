@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.57.1](https://github.com/zerfoo/zerfoo/compare/v1.57.0...v1.57.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* **ci:** scope benchmark PR-comment write token to the commenting job (CICD-3, T144.3) ([a1bf81e](https://github.com/zerfoo/zerfoo/commit/a1bf81e6688d2d2d390f4ec7bbf994363d8e2b38))
+* **ci:** scope govulncheck to allowlist only the no-fix bbolt advisory (CICD-6, T144.6) ([70f8ac5](https://github.com/zerfoo/zerfoo/commit/70f8ac519bdd6d39badbe1b119b6e331c1bed956))
+* **cli:** default worker to loopback, add --tls-* flags (T140.2) ([9b886c2](https://github.com/zerfoo/zerfoo/commit/9b886c2abd54a76b916e09c198a84633c633fe75))
+* **cuda:** prefer absolute vendor-library paths across native loaders (CUDA-2, T141.2) ([252a92d](https://github.com/zerfoo/zerfoo/commit/252a92d001f5bda280bd96a9a42312bc983c8b1f))
+* **deploy:** digest-pin Dockerfile base images (CICD-4) ([1f75836](https://github.com/zerfoo/zerfoo/commit/1f7583668076bce2abeeda8f1e46fbba9a824f90))
+* **deps:** bump golang.org/x/net to v0.53.0 (GO-2026-4918 HTTP/2 DoS) ([941bab8](https://github.com/zerfoo/zerfoo/commit/941bab872110b720bd247d3d56f42c58532c4ec5))
+* **distributed:** authenticate coordinator worker registration ([35db753](https://github.com/zerfoo/zerfoo/commit/35db7534189d35857caa11a1bf4569ace7c3f778))
+* **gguf:** cap tensor dimension count at 8 (F3, T139.3) ([7ad5cc0](https://github.com/zerfoo/zerfoo/commit/7ad5cc06db3a4ad0b7a2897d99593ca17c109a1b))
+* **registry:** reject non-https registry URLs unless explicitly opted in (OCI-2, T139.5) ([3177eac](https://github.com/zerfoo/zerfoo/commit/3177eac140e95ea6e7dea6cf411ae8fc1b435a26))
+* **registry:** support out-of-band expected hash for HF pulls (HF-1, T143.10) ([7557dfb](https://github.com/zerfoo/zerfoo/commit/7557dfb775c7c551fc70101c84392ec2ecf209db))
+* **registry:** verify blob digest on OCI pull (OCI-1, T139.4) ([026ca1f](https://github.com/zerfoo/zerfoo/commit/026ca1faa9d46a3406bc7f88bbc50d1071355135))
+* **serve:** block unspecified + CGNAT addresses in SSRF guard ([5794d09](https://github.com/zerfoo/zerfoo/commit/5794d09e7639fb839e47e0f4b26b6af8213cae72))
+* **serve:** bound GuardianMiddleware body read, skip SSE buffering (SERVE-4) ([ed482ba](https://github.com/zerfoo/zerfoo/commit/ed482ba50f8d5bfbaac89e067d43961de6b4de4e))
+* **serve:** bound RateLimiter memory via scheduled cleanup + size cap ([4d93744](https://github.com/zerfoo/zerfoo/commit/4d937449338fa8b9f1594dbac417a521c98c6c3b))
+* **serve:** cap /v1/embeddings input array size (SERVE-3, T143.3) ([6ef8841](https://github.com/zerfoo/zerfoo/commit/6ef88410f0c6e975accd4fa3b535c889c0208ef6))
+* **serve:** cap per-request image-fetch fan-out (SERVE-3b, T143.4) ([8e8622b](https://github.com/zerfoo/zerfoo/commit/8e8622b4308f9d9729eebe4655fb24988ebb1cbc))
+* **serve:** eliminate KeyStore Revoked/ExpiresAt data race (CONC-M2, T142.4) ([09e0e8a](https://github.com/zerfoo/zerfoo/commit/09e0e8a6203bb92ea56ae9803a96a04009a53eaa))
+* **serve:** log escaped request path to prevent log injection (SERVE-6, T143.8) ([eae4e83](https://github.com/zerfoo/zerfoo/commit/eae4e83f5ec72d82ef6b5967f5cab4fec9ed8d76))
+* **serve:** reap executeBatch ctx-wait goroutines promptly (CONC-L1) ([0e8e7b7](https://github.com/zerfoo/zerfoo/commit/0e8e7b7676d9f2f0514c0d65c37e96f6d8313e05))
+* **serve:** remove dead SSRF validation code (SERVE-7, T143.9) ([37d1c8a](https://github.com/zerfoo/zerfoo/commit/37d1c8a1b74c0e3c98d6cfb0aa96cb1b0ee5065a))
+* **serve:** validate max_tokens/temperature bounds (SERVE-5, T143.6) ([214f06a](https://github.com/zerfoo/zerfoo/commit/214f06a43e74a19c268425f0b280a40fdcce8797))
+
 ## [1.57.0](https://github.com/zerfoo/zerfoo/compare/v1.56.0...v1.57.0) (2026-07-04)
 
 
