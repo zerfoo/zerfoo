@@ -5,10 +5,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zerfoo/zerfoo/inference"
+	"github.com/zerfoo/zerfoo/serve"
+	"github.com/zerfoo/zerfoo/serve/security"
 	"github.com/zerfoo/zerfoo/serve/shutdown"
 )
 
@@ -354,6 +359,205 @@ func TestServeCommand_GPUsFlagValid(t *testing.T) {
 	cancel()
 	err := <-errCh
 	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+}
+
+// waitForServer blocks until a *serve.Server arrives on ch or the timeout
+// elapses. It exists so tests exercising cmd.newServer's DI hook don't hang
+// forever if Run fails to reach server construction.
+func waitForServer(t *testing.T, ch <-chan *serve.Server) *serve.Server {
+	t.Helper()
+	select {
+	case srv := <-ch:
+		return srv
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for server construction")
+		return nil
+	}
+}
+
+func TestServeCommand_RateLimitFlagValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"rate-limit missing value", []string{"--rate-limit"}, "--rate-limit requires a value"},
+		{"rate-limit non-numeric", []string{"--rate-limit", "abc", "test-model"}, "invalid --rate-limit value"},
+		{"rate-limit zero", []string{"--rate-limit", "0", "test-model"}, "invalid --rate-limit value"},
+		{"rate-limit negative", []string{"--rate-limit", "-5", "test-model"}, "invalid --rate-limit value"},
+		{"rate-limit-burst missing value", []string{"--rate-limit-burst"}, "--rate-limit-burst requires a value"},
+		{"rate-limit-burst non-numeric", []string{"--rate-limit-burst", "abc", "test-model"}, "invalid --rate-limit-burst value"},
+		{"rate-limit-burst zero", []string{"--rate-limit", "1", "--rate-limit-burst", "0", "test-model"}, "invalid --rate-limit-burst value"},
+		{"rate-limit-burst without rate-limit", []string{"--rate-limit-burst", "5", "test-model"}, "--rate-limit-burst requires --rate-limit"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			cmd := NewServeCommand(nil, &out)
+			cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+				return nil, errors.New("should not be called")
+			}
+			err := cmd.Run(context.Background(), tc.args)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want to contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestServeCommand_KeystoreFlagValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{"keystore missing value", []string{"--keystore"}, "--keystore requires a value"},
+		{"keystore unopenable path", []string{"--keystore", "/nonexistent-dir-zf-t145/apikeys.db", "test-model"}, "open --keystore"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			cmd := NewServeCommand(nil, &out)
+			cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+				return nil, errors.New("should not be called")
+			}
+			err := cmd.Run(context.Background(), tc.args)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want to contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestServeCommand_RateLimitWiring verifies that --rate-limit/--rate-limit-burst
+// actually construct a serve.Server with a functioning rate limiter (T145.1):
+// the server built by the CLI's newServer hook must reject the request that
+// exceeds the configured burst with 429, not just accept the flag silently.
+func TestServeCommand_RateLimitWiring(t *testing.T) {
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewServeCommand(nil, &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+
+	serverCh := make(chan *serve.Server, 1)
+	cmd.newServer = func(m *inference.Model, opts ...serve.ServerOption) *serve.Server {
+		s := serve.NewServer(m, opts...)
+		serverCh <- s
+		return s
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.Run(ctx, []string{
+			"--port", "0", "--allow-no-auth",
+			"--rate-limit", "1", "--rate-limit-burst", "1",
+			"test-model",
+		})
+	}()
+
+	srv := waitForServer(t, serverCh)
+	handler := srv.Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first request: got status %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req2.RemoteAddr = "10.0.0.5:1234"
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request: got status %d, want %d; body=%s", rec2.Code, http.StatusTooManyRequests, rec2.Body.String())
+	}
+
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+}
+
+// TestServeCommand_KeystoreWiring verifies that --keystore opens the given
+// bbolt file and wires it into the server's scope-based auth (T145.1): a
+// pre-provisioned read_only key must authenticate and authorize a GET
+// request, and a request without any credentials must be rejected.
+func TestServeCommand_KeystoreWiring(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "apikeys.db")
+
+	// Pre-populate the keystore, then close it -- bbolt takes an exclusive
+	// file lock, so the backend must be closed before the CLI opens the
+	// same path.
+	backend, err := security.NewBboltKeyStoreBackend(dbPath)
+	if err != nil {
+		t.Fatalf("NewBboltKeyStoreBackend: %v", err)
+	}
+	ks := security.NewKeyStore(security.WithBackend(backend))
+	rawKey, _, err := ks.Create("t145-test-key", []security.Scope{security.ScopeReadOnly}, time.Time{})
+	if err != nil {
+		t.Fatalf("Create key: %v", err)
+	}
+	if err := backend.Close(); err != nil {
+		t.Fatalf("close backend: %v", err)
+	}
+
+	mdl := buildCLITestModel(t)
+	var out bytes.Buffer
+	cmd := NewServeCommand(nil, &out)
+	cmd.loadFn = func(_ string, _ ...inference.Option) (*inference.Model, error) {
+		return mdl, nil
+	}
+
+	serverCh := make(chan *serve.Server, 1)
+	cmd.newServer = func(m *inference.Model, opts ...serve.ServerOption) *serve.Server {
+		s := serve.NewServer(m, opts...)
+		serverCh <- s
+		return s
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		// Deliberately no --api-key/--allow-no-auth: --keystore alone must
+		// satisfy the "authentication configured" opt-in check.
+		errCh <- cmd.Run(ctx, []string{"--port", "0", "--keystore", dbPath, "test-model"})
+	}()
+
+	srv := waitForServer(t, serverCh)
+	handler := srv.Handler()
+
+	unauth := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, unauth)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("no credentials: got status %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	authed := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	authed.Header.Set("Authorization", "Bearer "+rawKey)
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, authed)
+	if rec2.Code != http.StatusOK {
+		t.Errorf("valid keystore key: got status %d, want %d; body=%s", rec2.Code, http.StatusOK, rec2.Body.String())
+	}
+
+	cancel()
+	if err := <-errCh; err != nil {
 		t.Fatalf("Run error: %v", err)
 	}
 }
