@@ -177,7 +177,7 @@ Component: model/gguf + model/registry. Acceptance: F1/F2/F3 closed with a share
   - Acceptance: `ti.Offset = 0x8000000000000000` returns an error, not a slice-bounds panic.
 - [x] T139.3 Fix F3: cap GGUF tensor dimension count  Owner: agent  Est: 1h  verifies: [UC-H2-007]  kind: agent  (done 2026-07-10, PR #951: maxTensorDims=8 cap in parser.go, the sole TensorInfo construction site from untrusted input; attack shape and boundary cases tested)
   - `parser.go:131-136` reads an unbounded number of dimensions per tensor. Cap `numDims` at 8 and return an error above that.
-- [ ] S139.3.1 Malformed-GGUF fuzz corpus + table tests  Owner: TBD  Est: 3h  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.1, T139.2, T139.3]
+- [x] S139.3.1 Malformed-GGUF fuzz corpus + table tests  Owner: agent  verifies: [UC-H2-007]  kind: agent  blocked-by: [T139.1, T139.2, T139.3]  (done 2026-07-10, PR #972: FuzzParse over parse+load seeded with F1/F2/F3 shapes; bounded 30s fuzz step in ci.yml; found+relaxed an over-strict empty-name assertion)
   - Go native fuzzing (`go test -fuzz`) seeded with the F1/F2/F3 repro shapes above, plus a table test of legitimate tensor shapes proving no regression. Wire into CI as a bounded fuzz run (time-boxed), not a one-shot manual repro.
 - [x] T139.4 Fix OCI-1: verify blob digest on OCI pull  Owner: agent  Est: 2h  verifies: [UC-H2-007]  kind: agent  (done 2026-07-10, PR #949: sha256Digest recompute-and-compare wired into Pull before disk write; mismatch test confirms no file is written)
   - `model/registry/oci.go:199-207` `Pull` writes `getBlob` bytes to disk with no recompute-and-compare against `ggufLayer.Digest`, even though `sha256Digest` (`:367`) already exists (used only on push). Fix: recompute `sha256Digest(data)` and reject a mismatch.
@@ -272,9 +272,9 @@ Component: .github/workflows, deploy/. Acceptance: CICD-1/2 closed (this phase, 
   - `deploy/aws/Dockerfile:2,20` pins by mutable tag, not digest. Fix: `FROM ...@sha256:<digest>`.
 - [x] T144.5 Fix CICD-5: add .dockerignore  Owner: TBD  Est: 30m  verifies: [UC-H2-012]  kind: agent  (done 2026-07-10, PR #965: .dockerignore at repo build-context root; go build -deps verified nothing needed is excluded)
   - `deploy/aws/Dockerfile:10` `COPY . .` has no `.dockerignore`. Add one excluding `.git`, test fixtures, local scratch.
-- [ ] T144.6 Fix CICD-6: track the bbolt advisory instead of blanket continue-on-error  Owner: TBD  Est: 1h  verifies: [UC-H2-012]  kind: agent
+- [x] T144.6 Fix CICD-6: track the bbolt advisory instead of blanket continue-on-error  Owner: agent  verifies: [UC-H2-012]  kind: agent  (done 2026-07-10, PR #973: scripts/govulncheck-gate.sh allowlists only the no-fix bbolt ID and fails on anything else; removing the blanket swallow surfaced a real reachable HTTP/2 DoS GO-2026-4918 -> bumped golang.org/x/net to v0.53.0 in the same PR; note GO-2026-4923 has since been WITHDRAWN as a false positive)
   - `go.etcd.io/bbolt v1.4.3` has GO-2026-4923 with no fix available; the CI vuln check is currently blanket `continue-on-error`. Fix: add a scoped govulncheck ignore for only that advisory ID, and re-enable failing on any other vulnerability.
-- [ ] T144.7 SLSA: add artifact signing + SBOM to the release pipeline  Owner: TBD  Est: 4h  verifies: [UC-H2-012]  kind: agent  blocked-by: [T144.1]
+- [x] T144.7 SLSA: add artifact signing + SBOM to the release pipeline  Owner: agent  verifies: [UC-H2-012]  kind: agent  blocked-by: [T144.1]  (done 2026-07-10, PR #970: keyless cosign signing of the release SBOM via GitHub OIDC in a least-privilege id-token:write job; SBOM was already wired; documented that wiring GoReleaser to build+sign actual binaries/images is the remaining human follow-up since no built-artifact pipeline exists yet)
   - Build is reproducible-ish (pinned deps, no `replace`) but unsigned with no provenance attestation (~SLSA L1-L2). Add cosign signing + SBOM generation to `release-please.yml`. Time-boxed stretch item: if not completed this phase, file as tracked tech debt rather than extending the phase.
 
 ### E145: Security review closeout
@@ -379,11 +379,11 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 - [x] T144.4 fix CICD-4 digest-pin images  verifies: [UC-H2-012] -- DONE (PR #963)
 - [x] T144.5 fix CICD-5 .dockerignore  verifies: [UC-H2-012] -- DONE (PR #965)
 
-### Wave Sec-4: Tests, tech-debt tier, closeout (6 agents)
-- [ ] S139.3.1 GGUF fuzz corpus  (after T139.1/2/3)  verifies: [UC-H2-007]
-- [ ] S139.5.1, S140.3.1, S141.2.1, S142.5.1, S143.10.1 (parallel; each after its epic's fixes)
-- [ ] T144.6 fix CICD-6 bbolt tracking  verifies: [UC-H2-012]
-- [ ] T144.7 SLSA signing + SBOM  (after T144.1)  verifies: [UC-H2-012]
+### Wave Sec-4: Tests, tech-debt tier, closeout -- DONE 2026-07-10 (S-tests folded into their fix PRs)
+- [x] S139.3.1 GGUF fuzz corpus  (after T139.1/2/3)  verifies: [UC-H2-007] -- DONE (PR #972)
+- [x] S139.5.1, S140.3.1, S141.2.1, S142.5.1, S143.10.1 -- satisfied inside their fix PRs (#968/#956/#958/#944+#948+#953+#957+#950/#967+#969); T145.2 re-verifies each
+- [x] T144.6 fix CICD-6 bbolt tracking  verifies: [UC-H2-012] -- DONE (PR #973, + x/net v0.53.0 bump for GO-2026-4918)
+- [x] T144.7 SLSA signing + SBOM  (after T144.1)  verifies: [UC-H2-012] -- DONE (PR #970)
 
 ### Wave Sec-5: Closeout (2 agents)
 - [ ] T145.1 wire flags into CLI  (after T140.1, T142.3)
@@ -443,6 +443,15 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 ---
 
 ## Progress Log
+
+### 2026 07 10 (latest) -- Change Summary: Wave Sec-4 done; E135/#847 closed; only Wave Sec-5 closeout remains
+
+- **Wave Sec-4 complete**: S139.3.1 GGUF fuzz corpus + bounded CI fuzz (PR #972; the fuzzer immediately found and relaxed an over-strict empty-tensor-name assertion), T144.6 scoped govulncheck gate (PR #973), T144.7 keyless cosign SBOM signing (PR #970). The per-epic S-tests (S139.5.1/S140.3.1/S141.2.1/S142.5.1/S143.10.1) were satisfied inside their fix PRs rather than re-dispatched; T145.2 re-verifies each.
+- **Real vuln surfaced + fixed by the new gate**: removing the blanket `continue-on-error` on the CI vuln check (T144.6) unmasked GO-2026-4918, a reachable HTTP/2 infinite-loop DoS via `golang.org/x/net v0.48.0` (reached through model/registry/oci.go). Bumped x/net to v0.53.0 (pulling x/sys->v0.43.0, x/text->v0.36.0) in the same PR so the gate lands green. Also learned the original bbolt advisory GO-2026-4923 was WITHDRAWN as a false positive; the scoped gate is still the right improvement (no more blanket swallow).
+- **E135 closed**: #847 (kernel-numerics umbrella) and #921 (-tags cuda CGo path, dispositioned as documented DGX-only build policy) both closed via T135.6. The fork-parity symbol check (internal/cuda/kernels/symbol_parity_test.go) is in place, red-proofed against the T135.3 .so-drift incident. One residual filed as **#974**: zerfoo's kernel-fork Makefile never got ztensor#143's global `--use_fast_math` removal, so the deployed .so isn't fast-math-free (real GPU follow-up: Makefile port + rebuild + oracle re-run).
+- **Deferred as tracked tech debt** (to be filed as issues in T145.2): unauthenticated `/metrics` gating (intentional/test-asserted; risks Prometheus scraping), and T144.4's per-arch (not multi-arch index) distroless digest pin.
+- **Remaining = Wave Sec-5 only**: T145.1 (wire --rate-limit/--keystore/--tls-* CLI flags -- all underlying mechanisms now exist), T145.2 (re-verify every High finding's repro test, update docs/deep-reviews/002-full-codebase.md status header, file the deferred tech-debt issues). That closes Objective 6 / D7 and unblocks T138.1 (plan Phase 2).
+
 
 ### 2026 07 10 (later) -- Change Summary: Wave Sec-3 complete (10/10 + T139.5); deep-review 002 tiers 1-3 fixes all landed
 
