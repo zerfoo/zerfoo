@@ -100,6 +100,28 @@ func f3AttackSeed() []byte {
 	return buf.Bytes()
 }
 
+// f4AttackSeed builds a raw GGUF binary carrying a metadata value that
+// chains TypeArray-of-TypeArray headers one level past maxArrayNestingDepth,
+// the shape that -- without a recursion depth cap -- drives readTypedValue's
+// TypeArray case into unbounded recursion and crashes the process with an
+// unrecoverable "fatal error: stack overflow" (see
+// TestParse_ArrayNestingDepthExceeded in parser_test.go). Found by this
+// fuzzer itself before the depth cap was added (S139.3.1 follow-up).
+func f4AttackSeed() []byte {
+	var buf bytes.Buffer
+	bw(&buf, Magic)
+	bw(&buf, uint32(3)) // version
+	bw(&buf, uint64(0)) // tensor count
+	bw(&buf, uint64(1)) // metadata kv count
+	writeTestString(&buf, "attack.f4_nested_arrays")
+	bw(&buf, TypeArray)
+	for i := 0; i < maxArrayNestingDepth+1; i++ {
+		bw(&buf, TypeArray) // element type of this level: another array
+		bw(&buf, uint64(1)) // length: 1
+	}
+	return buf.Bytes()
+}
+
 // FuzzParse feeds arbitrary bytes into the GGUF Parse + LoadTensors path and
 // asserts the property that must hold for every input, valid or malformed:
 // the pipeline either returns an error or succeeds -- it must never panic.
@@ -141,6 +163,9 @@ func FuzzParse(f *testing.F) {
 
 	// Seed 9: deep-review 002 finding F3 (>8 dimension count).
 	f.Add(f3AttackSeed())
+
+	// Seed 10: F4 (>maxArrayNestingDepth nested TypeArray headers).
+	f.Add(f4AttackSeed())
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		r := bytes.NewReader(data)

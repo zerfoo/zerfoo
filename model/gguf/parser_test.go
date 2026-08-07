@@ -280,6 +280,63 @@ func TestParse_ArrayMetadata(t *testing.T) {
 	}
 }
 
+// TestParse_ArrayNestingDepthExceeded verifies a crafted metadata value
+// chaining TypeArray-of-TypeArray headers past maxArrayNestingDepth is
+// rejected with an error rather than recursing in readTypedValue until the
+// goroutine stack overflows -- a runtime fatal error that recover() cannot
+// catch (sibling of deep-review 002 findings F1/F2/F3, caught by the
+// FuzzParse fuzzer added in S139.3.1).
+func TestParse_ArrayNestingDepthExceeded(t *testing.T) {
+	var buf bytes.Buffer
+	bw(&buf, Magic)
+	bw(&buf, uint32(3)) // version
+	bw(&buf, uint64(0)) // tensor count
+	bw(&buf, uint64(1)) // metadata kv count
+	writeTestString(&buf, "attack.nested_arrays")
+	bw(&buf, TypeArray)
+	for i := 0; i < maxArrayNestingDepth+1; i++ {
+		bw(&buf, TypeArray) // element type of this level: another array
+		bw(&buf, uint64(1)) // length: 1
+	}
+	_, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err == nil {
+		t.Fatal("expected error for array nesting depth exceeding maximum")
+	}
+}
+
+// TestParse_ArrayNestingDepthAtMax verifies metadata arrays nested exactly
+// up to maxArrayNestingDepth still parse successfully -- the cap must not
+// reject legitimate (if unusually deep) structured metadata. The outer
+// TypeArray (read by readValue) is depth 0, so maxArrayNestingDepth-1
+// additional TypeArray levels reach the deepest depth that still passes the
+// depth >= maxArrayNestingDepth check, and the innermost array's element
+// type terminates the recursion with a plain scalar.
+func TestParse_ArrayNestingDepthAtMax(t *testing.T) {
+	var buf bytes.Buffer
+	bw(&buf, Magic)
+	bw(&buf, uint32(3)) // version
+	bw(&buf, uint64(0)) // tensor count
+	bw(&buf, uint64(1)) // metadata kv count
+	writeTestString(&buf, "test.nested_arrays")
+	bw(&buf, TypeArray)
+	for i := 0; i < maxArrayNestingDepth-1; i++ {
+		bw(&buf, TypeArray) // element type of this level: another array
+		bw(&buf, uint64(1)) // length: 1
+	}
+	// Innermost array: one uint8 element.
+	bw(&buf, TypeUint8)
+	bw(&buf, uint64(1))
+	buf.WriteByte(0x42)
+
+	f, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if _, ok := f.Metadata["test.nested_arrays"]; !ok {
+		t.Fatal("test.nested_arrays not found")
+	}
+}
+
 func TestGetString_Missing(t *testing.T) {
 	f := &File{Metadata: map[string]any{}}
 	_, ok := f.GetString("missing")

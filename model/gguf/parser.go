@@ -22,6 +22,18 @@ const Magic uint32 = 0x46554747 // "GGUF" in little-endian
 // validated -- a denial-of-service vector (deep-review 002, finding F3).
 const maxTensorDims = 8
 
+// maxArrayNestingDepth is the maximum recursion depth allowed when decoding
+// a GGUF metadata array whose element type is itself TypeArray. Real GGUF
+// metadata never nests arrays more than one or two levels deep. Without this
+// cap, a crafted file can chain "array of arrays of arrays..." headers (each
+// only 12 bytes: a uint32 element type + uint64 length) to drive
+// readTypedValue's TypeArray case into unbounded recursion, which crashes
+// the process with an unrecoverable "fatal error: stack overflow" -- a
+// runtime fatal error, unlike a panic, cannot be caught by recover() at any
+// call site (deep-review 002 F1/F2/F3 sibling finding, caught by the
+// FuzzParse fuzzer added in S139.3.1).
+const maxArrayNestingDepth = 32
+
 // GGUF metadata value types.
 const (
 	TypeUint8   uint32 = 0
@@ -210,11 +222,13 @@ func readValue(r io.Reader) (any, error) {
 	if err := binary.Read(r, binary.LittleEndian, &valueType); err != nil {
 		return nil, err
 	}
-	return readTypedValue(r, valueType)
+	return readTypedValue(r, valueType, 0)
 }
 
-// readTypedValue reads a value of the given type.
-func readTypedValue(r io.Reader, valueType uint32) (any, error) {
+// readTypedValue reads a value of the given type. depth tracks TypeArray
+// nesting (incremented only when recursing into an array's element type)
+// and is checked against maxArrayNestingDepth to bound recursion.
+func readTypedValue(r io.Reader, valueType uint32, depth int) (any, error) {
 	switch valueType {
 	case TypeUint8:
 		var v uint8
@@ -253,6 +267,9 @@ func readTypedValue(r io.Reader, valueType uint32) (any, error) {
 		var v float64
 		return v, binary.Read(r, binary.LittleEndian, &v)
 	case TypeArray:
+		if depth >= maxArrayNestingDepth {
+			return nil, fmt.Errorf("array nesting depth exceeds maximum (%d)", maxArrayNestingDepth)
+		}
 		var elemType uint32
 		if err := binary.Read(r, binary.LittleEndian, &elemType); err != nil {
 			return nil, fmt.Errorf("array element type: %w", err)
@@ -266,7 +283,7 @@ func readTypedValue(r io.Reader, valueType uint32) (any, error) {
 		}
 		arr := make([]any, length)
 		for i := range length {
-			v, err := readTypedValue(r, elemType)
+			v, err := readTypedValue(r, elemType, depth+1)
 			if err != nil {
 				return nil, fmt.Errorf("array[%d]: %w", i, err)
 			}
