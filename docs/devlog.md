@@ -2,6 +2,76 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-08-08: Sec-5 closeout -- T145.1 CLI flags landed, two unrelated pre-existing CI blockers found and fixed (F4, GO-2026-6061)
+
+**Type:** bugfix + dependency security + closeout
+**Tags:** T145.1, F4, GO-2026-6061, S139.3.1, CICD-6, gguf, grpc, stack-overflow, govulncheck
+
+**Context.** Picked up the 2026-07-11 session handoff: T145.1 (wire
+`--rate-limit`/`--keystore` serve CLI flags) was code-complete on PR #977 and
+described as "green, ready to merge." Re-checking CI before merging found it
+was not actually green -- two separate, pre-existing issues unrelated to
+T145.1's own diff had gone stale on `main` in the 26 days since the last
+green run, both discovered because this session verified live CI state
+rather than trusting the handoff's stale snapshot.
+
+**F4: unbounded array-nesting recursion in the GGUF parser (stack overflow).**
+The `Malformed-GGUF fuzz (bounded)` CI step (`FuzzParse`, wired into `test`
+by S139.3.1 the same day as the 2026-07-10 handoff) had been failing on
+every push to `main` since it landed, undetected because nobody re-ran CI on
+`main` in the interim. Root cause: `readTypedValue` in `model/gguf/parser.go`
+recurses into itself for `TypeArray` metadata values with no depth limit. A
+GGUF file chaining nested `TypeArray` headers (12 bytes each: elem-type
+uint32 + length uint64) drives unbounded recursion into `fatal error: stack
+overflow` -- a runtime fatal error, not a panic, so `FuzzParse`'s own
+`recover()` around `LoadTensors` can't catch it. This is a sibling of
+deep-review 002's F1 (element-count overflow)/F2 (offset sign-wrap)/F3
+(unbounded dimension count) findings -- same untrusted-GGUF hazard class
+(ADR-094), different code path, found by the fuzzer itself rather than by
+manual review. Confirmed with a standalone PoC (~3M nested-array headers,
+~36MB input) reproducing `runtime: goroutine stack exceeds 1000000000-byte
+limit` at `parser.go:269` before the fix. Fixed with a
+`maxArrayNestingDepth = 32` cap threaded through `readValue`/`readTypedValue`,
+mirroring the existing `maxTensorDims`/F3 pattern. Added
+`TestParse_ArrayNestingDepthExceeded` / `TestParse_ArrayNestingDepthAtMax`
+regression tests and an `f4AttackSeed` fuzz seed. Verified: 3x 30s
+`FuzzParse` runs (millions of execs each) clean post-fix, reliably crashed
+pre-fix both locally and in CI. Landed as PR #978.
+
+**GO-2026-6061: google.golang.org/grpc v1.79.3 reachable vulnerability.**
+Discovered immediately after landing the F4 fix, when the *next* CI run
+failed for a third, still-different reason: `govulncheck-gate.sh` (CICD-6)
+flagged `google.golang.org/grpc v1.79.3` (direct dependency, used by
+`distributed/`'s coordinator/worker gRPC transport) for GO-2026-6061,
+reachable via `ClientStream.TrailersOnly -> shouldRetry -> retryLocked ->
+withRetry`. This advisory was published to the govulncheck DB sometime in
+the 26 days since `main`'s last clean `Vulnerability check` run and,
+same as the earlier `golang.org/x/net` bump (941bab87, GO-2026-4918), blocks
+the gate for every PR regardless of that PR's own diff -- not caused by
+T145.1 or by the F4 fix. Fixed by bumping to v1.82.1 (`go get
+google.golang.org/grpc@v1.82.1 && go mod tidy`, which also pulled
+`genproto`/`protobuf`/`go.opentelemetry.io/otel` transitive bumps). Verified
+`go build`/`go vet`/`go test -short -race ./distributed/...` all green and
+`govulncheck` no longer reports GO-2026-6061 as reachable. Landed as PR #979.
+
+**Local-environment note for future sessions:** this sandbox's `go` binary
+resolves to a newer toolchain (1.26.1) than the `GOROOT` env var points at
+(1.26.0, stale), which silently breaks every build with `compile: version
+"go1.26.0" does not match go tool version "go1.26.1"`. Fix per-session with
+`export GOROOT=$(dirname $(dirname $(which go)))` or equivalent, not a repo
+issue. Separately, this sandbox has no GPU, so `tests/parity`,
+`timeseries`'s `TestGPUTinyTrainingConvergence`, `generate`'s
+`TestTensorCache_FP16_GPU_MultiHead_PrefillAndDecode`, and
+`internal/cuda/kernels` fail identically on an unmodified `main` checkout --
+confirmed by diffing against pristine `main`, not new regressions. Per
+CLAUDE.md, GPU-touching tests belong on the DGX via Spark, not local `go
+test`.
+
+**Merge order:** #979 (grpc) -> #978 (F4, rebased on top since both landed
+same session) -> #977 (T145.1, rebased on top of both). All three
+rebase-merged; `wave-sec5-task-T145.1`/`fix-gguf-array-nesting-depth`/
+`fix-deps-grpc-6061` branches and their worktrees deleted after merge.
+
 ## 2026-07-10: E135 closed -- fork-parity symbol check + #921 disposition (T135.6)
 
 **Type:** closeout + tooling
