@@ -12,6 +12,39 @@
 
 ---
 
+## Remediation Status (as of 2026-08-09)
+
+**Tiers 1-2 (all 9 High findings + the explicit CICD-1/2 bar) are REMEDIATED.** Every finding below
+has a merged fix and a passing repro test confirmed on `main` (re-verified 2026-08-09, not just "code
+changed" -- each test was re-run individually against current `main` for this closeout):
+
+| Finding | Fix PR | Repro test (passing on `main`) |
+|---|---|---|
+| F1 -- GGUF element-count overflow | #945 | `TestComputeNumElements_AttackShape`, `TestLoadTensors*_AttackShape` (model/gguf) |
+| F2 -- GGUF offset signed-conversion | #940 | `TestLoadTensorsMmap*_HugeOffsetSignedConversion`, `*_OffsetPlusSizeOverflow` (model/gguf) |
+| DIST-1 -- unauthenticated/unencrypted worker | #947 | `TestWorkerNode_Start_RefusesNonLoopbackWithoutTLS`, `*_TLS_AcceptsValidClientCert` (distributed) |
+| CUDA-1 -- CWD dlopen of kernel library | #943 | `TestKernelLibPathsAreAbsolute`, `TestVetKernelLibOverrideRejectsRelativePath` (internal/cuda) |
+| OCI-1 -- OCI pull digest never verified | #949 | `TestRegistry_Pull_DigestMismatch`, `TestRegistry_DigestReference` (model/registry) |
+| SERVE-1 -- pre-auth metric-label cardinality | #941 | `TestNormalizeRoute`, `TestLogMiddleware_ErrorMetricCardinalityBounded` (serve) |
+| SERVE-2 -- LoRA adapter-name path traversal | #942 | `TestAdapterCacheHandle_ResolveAdapter_PathTraversalRejected` (serve) |
+| CONC-H1 -- SpeculativeGenerate bypasses graphMu | #948 | `TestModel_SpeculativeGenerate_ConcurrentWithNormalGenerate` (inference, `-race`) |
+| CONC-H2 -- model-delete TOCTOU / WaitGroup misuse | #944 | `TestModelDelete_DrainsInFlightRequest_NoUseAfterClose`, `TestConcurrentDeleteAndChatCompletions_NoRace` (serve, `-race`) |
+| CICD-1 -- missing least-privilege workflow permissions | #938 | `.github/workflows/ci.yml` top-level `permissions:` block (static; no repro test applicable) |
+| CICD-2 -- unpinned mutable Actions/pip installs | #939 | all `uses:` steps SHA-pinned in `.github/workflows/ci.yml` (static; no repro test applicable) |
+
+Two findings surfaced independently of this review, by the `FuzzParse` fuzzer added in a later
+hardening pass (S139.3.1), are tracked here for completeness though they are not part of tiers 1-2's
+scope: **F3** (unbounded tensor dimension count, fixed PR #951) and **F4** (unbounded metadata
+array-nesting recursion -> stack overflow, fixed PR #978, 2026-08-08 -- see docs/devlog.md).
+
+Tier-3/tech-debt findings not completed in this phase are tracked as GitHub issues rather than
+open-endedly extended (ADR-093 rule 3): **#974** (kernel-fork Makefile fast-math drift, CUDA-2
+residual), **#975** (`/metrics` auth-gating, SERVE-7 residual -- deferred because unauthenticated
+`/metrics` is intentional, test-asserted behavior and gating it risks breaking Prometheus scraping),
+**#976** (distroless image pin is per-arch rather than a multi-arch index digest, CICD-4 residual).
+
+---
+
 ## Executive Summary
 
 zerfoo is a **security-above-average Go ML inference/training framework**. Overall maturity
