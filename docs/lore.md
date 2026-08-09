@@ -160,3 +160,25 @@ the next `L-NNNN` ID; never renumber. See `~/.claude/skills/lore/SKILL.md`
 **Why:** With CUDA available, `klib()` is non-nil and a wrapper like `AddFP16(nil,nil,nil,1,nil)` calls `cuda.Ccall(k.launchAddFP16, 0,0,0,1,0)`, launching the FP16 kernel with null device pointers. The on-device null dereference is an illegal memory access that leaves a STICKY error (cuda 700) on the context, so every subsequent test in the package fails at its first cudaMalloc/cudaStreamCreate -- a package-wide IMA cascade that looks like many broken kernels but is one poisoning test. The launch is async, so the wrapper's `checkKernel` sees launch-success and returns nil, which also silently fails the test's own "should return error" assertion. `TestFP16GracefulWithoutCUDA` was the sole graceful test missing the guard (zerfoo#922); its six siblings (counter, elementwise_parity, fp8_ops, gather, offset_memcpy, rope_select) all had it. Corollary: to find the first-faulting test when Spark truncates logs to the tail, run `-v -failfast` so the first failure lands at the tail where truncation cannot hide it.
 **Trigger:** A new `*GracefulWithoutCUDA` (or any nil-device-pointer) test without the `cuda.Available()` skip guard; more generally, any code path that can reach a kernel launch with a null/unallocated device pointer on a live context.
 **Source:** zerfoo#922; devlog 2026-07-02 (T135.1).
+
+## L-0014: The GGUF loader validates tensor shape/offset in four near-identical duplicated loops -- fix all four or the guard is fake
+
+**Tags:** #gguf #overflow #loader #critical
+**Date:** 2026-08-09
+**Repo:** zerfoo/zerfoo
+
+**Rule:** Any bounds/overflow fix to GGUF tensor-descriptor validation (element-count, dimension count, offset, or nesting-depth checks) must be applied to all four load-path sites -- `model/gguf/loader.go`, `loader_mmap.go`, and the two duplicated loops in `split_file.go` -- not just the one path the reproducing test happened to exercise. Extracting the shared logic into a single helper (as F1's `computeNumElements` fix did) is preferred over patching four call sites by hand.
+**Why:** deep-review 002 found the same element-count overflow bug (F1) copy-pasted across all four sites, and the pattern repeated: F2 (offset signed-conversion) had duplicate sites in `loader_mmap.go` and `split_file.go`; F3 (unbounded dimension count) and F4 (unbounded metadata array-nesting recursion, found later by the FuzzParse fuzzer, fixed in PR #978) both live in the shared `parser.go` path and are easy to assume "already covered" by the loader-level fixes when they are not. A fix that only patches the site a test happens to hit leaves the other three (or the parser-level path) exploitable by a crafted file that takes a different load method (mmap vs. split vs. non-mmap).
+**Trigger:** Any new GGUF-parsing hardening PR that adds a bounds check to only one of `loader.go` / `loader_mmap.go` / `split_file.go` (x2 sites) / `parser.go`, or a regression test that only exercises one load path (e.g. only `LoadTensors`, not also `LoadTensorsMmap`, `LoadTensorsSplit`, `LoadTensorsMmapSplit`).
+**Source:** docs/deep-reviews/002-full-codebase.md (F1/F2/F3, Remediation Status section); F4 fix PR #978; devlog 2026-08-08.
+
+## L-0015: Security capabilities in serve/security/ and distributed/tlsconfig.go are correct but invisible until a CLI flag reaches them
+
+**Tags:** #security #cli #adr-094 #invariant
+**Date:** 2026-08-09
+**Repo:** zerfoo/zerfoo
+
+**Rule:** A security capability (rate limiter, keystore, mTLS config, incident responder, or any future addition to `serve/security/` or `distributed/tlsconfig.go`) is not "shipped" until it is reachable from a `cmd/cli` flag and exercised by a CLI-level test -- library correctness alone does not protect a deployment that never calls the constructor.
+**Why:** deep-review 002 found the rate limiter, scoped keystore, and mTLS config all implemented correctly with passing unit tests, but the shipped `serve`/`worker` CLI never called any of their constructors -- an operator reading the source could reasonably believe protections were active that were not wired to anything. T142.3 wired the rate limiter's Start/Stop into the server lifecycle so it had something to call; T145.1 (PR #977) then added the actual `--rate-limit`/`--rate-limit-burst`/`--keystore` flags that construct and pass them in. `--tls-*` flags already existed. ADR-094 codifies this as the standing "ship the defense you write" rule.
+**Trigger:** A new security-relevant type or function added under `serve/security/` or `distributed/` without a corresponding `cmd/cli` flag (or other operator-reachable entry point) in the same change, or a security PR whose test coverage stops at the package boundary instead of a CLI-level integration test.
+**Source:** docs/deep-reviews/002-full-codebase.md (Remediation Status section); docs/adr/094-untrusted-boundary-security-hardening.md; T145.1 PR #977; T142.3.
