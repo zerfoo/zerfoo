@@ -283,7 +283,7 @@ Component: docs. Acceptance: tiers 1-2 of deep-review 002 are re-verified closed
 
 - [x] T145.1 Wire unwired security defenses into the CLI  Owner: TBD  Est: 3h  verifies: [UC-H2-008, UC-H2-010]  kind: agent  blocked-by: [T140.1, T142.3]
   - Add `--rate-limit`, `--keystore`, and `--tls-*` flags to `serve`/`worker` (ADR-094's "ship the defense you write" rule) so operators can turn on the already-correct `serve/security/` and `distributed/tlsconfig.go` capabilities without hand-wiring Go code. Document in README/design.md.
-- [ ] T145.2 Close deep-review 002 tiers 1-2  Owner: TBD  Est: 2h  verifies: [infrastructure]  kind: agent  blocked-by: [T139.5, T140.3, T141.2, T142.5, T143.10, T144.6, T145.1]
+- [x] T145.2 Close deep-review 002 tiers 1-2  Owner: TBD  Est: 2h  verifies: [infrastructure]  kind: agent  blocked-by: [T139.5, T140.3, T141.2, T142.5, T143.10, T144.6, T145.1]
   - Re-verify every High finding has a passing repro test proving the fix (not just that code changed). Append a docs/devlog.md entry summarizing the closeout. Promote the two lore candidates the review flagged via /lore: the four-way-duplicated-loader-guard landmine, and the "security code in serve/security and distributed/tlsconfig.go is real but unwired" invariant. File GitHub issues for any tier-3/tech-debt findings not completed in this phase (SERVE-3/3b/4/5/6/7 residue, SSRF-1, HF-1, CONC-L1, L1/L2/L3, SLSA if T144.7 slipped). Update docs/deep-reviews/002-full-codebase.md's header with a remediation status line.
 
 ---
@@ -386,8 +386,8 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 - [x] T144.7 SLSA signing + SBOM  (after T144.1)  verifies: [UC-H2-012] -- DONE (PR #970)
 
 ### Wave Sec-5: Closeout (2 agents)
-- [ ] T145.1 wire flags into CLI  (after T140.1, T142.3)
-- [ ] T145.2 close deep-review 002 tiers 1-2  (after everything above)
+- [x] T145.1 wire flags into CLI  (after T140.1, T142.3) -- DONE (PR #977)
+- [x] T145.2 close deep-review 002 tiers 1-2  (after everything above) -- DONE (docs/deep-reviews/002-full-codebase.md remediation status header, L-0014/L-0015)
 
 ---
 
@@ -444,7 +444,14 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 
 ## Progress Log
 
-### 2026 08 08 (latest) -- Change Summary: T145.1 merged; Wave Sec-5 closeout down to T145.2 only
+### 2026 08 09 (latest) -- Change Summary: T145.2 done; Wave Sec-5 complete; Objective 6 / D7 CLOSED
+
+- **T145.2 done.** Re-verified all 9 High findings from deep-review 002 (F1, F2, DIST-1, CUDA-1, OCI-1, SERVE-1, SERVE-2, CONC-H1, CONC-H2) plus CICD-1/2 individually against `main` -- located the specific repro test(s) for each and ran them fresh rather than trusting merged-PR status. All pass. Added a Remediation Status section (finding -> PR -> repro test table) to the top of docs/deep-reviews/002-full-codebase.md. Promoted two lore entries: L-0014 (the GGUF loader's tensor validation is duplicated across four near-identical sites -- F1/F2/F3/F4 are all variants of "fixed one site, missed another") and L-0015 (security capabilities in serve/security/ and distributed/tlsconfig.go are correct but invisible until CLI-wired, ADR-094's rule). Confirmed the three deferred tier-3 issues (#974/#975/#976) are still open and accurately worded.
+- **Wave Sec-5 is 2/2 done, Objective 6 / D7 is CLOSED.** T138.1 (plan Phase 2) is now blocked only by the T136.5 -> T136.3 -> T136.2 chain (GGUF model provisioning on the DGX, human task).
+- **DGX SSH access investigated and found broken** for both an agent sandbox and David's own shell (`Permission denied (publickey,password)`) -- not a per-session credential gap, a host-side issue. David is handling it separately; provisioning stays parked until access is confirmed working again.
+- Also merged the pending release-please PR (v1.58.0, bundles T145.1 + the F4/grpc fixes from 2026-08-08) at David's request.
+
+### 2026 08 08 -- Change Summary: T145.1 merged; Wave Sec-5 closeout down to T145.2 only
 
 - **T145.1 (wire --rate-limit/--rate-limit-burst/--keystore serve CLI flags) merged via PR #977.** Code was already complete from the prior session; this session's work was almost entirely about getting `main`'s CI gate back to genuinely green so #977 could merge at all -- the 2026-07-11 handoff's "CI green, ready to merge" was stale, not current.
 - **Found and fixed F4: unbounded array-nesting recursion in the GGUF parser (stack overflow), sibling of deep-review 002's F1/F2/F3.** `readTypedValue` (model/gguf/parser.go) recursed into itself for nested `TypeArray` metadata values with no depth cap, so a crafted GGUF file crashes the process with an unrecoverable `fatal error: stack overflow` (not a panic -- `recover()` can't catch it, including `FuzzParse`'s own wrapper). This had been silently failing the `Malformed-GGUF fuzz (bounded)` CI step on every push to `main` since S139.3.1 wired the fuzzer in (2026-07-10/11), undetected for 26 days because nobody re-ran CI on `main` in between. Fixed with a `maxArrayNestingDepth = 32` cap (same pattern as `maxTensorDims`/F3) plus regression tests and a fuzz seed. Landed as PR #978.
@@ -537,16 +544,16 @@ Estimated wall-clock: 2-4 weeks; the long poles are GB10 serialization and the h
 
 ## Hand-off Notes
 
-### SESSION HANDOFF 2026-08-08 (live state for the next session)
+### SESSION HANDOFF 2026-08-09 (live state for the next session)
 
-Phase 1 security remediation (E139-E145) is essentially complete; T145.1 is merged, only T145.2 remains for Wave Sec-5. Pick up here:
+**Wave Sec-5 is done. Objective 6 / D7 (deep-review 002 tiers 1-2) is CLOSED.** Phase 1's only remaining open thread is the T136.2 chain (D2/D4/D6), which needs David. Pick up here:
 
-- **main is clean at `7a60a624`.** `go build ./...`, `go vet ./...`, and `go test -short ./...` are all green, verified fresh this session. `go vet` shows only pre-existing, unrelated `internal/cuda/purego_linux_arm64_cgo.go` unsafe.Pointer warnings. `go test -short ./...` fails only in `tests/parity`, `timeseries`, `generate` (TestTensorCache_FP16_GPU_MultiHead_PrefillAndDecode), and `internal/cuda/kernels` -- these are GPU-only tests with no GPU present in a plain dev sandbox (not CI, not the DGX); confirmed identical against pristine `main` before touching anything. Do not chase these locally -- they need `scripts/dgx-validate.sh` via Spark, per the Hardware section of CLAUDE.md.
-- **Do not trust a prior session's "CI green" claim without re-checking `gh pr checks` yourself.** The 2026-07-11 handoff said #977 was green and ready to merge; it wasn't -- `main`'s CI had silently been red for 26 days (a fuzz-discovered stack-overflow bug, F4, landed the same day as that handoff) and a brand-new dependency CVE (GO-2026-6061) appeared in that window too. Both were unrelated to #977's own diff but blocked its merge gate regardless. See the 2026-08-08 Progress Log entry and docs/devlog.md for the full story. General lesson: a standing CI gate can go red on `main` between sessions with nobody noticing if nothing re-triggers it -- worth an occasional `gh run list --branch main --workflow ci.yml` sanity check even when not actively merging.
-- **T145.2 (deep-review 002 closeout) is next and UNBLOCKED** (all of T139.5, T140.3, T141.2, T142.5, T143.10, T144.6, T145.1 are done). Re-verify each of the 9 High findings still has a passing repro test on main, update the status header of docs/deep-reviews/002-full-codebase.md to "remediated" with the PR map (now including #978/#979 as incidental hardening, though they weren't deep-review-002-tracked findings), and reference the deferred tech-debt issues already filed: **#974** (fast-math Makefile fork-drift), **#975** (/metrics gating, SERVE-7 residual), **#976** (distroless multi-arch index digest, CICD-4 residual). Flip the T145.2 box when done -- that closes Objective 6 / D7.
-- **After Sec-5 closes, T138.1 (plan Phase 2) unblocks** except it also lists T136.5 as a blocker, and T136.5 -> T136.3 -> **T136.2 (human GGUF provisioning on the DGX, still OPEN)**. So either (a) get David to do T136.2, or (b) descope the matrix-dependent blocker from T138.1 and plan Phase 2 now. Per the "plan the next phase and repeat" directive, confirm scope with David before starting Phase 2 planning.
-- **Worktree hygiene:** this session's three fix worktrees (pr977, fuzz-fix, grpc-bump, all under a session scratchpad path) were removed and their local branches deleted after each merge. If old Sec-1..Sec-4 agent worktrees are still on disk elsewhere (`git worktree list`), they're safe to `git worktree prune` / remove.
-- **Standing lesson (do not skip):** after any dense same-file parallel wave, run full `go build ./...` on main after merges -- individual PR CI passed green while their COMBINATION broke main's build once (the `math` import collision in model/gguf, commit ca1eb41d).
+- **main is clean, all docs-only commits pushed directly** (this repo's established convention for plan/devlog/lore/review-doc updates -- see recent `git log`). `go build/vet/test -short ./...` verified green on 2026-08-08 outside the four known GPU-only-failure packages (`tests/parity`, `timeseries`, `generate`'s GPU cache test, `internal/cuda/kernels` -- no GPU in this dev sandbox, confirmed identical against pristine `main`, not regressions).
+- **T145.2 is done.** Re-verified all 9 High findings (F1, F2, DIST-1, CUDA-1, OCI-1, SERVE-1, SERVE-2, CONC-H1, CONC-H2) plus CICD-1/2 individually against `main` -- every repro test passes. Added a Remediation Status section to the top of docs/deep-reviews/002-full-codebase.md with the finding->PR->test map. Promoted two lore entries via `/lore`: **L-0014** (GGUF loader validation duplicated across 4 sites -- fix all or the guard is fake) and **L-0015** (security capabilities are correct-but-invisible until CLI-wired, ADR-094's standing rule). Confirmed #974/#975/#976 (deferred tier-3 tech debt) are still open and worded as expected. Full writeup: docs/devlog.md 2026-08-09 entry.
+- **T138.1 (plan Phase 2) is now blocked ONLY by T136.5 -> T136.3 -> T136.2** (human: GGUF model provisioning on the DGX host). T133.4 and T135.6 (its other two blockers) were already done.
+- **DGX SSH access is currently broken, for David too, not just agents.** `ssh ndungu@192.168.86.250` fails with `Permission denied (publickey,password)` from both an agent sandbox and David's own shell as of 2026-08-09 -- this is a host/key-state problem, not a per-session credential gap, and CLAUDE.md's documented interactive-debug path is not currently usable. David is sorting this out separately; **do not attempt SSH provisioning again until he confirms it's fixed** (repeated failed logins risk a lockout). Once access is restored, T136.2 -- and per David's stated preference this session, an agent may attempt the actual provisioning over SSH once a key is authorized -- covers the full ~10-model flagship list (docs/verified-models.md) in one pass, not just gemma4e.
+- **The pending release-please PR was merged this session** (v1.58.0, includes T145.1 + the F4/grpc fixes). No open PRs remain except whatever release-please opens next after future merges.
+- **Standing lesson (do not skip):** after any dense same-file parallel wave, run full `go build ./...` on main after merges -- individual PR CI passed green while their COMBINATION broke main's build once (the `math` import collision in model/gguf, commit ca1eb41d). Also: don't trust a prior session's "CI green" claim without re-checking `gh pr checks` yourself -- see the 2026-08-08 entry for how a 26-day-stale CI gate almost got merged as-is.
 
 ### Standing notes
 

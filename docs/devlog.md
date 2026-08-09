@@ -2,6 +2,47 @@
 
 Investigation findings, debugging sessions, and benchmark results.
 
+## 2026-08-09: T145.2 -- deep-review 002 tiers 1-2 closeout; Objective 6 / D7 done
+
+**Type:** closeout + verification
+**Tags:** T145.2, deep-review-002, Objective-6, D7, lore
+
+**What this task was.** The last item in Wave Sec-5: re-verify each of the 9 High
+findings from docs/deep-reviews/002-full-codebase.md still has a passing repro test
+on `main` (not just "a PR merged that claimed to fix it"), add a remediation status
+header to the review doc with the PR map, promote the two lore candidates the review
+flagged, and confirm the three deferred tier-3 tech-debt issues are filed. T145.2 was
+unblocked the moment T145.1 merged (#977) -- all its other blockers (T139.5, T140.3,
+T141.2, T142.5, T143.10, T144.6) were already done from earlier waves.
+
+**Re-verification, not just re-reading PR titles.** For each of F1, F2, DIST-1, CUDA-1,
+OCI-1, SERVE-1, SERVE-2, CONC-H1, CONC-H2, plus CICD-1/2, found the specific repro
+test(s) by grepping for finding-ID references in `*_test.go` files, then ran each one
+individually against current `main` (`go test -v -run <name>`, with `-race` for the two
+concurrency findings). All 9 + CICD-1/2 pass clean. Also spot-verified F3/F4 (found
+after this review's original scope, by the FuzzParse fuzzer -- F3 in an earlier wave,
+F4 this session, see 2026-08-08 entry) still have passing tests, since the new status
+header references them for completeness.
+
+**Review doc updated.** Added a "Remediation Status" section right after the doc's
+metadata header (docs/deep-reviews/002-full-codebase.md) with a finding -> PR -> repro-test
+table, a note on F3/F4 being out-of-original-scope but fixed, and references to the three
+deferred tech-debt issues (#974 fast-math Makefile drift, #975 `/metrics` gating, #976
+distroless multi-arch digest) -- all three confirmed still open and worded as expected
+via `gh issue view`.
+
+**Two lore entries promoted** (docs/lore.md, via `/lore`): **L-0014** -- the GGUF loader's
+tensor validation is duplicated across four near-identical sites (`loader.go`,
+`loader_mmap.go`, `split_file.go` x2) plus `parser.go`; F1/F2/F3/F4 are all variants of
+"fixed one site, missed another." **L-0015** -- security capabilities in
+`serve/security/` and `distributed/tlsconfig.go` are correct but invisible until a CLI
+flag reaches them (ADR-094's "ship the defense you write" rule, the pattern T145.1
+itself closed out for the rate limiter and keystore).
+
+**Result: Objective 6 / D7 (deep-review 002 tiers 1-2 closed) is DONE.** T138.1 (plan
+Phase 2) is now blocked only by T136.5 -> T136.3 -> T136.2 (GGUF model provisioning on
+the DGX, still an open human task -- see the 2026-08-08 entry and the plan.md hand-off).
+
 ## 2026-08-08: Sec-5 closeout -- T145.1 CLI flags landed, two unrelated pre-existing CI blockers found and fixed (F4, GO-2026-6061)
 
 **Type:** bugfix + dependency security + closeout
