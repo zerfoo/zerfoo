@@ -951,24 +951,40 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
 			replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
 
-			// Try fused RepeatInterleave: single kernel replaces
-			// Reshape -> Repeat -> Reshape for each of K and V.
-			type repeatInterleaver[U tensor.Numeric] interface {
-				RepeatInterleave(ctx context.Context, a *tensor.TensorNumeric[U], axis int, reps int, dst ...*tensor.TensorNumeric[U]) (*tensor.TensorNumeric[U], error)
-			}
+			// Fused RepeatInterleave (single kernel replacing
+			// Reshape -> Repeat -> Reshape for each of K and V) is disabled:
+			// ztensor v1.19.2's GPU RepeatInterleaveF32 kernel launch
+			// segfaults (SIGSEGV, null-pointer CUDA kernel call) whenever
+			// this path actually runs -- reproduced via
+			// tests/parity.TestGPUParity_GQA, 2026-08-09. This affects any
+			// model with numQueryHeads != numKeyValueHeads (i.e. essentially
+			// every modern GQA architecture: Llama, Mistral, Qwen, Gemma) the
+			// moment SDPA runs without a flash-decode shortcut on GPU. The
+			// bug is upstream in ztensor, not fixable from this repo; unlike
+			// a normal error return, a kernel-launch SIGSEGV kills the whole
+			// process before Go's error handling (or the fallback below) can
+			// run, so the type-assertion gate alone cannot protect against
+			// it. Tracked upstream: github.com/zerfoo/ztensor issue #180.
+			// Re-enable once ztensor ships a fix and zerfoo bumps to it.
+			const fusedRepeatInterleaveEnabled = false
 			fusedOK := false
-			realEng := compute.Engine[T](gqa.engine)
-			if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
-				realEng = proxy.Real()
-			}
-			if ri, ok := realEng.(repeatInterleaver[T]); ok {
-				kExp, kErr := ri.RepeatInterleave(ctx, kHeadsRoPE, 1, replicationFactor)
-				if kErr == nil {
-					vExp, vErr := ri.RepeatInterleave(ctx, vHeads, 1, replicationFactor)
-					if vErr == nil {
-						kHeadsRoPE = kExp
-						vHeads = vExp
-						fusedOK = true
+			if fusedRepeatInterleaveEnabled {
+				type repeatInterleaver[U tensor.Numeric] interface {
+					RepeatInterleave(ctx context.Context, a *tensor.TensorNumeric[U], axis int, reps int, dst ...*tensor.TensorNumeric[U]) (*tensor.TensorNumeric[U], error)
+				}
+				realEng := compute.Engine[T](gqa.engine)
+				if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+					realEng = proxy.Real()
+				}
+				if ri, ok := realEng.(repeatInterleaver[T]); ok {
+					kExp, kErr := ri.RepeatInterleave(ctx, kHeadsRoPE, 1, replicationFactor)
+					if kErr == nil {
+						vExp, vErr := ri.RepeatInterleave(ctx, vHeads, 1, replicationFactor)
+						if vErr == nil {
+							kHeadsRoPE = kExp
+							vHeads = vExp
+							fusedOK = true
+						}
 					}
 				}
 			}

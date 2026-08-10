@@ -212,7 +212,9 @@ func TestGPUParity_Conv1D(t *testing.T) {
 	inputData := deterministicData(batch * seqLen * inCh)
 
 	// CPU
-	cpuInput := testutil.MakeTensor(t, inputData, []int{batch, seqLen, inCh})
+	// Conv1D.Forward expects [batch, channels, length] (layers/core/conv1d.go),
+	// not [batch, length, channels] -- the shape below matches that contract.
+	cpuInput := testutil.MakeTensor(t, inputData, []int{batch, inCh, seqLen})
 	cpuConv, err := core.NewConv1D[float32]("test_conv", cpuEng, ops, inCh, outCh, kernel)
 	if err != nil {
 		t.Fatalf("CPU NewConv1D: %v", err)
@@ -233,7 +235,7 @@ func TestGPUParity_Conv1D(t *testing.T) {
 	}
 
 	// GPU
-	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), []int{batch, seqLen, inCh})
+	gpuInput := testutil.MakeTensor(t, cloneF32(inputData), []int{batch, inCh, seqLen})
 	gpuConv, err := core.NewConv1D[float32]("test_conv", gpuEng, ops, inCh, outCh, kernel)
 	if err != nil {
 		t.Fatalf("GPU NewConv1D: %v", err)
