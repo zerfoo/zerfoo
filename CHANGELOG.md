@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.59.0](https://github.com/zerfoo/zerfoo/compare/v1.58.0...v1.59.0) (2026-08-10)
+
+
+### Features
+
+* **inference:** demote gemma4/gemma4e/gemma4moe to experimental (T134.2) ([60a4ee1](https://github.com/zerfoo/zerfoo/commit/60a4ee1d55bb15edd3e07c47fede109cfec45c27))
+
+
+### Bug Fixes
+
+* **attention:** disable crash-inducing fused RepeatInterleave GPU path; fix Conv1D parity test ([e348a8c](https://github.com/zerfoo/zerfoo/commit/e348a8cc4dc4d5eeeaff8e1200e42f5282e16648))
+
 ## [1.58.0](https://github.com/zerfoo/zerfoo/compare/v1.57.0...v1.58.0) (2026-08-08)
 
 
