@@ -30,9 +30,10 @@
 #                          internal/cuda/purego.go trustedKernelLibPath (the
 #                          sole kernelLibPaths entry as of CUDA-1, T141.1 --
 #                          no CWD-relative or bare-soname candidates)
-# Model parity: MODELS_DIR points at an in-container path that is absent by
-# default, so the parity stage skips cleanly. To run parity, provision GGUF
-# files on the host and re-add a models hostPath mount (path must pre-exist).
+# Model parity: MODELS_DIR points at /var/lib/zerfoo/models, mounted below
+# (host path provisioned 2026-04, mount re-added 2026-08-09 -- T136.2). If
+# the host path is ever removed, delete the models volume/mount below first,
+# or the pod fails to schedule ("statfs ...: no such file or directory").
 # Go build/module cache: intentionally NOT mounted (host dir not provisioned);
 # every run is a cold build until /var/lib/zerfoo/go exists on the host.
 apiVersion: v1
@@ -84,6 +85,9 @@ spec:
         - name: cuda
           mountPath: /usr/local/cuda
           readOnly: true
+        - name: models
+          mountPath: /var/lib/zerfoo/models
+          readOnly: true
   volumes:
     - name: zerfoo-lib
       hostPath:
@@ -92,4 +96,8 @@ spec:
     - name: cuda
       hostPath:
         path: /usr/local/cuda
+        type: Directory
+    - name: models
+      hostPath:
+        path: /var/lib/zerfoo/models
         type: Directory
