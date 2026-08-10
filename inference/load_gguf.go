@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/zerfoo/generate"
-	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/model/gguf"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -193,6 +193,20 @@ func BuildArchGraph(
 	return buildArchGraph(arch, tensors, cfg, engine)
 }
 
+// experimentalArchitectures maps architectures with known-unresolved
+// correctness bugs to the warning logged whenever a model of that
+// architecture is loaded. gemma4/gemma4e/gemma4moe: decode is degenerate on
+// both CPU and GPU (E99/T99.2.2 investigation, H1-H21 hypothesis sweep); the
+// most-likely-fix candidate (H21, native Q4_K embedding storage) was
+// attempted and refuted on GB10 2026-08-10 (see docs/devlog.md). Tracked in
+// zerfoo#757 (root-cause epic, parked pending a new hypothesis) and
+// zerfoo#766 (H21 fix attempt, closed as attempted, not fixed).
+var experimentalArchitectures = map[string]string{
+	"gemma4":    "gemma4 decode correctness is UNVERIFIED (degenerate output on both CPU and GPU, root cause not found -- see zerfoo#757). Do not rely on this architecture for production inference.",
+	"gemma4e":   "gemma4e decode correctness is UNVERIFIED (degenerate output on both CPU and GPU, root cause not found -- see zerfoo#757). Do not rely on this architecture for production inference.",
+	"gemma4moe": "gemma4moe decode correctness is UNVERIFIED (degenerate output on both CPU and GPU, root cause not found -- see zerfoo#757). Do not rely on this architecture for production inference.",
+}
+
 // buildArchGraph dispatches to the appropriate architecture-specific graph builder.
 func buildArchGraph(
 	arch string,
@@ -200,6 +214,9 @@ func buildArchGraph(
 	cfg *gguf.ModelConfig,
 	engine compute.Engine[float32],
 ) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
+	if warning, ok := experimentalArchitectures[arch]; ok {
+		slog.Warn("loading experimental architecture", "architecture", arch, "warning", warning)
+	}
 	switch arch {
 	case "llama":
 		// Mistral models report arch="llama" in GGUF metadata but use
@@ -247,4 +264,3 @@ func buildArchGraph(
 		return builder(tensors, cfg, engine)
 	}
 }
-

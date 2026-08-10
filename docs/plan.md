@@ -113,10 +113,10 @@ Component: training/attention + ztensor boundary. Acceptance: all three issues c
 
 Component: model/gguf + inference. Acceptance: #757 and #766 closed, either way. ADR-093 rule 3 applies: ONE candidate, then demote. Blocked on T136.2 for on-GPU decode verification (model file).
 
-- [ ] T134.1 Execute T99.2.2.9: native Q4_K embedding storage as default for gemma4e  Owner: TBD  Est: 4h  verifies: [UC-H2-005]  kind: agent  blocked-by: [T136.2]
+- [x] T134.1 Execute T99.2.2.9: native Q4_K embedding storage as default for gemma4e  Owner: TBD  Est: 4h  verifies: [UC-H2-005]  kind: agent  blocked-by: [T136.2]
   - Promote the existing opt-in path (ZERFOO_GEMMA4_PLE_NATIVE_Q4K=1 + isEmbeddingShape in model/gguf/loader.go) to default-on for embedding-shaped Q4_K tensors (keep the env var as opt-OUT); extend the same guard to Q5_K/Q6_K loader symmetry if trivially in reach. Verify decode on GB10: gemma4e E2B Q4_K_M, greedy, coherent-English check per docs/QUALITY.md correctness criteria.
   - Acceptance: decode output coherent on GB10 (fix confirmed) OR degenerate persists (proceed to T134.2). Record either outcome in devlog with the exact prompt/output.
-- [ ] T134.2 Disposition: close out or demote to experimental  Owner: TBD  Est: 2h  verifies: [UC-H2-005]  kind: agent  blocked-by: [T134.1]
+- [x] T134.2 Disposition: close out or demote to experimental  Owner: TBD  Est: 2h  verifies: [UC-H2-005]  kind: agent  blocked-by: [T134.1]
   - If fixed: close #757/#766, update docs/updates.md and the matrix candidacy. If NOT fixed: mark gemma4/gemma4e builders experimental (registry warning at load + README/design.md note "decode correctness unverified"), close #766 as attempted, re-scope #757 to a parked epic with the full H1-H21 history pointer, and exclude Gemma 4 from all public claims (standing rule from devlog 2026-04-16).
 
 ### E135: Kernel numerics tail -- close #847 (incl. #922)
@@ -325,12 +325,12 @@ Tracks G-M (deep-review 002 remediation) touch no GPU-dependent code at all (loa
 - [x] S135.2.1  verifies: [UC-H2-003] -- DONE 2026-07-02 (ztensor v1.19.2 CI)
 - [x] T135.3 oracle-gate kernels  (after T135.1) -- DONE 2026-07-03
 - [x] T135.4 fused encoder audit  (after T135.1)  2026 07 02  (DONE devlog entry; FFN/SwiGLU + FusedSDPA gradcheck added; FFN GELU-mode Backward bug fixed [always called SwiGLU backward regardless of useGELU]; fused PatchTST encoder backward wiring gap filed on #522 [E55, parked])
-- [ ] T134.1 gemma4e fix attempt  (after T136.2)
+- [x] T134.1 gemma4e fix attempt  (after T136.2) -- DONE 2026-08-10 (H21 refuted, PR #980-adjacent work; see devlog)
 
 ### Wave 3: Deep fixes (4 agents)
 - [x] S133.2.1, T133.3 (chain)  verifies: [UC-H2-003] -- DONE 2026-07-03 (PR #937)
 - [x] T135.5 deterministic mode  (after T135.2) -- DONE 2026-07-03 (ztensor#179 + wave-3-task-T135.5; GB10 bitwise proof)
-- [ ] T134.2 gemma4e disposition  (after T134.1)
+- [x] T134.2 gemma4e disposition  (after T134.1) -- DONE 2026-08-10 (demoted to experimental: slog.Warn at load in inference/load_gguf.go; #766 closed as attempted; #757 re-scoped to parked with full H1-H21 history pointer)
 - [ ] T136.3 matrix parity runs  (after T136.1, T136.2)
 
 ### Wave 4: Proof + ship (4 agents)
