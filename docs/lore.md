@@ -182,3 +182,23 @@ the next `L-NNNN` ID; never renumber. See `~/.claude/skills/lore/SKILL.md`
 **Why:** deep-review 002 found the rate limiter, scoped keystore, and mTLS config all implemented correctly with passing unit tests, but the shipped `serve`/`worker` CLI never called any of their constructors -- an operator reading the source could reasonably believe protections were active that were not wired to anything. T142.3 wired the rate limiter's Start/Stop into the server lifecycle so it had something to call; T145.1 (PR #977) then added the actual `--rate-limit`/`--rate-limit-burst`/`--keystore` flags that construct and pass them in. `--tls-*` flags already existed. ADR-094 codifies this as the standing "ship the defense you write" rule.
 **Trigger:** A new security-relevant type or function added under `serve/security/` or `distributed/` without a corresponding `cmd/cli` flag (or other operator-reachable entry point) in the same change, or a security PR whose test coverage stops at the package boundary instead of a CLI-level integration test.
 **Source:** docs/deep-reviews/002-full-codebase.md (Remediation Status section); docs/adr/094-untrusted-boundary-security-hardening.md; T145.1 PR #977; T142.3.
+
+## L-0016: Downloading large files from huggingface.co on the DGX host silently truncates unless curl is forced to IPv4 + HTTP/1.1 + --fail
+
+**Tags:** #dgx #network #download #huggingface #gotcha
+**Date:** 2026-08-10
+**Repo:** zerfoo/zerfoo
+
+**Rule:** On the DGX host (`aitopatom-bfc8`), fetch large files from huggingface.co with `curl -4 --http1.1 -sL --fail --retry 10 --retry-delay 3 --retry-all-errors -C -`, and always verify the downloaded file's size against the server's `Content-Length` (`curl -sIL` following redirects) before trusting a download completed. Never trust `curl -sL`'s exit code 0 alone as proof of a complete file.
+**Why:** `zerfoo pull` (and plain `curl -sL`) repeatedly produced files far smaller than the server's advertised size while still exiting 0 or reporting a generic connection error -- one case downloaded to exactly 3.2% of the expected 1.07GB with exit code 0. Root causes, stacked: (1) this host's default dual-stack DNS/routing to huggingface.co over IPv6 fails outright (`curl` with no `-4` got connection failures; `-4`-forced succeeded) -- confirmed via `nvidia-smi`-verified real hardware, not a sandbox artifact. (2) Even over IPv4, huggingface.co's HTTP/2 connections to this host hit stream resets (`curl` exit 92, `CURLE_HTTP2_STREAM`) that `curl -sL` without `--fail` does not treat as a failure -- it silently accepts the truncated body. Forcing `--http1.1` eliminated the stream resets entirely; every download that failed over HTTP/2 succeeded on retry over HTTP/1.1 with `-C -` to resume. One `zerfoo pull` failure that looked like a checksum/data-integrity bug (a full-size download whose SHA-256 disagreed with HuggingFace's own `X-Linked-Etag` header) turned out to be genuine -- confirmed by an independent `curl` download reproducing the exact same hash at the exact expected `Content-Length` twice -- so don't assume every download anomaly is this same truncation bug; verify size first, then investigate mismatches that persist at full size separately.
+**Trigger:** Any large (multi-GB) download from huggingface.co initiated from this host, via `zerfoo pull`, `curl`, or any other client, especially over HTTP/2. A file present at the expected path is not evidence it is complete.
+
+## L-0017: Manually-backgrounded processes (nohup + disown) get silently reaped between agent tool-call boundaries; use the harness's own background-task tracking instead
+
+**Tags:** #agent-harness #background-process #gotcha
+**Date:** 2026-08-10
+**Repo:** zerfoo/zerfoo
+
+**Rule:** For any shell command that must keep running across multiple agent turns (e.g. a long download), use the harness's own background-task mechanism (the Bash tool's `run_in_background` option), not `nohup ... & disown`.
+**Why:** Five large model downloads were started via `nohup curl ... & disown` in one turn. By the next check (a few turns later), four of the five processes had vanished with no error in their log files and no OOM-killer entry in `dmesg`/`journalctl` -- they were not killed by resource pressure, they simply stopped existing. The one download still running was the one issued as the current foreground command of that same call. Re-issuing the same downloads via the harness's sanctioned background-task parameter survived across turns reliably and delivered proper per-task completion notifications.
+**Trigger:** Reaching for `nohup`/`disown`/`setsid` to detach a long-running command from an agent session instead of using the harness's built-in background-execution support.
