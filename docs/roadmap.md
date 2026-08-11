@@ -18,7 +18,9 @@ the lightweight, sweepable status surface for the seat.
   - gemma4e decode-quality disposition (T134.1/T134.2): fix candidate implemented, GPU-verified, refuted; architecture demoted to experimental (PR #980, #985).
   - Two real GPU bugs found and fixed: a test-fixture bug, and a SIGSEGV crash in an upstream `ztensor` kernel affecting any GQA model (Llama/Mistral/Qwen/Gemma) -- mitigated here, filed upstream (`zerfoo/ztensor#180`).
   - Three more real bugs found, triaged as pre-existing, filed rather than fixed: `#981`, `#982`, `#983`.
-- **In-flight:** none. Clean stopping point.
+- **In-flight:** none. Session wound down via `/handover`; full notes at `docs/handover.md` on the `handover` branch (origin, commit `231ec5dd`).
+- **Planned (unblocked, unclaimed):** T136.3 (parity runs) and T136.4 (benchmark re-runs) against the 9 newly-staged models -- both ready to pick up, see `docs/handover.md`.
 - **Uncommitted/unpushed:** none. `git status` clean on `main`; all work pushed.
 - **Blockers:** none currently open.
 - **Founder questions currently held:** none pending -- all prior questions this session were answered directly.
+- **Fleet bookkeeping note:** no `~/.claude/bus/zerfoo/coordination.md` team bus exists yet (only an unrelated `sirerun` one found) and no Engineering Portfolio Notion row was mirrored -- both steps in the handover skill's fleet-bookkeeping phase were skipped for lack of a real target rather than fabricated.
