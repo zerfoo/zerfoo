@@ -7,6 +7,14 @@ the lightweight, sweepable status surface for the seat.
 
 ---
 
+## 2026-08-14 -- STATUS (plan revision: Phase 1 closeout)
+
+- **Session:** seat audit + /plan run (from hq); no code changed, docs/plan.md rewritten.
+- **Done:** full audit of local checkouts, remote branches, and vision-vs-reality (report: hq `brain/zerfoo-audit-2026-08-14.md`; key facts restated in plan.md Discovery Summary). Plan trimmed (completed epics E133/E134/E135/E137/E139-E145 removed; history in plan.md git log + devlog) and closeout scope merged.
+- **Planned (new frontier, Waves 6-9):** T136.6 harness-honesty gate (the 2026-08-11 parity lane died twice AND flagged a vacuous-parity hazard -- flat models dir + first-alphabetical GGUF resolution could make all parity subtests load the same file; must be red-proofed/refuted before T136.3 counts) -> T136.3/T136.4/T136.5 matrix; E146 trust-surface reconciliation (README/VISION claims currently exceed the matrix, ADR-093 rule 1); E147 cross-repo hygiene (ztensor#179 deterministic-mode PR never merged despite T135.5 marked done; release-please ztensor#178 + zmf#14 stale; zmf fix/attribute-tensor orphan branch); E148 ztensor#180 GQA SIGSEGV fix; E149 #981/#982/#983 disposition; E150 workspace hygiene (+ FOUNDER attic-deletion ask, Tier-3).
+- **Blockers:** none. 9 matrix models verified intact in /var/lib/zerfoo/models (2026-08-14). T136.6 is the critical-path first move.
+- **Founder questions:** T150.2 attic disposition (routed via Blink when Wave 6 dispatches; blocks nothing).
+
 ## 2026-08-11 -- STATUS
 
 - **Session:** zerfoo Phase 1 closeout (security review + DGX model provisioning + gemma4e disposition), spanning 2026-08-09 through 2026-08-11.
