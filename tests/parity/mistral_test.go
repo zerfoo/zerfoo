@@ -13,6 +13,7 @@ var mistralConfig = testutil.ModelParityConfig{
 	ZMFEnvVar:      "MISTRAL_ZMF_PATH",
 	ModelDirEnvVar: "MISTRAL_MODEL_DIR",
 	ModelID:        "mistral",
+	MatrixRow:      "mistral-7b",
 	MinVocabSize:   30000, // Mistral 7B vocab: 32000
 }
 

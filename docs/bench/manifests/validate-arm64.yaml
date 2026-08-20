@@ -34,6 +34,12 @@
 # (host path provisioned 2026-04, mount re-added 2026-08-09 -- T136.2). If
 # the host path is ever removed, delete the models volume/mount below first,
 # or the pod fails to schedule ("statfs ...: no such file or directory").
+# The GGUFs are staged FLAT in that directory (no per-model subdirectories),
+# so scripts/dgx-validate-inpod.sh exports it once as ZERFOO_MODELS_DIR and
+# each parity row joins its own pinned filename from
+# tests/parity/modelset/model-matrix.json. Never point a per-model *_MODEL_DIR
+# variable at this flat directory expecting directory resolution to pick the
+# right file -- it picks the first .gguf. See docs/lore.md L-0018.
 # Go build/module cache: intentionally NOT mounted (host dir not provisioned);
 # every run is a cold build until /var/lib/zerfoo/go exists on the host.
 apiVersion: v1

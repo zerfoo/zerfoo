@@ -1,6 +1,54 @@
+# Model parity tests
+
+## How a parity suite finds its model (T136.6)
+
+The flagship GGUFs are staged **flat** in one directory on the GB10
+(`/var/lib/zerfoo/models`), with no per-model subdirectories. `inference.Load`
+resolves a *directory* through `findGGUF` (`inference/inference.go:317`), which
+returns the **first** `.gguf` it sees -- so pointing every suite's
+`*_MODEL_DIR` at that directory made every suite load the same file and the
+verified-model matrix go green while proving nothing.
+
+Model resolution therefore works like this, and must keep working like this:
+
+1. `tests/parity/modelset/model-matrix.json` is the checked-in
+   **matrix row -> exact GGUF filename** table. It is the only source of
+   filenames.
+2. Each `testutil.ModelParityConfig` names its row via `MatrixRow`. A suite
+   without a row fails; an unknown row fails; a row with no pinned file skips.
+   Nothing ever falls back to scanning.
+3. `ZERFOO_MODELS_DIR` (or the row's own `*_MODEL_DIR`) names the **directory**
+   only. The filename is joined from the table.
+4. Before loading, the runner asserts the resolved absolute path is the
+   declared file, checks the GGUF header's `general.architecture` (plus
+   `general.name` and size when the row declares them), and records the claim
+   so two rows can never resolve to one file.
+5. Generation tests load via `inference.LoadFile(exactPath)`, never
+   `inference.Load(dir)`.
+
+Guard tests, all host-side and GPU-free:
+
+| Test | Guards |
+| ---- | ------ |
+| `TestDirectoryScanCollapsesDistinctRowsOntoOneFile` | Red-proof witness: directory resolution collapses two rows onto one file. |
+| `TestMatrixResolverKeepsFlatDirRowsDistinct` | Every staged row resolves to its own file in a flat directory. |
+| `TestParityConfigsPinKnownDistinctMatrixRows` | No suite lacks a row; no two suites share one. |
+| `TestStagedModelIdentity` | Per-row identity of the real staged GGUFs. |
+| `tests/parity/modelset` unit tests | Unknown row, unstaged row, missing file, duplicate resolution, identity mismatch. |
+
+Run them with:
+
+```
+go test ./tests/parity/ ./tests/parity/modelset/ -run 'Matrix|Identity|DirectoryScan|Parity' -count=1
+```
+
+Adding a model to the matrix means adding a row to `model-matrix.json` (exact
+filename, architecture, and ideally `gguf_name` + `size_bytes`) and pointing a
+`ModelParityConfig.MatrixRow` at it.
+
 # PJRT CPU Parity Tests (T126.1.1, E126)
 
-This directory contains a build-tagged test scaffold for validating that the
+This section covers a build-tagged test scaffold for validating that the
 PJRT CPU plugin produces results that match the native CPU compute engine on
 the GGUF inference path.
 

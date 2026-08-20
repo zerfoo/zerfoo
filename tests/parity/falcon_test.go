@@ -13,6 +13,7 @@ var falconConfig = testutil.ModelParityConfig{
 	ZMFEnvVar:      "FALCON_ZMF_PATH",
 	ModelDirEnvVar: "FALCON_MODEL_DIR",
 	ModelID:        "falcon",
+	MatrixRow:      "falcon",
 	MinVocabSize:   60000, // Falcon vocab: 65024
 }
 

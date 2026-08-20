@@ -13,6 +13,7 @@ var qwenConfig = testutil.ModelParityConfig{
 	ZMFEnvVar:      "QWEN25_ZMF_PATH",
 	ModelDirEnvVar: "QWEN25_MODEL_DIR",
 	ModelID:        "qwen-2.5",
+	MatrixRow:      "qwen2-7b",
 	MinVocabSize:   150000, // Qwen 2.5 vocab: 151936
 }
 

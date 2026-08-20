@@ -13,6 +13,7 @@ var llama3Config = testutil.ModelParityConfig{
 	ZMFEnvVar:      "LLAMA3_ZMF_PATH",
 	ModelDirEnvVar: "LLAMA3_MODEL_DIR",
 	ModelID:        "llama-3",
+	MatrixRow:      "llama3-3b",
 	MinVocabSize:   100000, // Llama 3 8B vocab: 128256
 }
 

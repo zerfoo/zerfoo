@@ -13,6 +13,7 @@ var commandRConfig = testutil.ModelParityConfig{
 	ZMFEnvVar:      "COMMANDR_ZMF_PATH",
 	ModelDirEnvVar: "COMMANDR_MODEL_DIR",
 	ModelID:        "command-r",
+	MatrixRow:      "commandr",
 	MinVocabSize:   200000, // Command R vocab: 256000
 }
 

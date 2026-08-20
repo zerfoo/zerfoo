@@ -77,16 +77,35 @@ if grep -q 'no tests to run' "$CUDA_LOG"; then
 fi
 rm -f "$CUDA_LOG"
 
-# Model parity: only when GGUF files are mounted. Each model parity test skips
-# itself when its ModelDirEnvVar is unset, so we discover those env-var names
-# from the source and point them all at MODELS_DIR.
+# Model parity: only when GGUF files are mounted. One variable is exported --
+# ZERFOO_MODELS_DIR, the flat directory the GGUFs are staged in. Each parity
+# suite joins its own pinned filename from tests/parity/modelset/model-matrix.json
+# onto it, and asserts the resolved file's identity before loading.
+#
+# This deliberately replaces the old loop that exported EVERY *_MODEL_DIR var to
+# MODELS_DIR. Combined with directory-based model resolution (findGGUF, which
+# returns the first .gguf in a directory), that made every parity suite load the
+# same alphabetically-first file and the matrix go green while proving nothing.
+# See docs/lore.md L-0018 and tests/parity/model_identity_test.go.
 PARITY=skip
 if [ -d "$MODELS_DIR" ] && [ -n "$(ls -A "$MODELS_DIR" 2>/dev/null)" ]; then
-  for v in $(grep -rhoE 'ModelDirEnvVar:[[:space:]]*"[A-Z0-9_]+"' tests/parity 2>/dev/null \
-             | grep -oE '"[A-Z0-9_]+"' | tr -d '"' | sort -u); do
-    export "$v=$MODELS_DIR"
-  done
+  export ZERFOO_MODELS_DIR="$MODELS_DIR"
   PARITY=pass
+
+  # Identity gate first: prove each matrix row resolves to its OWN file before
+  # any parity result is allowed to count. A run where every subtest skipped is
+  # not a pass.
+  echo ">> model identity gate (T136.6)"
+  IDENT_LOG="$(mktemp)"
+  go test -count=1 -timeout 300s -v -run TestStagedModelIdentity ./tests/parity/ 2>&1 | tee "$IDENT_LOG"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || { PARITY=fail; add_fail parity_model_identity; }
+  if ! grep -qE 'verified identity of [1-9][0-9]* staged matrix models' "$IDENT_LOG"; then
+    echo ">> ERROR: models are mounted but no matrix model identity was verified;" >&2
+    echo ">>        refusing to count parity as a pass" >&2
+    PARITY=fail; add_fail parity_no_model_identity
+  fi
+  rm -f "$IDENT_LOG"
+
   echo ">> go test ./tests/parity/... (models present; purego GPU path)"
   go test -count=1 -timeout 900s ./tests/parity/... || { PARITY=fail; add_fail parity; }
 else

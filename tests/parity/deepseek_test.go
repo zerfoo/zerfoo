@@ -13,7 +13,10 @@ var deepseekV3Config = testutil.ModelParityConfig{
 	ZMFEnvVar:      "DEEPSEEK_ZMF_PATH",
 	ModelDirEnvVar: "DEEPSEEK_MODEL_DIR",
 	ModelID:        "deepseek-v3",
-	MinVocabSize:   100000, // DeepSeek V3 vocab: 129280
+	// NOT the staged DeepSeek-R1-Distill-Qwen-1.5B: that distill is a qwen2
+	// architecture model and belongs to the deepseek-r1-distill-qwen-1.5b row.
+	MatrixRow:    "deepseek-v3",
+	MinVocabSize: 100000, // DeepSeek V3 vocab: 129280
 }
 
 func TestDeepSeekV3ForwardPass(t *testing.T) {
