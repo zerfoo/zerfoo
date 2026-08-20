@@ -335,7 +335,9 @@ func chatTemplateForArch(arch string) string {
 		return "llama"
 	case "mistral":
 		return "mistral"
-	case "qwen2":
+	case "qwen2", "qwen3":
+		// Qwen 3 uses the same ChatML-style <|im_start|>/<|im_end|> template
+		// as Qwen 2.
 		return "qwen2"
 	case "deepseek":
 		return "deepseek"

@@ -44,6 +44,10 @@ func detectFeatures(cfg *gguf.ModelConfig) autoFeatures {
 	case "qwen2":
 		f.attnBias = true
 
+	case "qwen3":
+		// Qwen 3 drops Qwen 2's QKV bias and adds per-head QK RMSNorm.
+		f.qkNorm = true
+
 	case "mistral":
 		f.slidingWindowSize = cfg.SlidingWindow
 
