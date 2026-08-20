@@ -390,6 +390,17 @@ func TestAutoBuilder_FeatureDetection(t *testing.T) {
 			},
 		},
 		{
+			name: "qwen3 qk norm without attention bias",
+			cfg: &gguf.ModelConfig{
+				Architecture: "qwen3",
+				HiddenSize:   16,
+				NumHeads:     4,
+			},
+			want: autoFeatures{
+				qkNorm: true,
+			},
+		},
+		{
 			name: "mistral sliding window",
 			cfg: &gguf.ModelConfig{
 				Architecture:  "mistral",

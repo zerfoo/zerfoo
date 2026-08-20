@@ -231,6 +231,8 @@ func buildArchGraph(
 		return buildGemmaGraph(tensors, cfg, engine)
 	case "qwen2":
 		return buildQwenGraph(tensors, cfg, engine)
+	case "qwen3":
+		return buildQwen3Graph(tensors, cfg, engine)
 	case "mistral":
 		return buildMistralGraph(tensors, cfg, engine)
 	case "phi3", "phi":

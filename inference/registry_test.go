@@ -148,7 +148,7 @@ func TestDefaultArchitecturesRegistered(t *testing.T) {
 		"mamba",
 		"mistral",
 		"phi", "phi3",
-		"qwen2",
+		"qwen2", "qwen3",
 		"whisper",
 	}
 	for _, name := range expected {

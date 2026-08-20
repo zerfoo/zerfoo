@@ -862,6 +862,77 @@ func TestDefaultArchConfigRegistry_PhiAndDeepSeekRegistered(t *testing.T) {
 	}
 }
 
+// TestQwen3ConfigParser pins the one field where Qwen 3 diverges from Qwen 2:
+// Qwen 3 has no Q/K/V projection bias. Values mirror Qwen/Qwen3-0.6B.
+func TestQwen3ConfigParser(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  map[string]interface{}
+		want ModelMetadata
+	}{
+		{
+			name: "qwen3 0.6B",
+			raw: map[string]interface{}{
+				"model_type":              "qwen3",
+				"vocab_size":              float64(151936),
+				"hidden_size":             float64(1024),
+				"num_hidden_layers":       float64(28),
+				"num_attention_heads":     float64(16),
+				"num_key_value_heads":     float64(8),
+				"intermediate_size":       float64(3072),
+				"max_position_embeddings": float64(40960),
+				"rope_theta":              float64(1000000),
+				"eos_token_id":            float64(151645),
+				"bos_token_id":            float64(151643),
+				"attention_bias":          false,
+				"tie_word_embeddings":     true,
+			},
+			want: ModelMetadata{
+				Architecture:          "qwen3",
+				VocabSize:             151936,
+				HiddenSize:            1024,
+				NumLayers:             28,
+				NumQueryHeads:         16,
+				NumKeyValueHeads:      8,
+				IntermediateSize:      3072,
+				MaxPositionEmbeddings: 40960,
+				RopeTheta:             1000000,
+				EOSTokenID:            151645,
+				BOSTokenID:            151643,
+				TieWordEmbeddings:     true,
+				AttentionBias:         false,
+			},
+		},
+		{
+			name: "qwen3 minimal defaults rope theta",
+			raw: map[string]interface{}{
+				"model_type":          "qwen3",
+				"vocab_size":          float64(151936),
+				"num_hidden_layers":   float64(36),
+				"num_attention_heads": float64(32),
+			},
+			want: ModelMetadata{
+				Architecture:  "qwen3",
+				VocabSize:     151936,
+				NumLayers:     36,
+				NumQueryHeads: 32,
+				RopeTheta:     1000000,
+				AttentionBias: false,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseQwen3Config(tc.raw)
+			if err != nil {
+				t.Fatalf("parseQwen3Config error: %v", err)
+			}
+			assertMetadataEqual(t, tc.want, *got)
+		})
+	}
+}
+
 func TestDefaultArchConfigRegistry_MistralAndQwenRegistered(t *testing.T) {
 	reg := DefaultArchConfigRegistry()
 
@@ -871,6 +942,7 @@ func TestDefaultArchConfigRegistry_MistralAndQwenRegistered(t *testing.T) {
 	}{
 		{"mistral", "mistral"},
 		{"qwen2", "qwen2"},
+		{"qwen3", "qwen3"},
 	} {
 		t.Run(tc.modelType, func(t *testing.T) {
 			raw := map[string]interface{}{

@@ -49,6 +49,7 @@ func DefaultArchConfigRegistry() *ArchConfigRegistry {
 	r.Register("llama4", parseLlama4Config)
 	r.Register("mistral", parseMistralConfig)
 	r.Register("qwen2", parseQwenConfig)
+	r.Register("qwen3", parseQwen3Config)
 	r.Register("phi3", parsePhiConfig)
 	r.Register("phi", parsePhiConfig)
 	r.Register("deepseek_v3", parseDeepSeekConfig)
@@ -214,6 +215,22 @@ func parseQwenConfig(raw map[string]interface{}) (*ModelMetadata, error) {
 	if meta.RopeTheta == 0 {
 		meta.RopeTheta = 1000000 // Qwen default
 	}
+	return meta, nil
+}
+
+// parseQwen3Config parses Qwen3-family config.json fields.
+//
+// Qwen 3 shares Qwen 2's field layout but drops the Q/K/V projection biases
+// (config.json carries "attention_bias": false, and the GGUF exports contain no
+// bias tensors at all). rope_theta still defaults to 1000000 when absent.
+func parseQwen3Config(raw map[string]interface{}) (*ModelMetadata, error) {
+	meta, err := parseQwenConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	// Qwen 3 has no attention bias, unlike Qwen 2 which always does. Honor an
+	// explicit attention_bias if the config sets one, otherwise default false.
+	meta.AttentionBias = getBool(raw, "attention_bias")
 	return meta, nil
 }
 
