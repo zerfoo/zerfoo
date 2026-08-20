@@ -298,6 +298,7 @@ for _, tc := range result.ToolCalls {
 | Mistral | GGUF | Sliding window attention, 44 tok/s (7B Q4_K_M) |
 | Mixtral | GGUF | Mixture of Experts |
 | Qwen 2 | GGUF | Attention bias, RoPE theta=1M |
+| Qwen 3 (dense) | GGUF | QK RMSNorm, no attention bias, explicit head dim |
 | Phi 3/4 | GGUF | Partial rotary factor, Q2_K/Q3_K support |
 | DeepSeek V3 | GGUF | MLA + MoE (batched) |
 | Command R | GGUF | Cohere architecture |
