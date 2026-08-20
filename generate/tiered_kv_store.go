@@ -209,6 +209,13 @@ func (s *TieredKVStore[T]) SeqLen() int {
 	return s.hot.SeqLen()
 }
 
+// LayerSeqLen returns the number of positions cached for the given layer.
+// Writes always land in the hot tier, so that tier owns the per-layer cursors.
+// See LayerSeqLenProvider for why attention must use this and not SeqLen.
+func (s *TieredKVStore[T]) LayerSeqLen(layer int) int {
+	return s.hot.LayerSeqLen(layer)
+}
+
 // Reset clears all tiers, resets access counts, and drains prefetched data.
 func (s *TieredKVStore[T]) Reset() {
 	s.mu.Lock()

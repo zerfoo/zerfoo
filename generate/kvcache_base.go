@@ -155,6 +155,15 @@ func (c *quantKVCache) SeqLen() int {
 	return c.layers[0].cursor
 }
 
+// LayerSeqLen returns the number of positions cached for the given layer.
+// See LayerSeqLenProvider for why attention must use this and not SeqLen.
+func (c *quantKVCache) LayerSeqLen(layer int) int {
+	if layer < 0 || layer >= len(c.layers) {
+		return 0
+	}
+	return c.layers[layer].cursor
+}
+
 // Reset clears all cached data and resets cursors to zero.
 // The pre-allocated buffers are retained for reuse.
 func (c *quantKVCache) Reset() {

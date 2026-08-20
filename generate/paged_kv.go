@@ -57,6 +57,15 @@ func (c *PagedKVCache[T]) SeqLen() int {
 	return c.layerCursors[0]
 }
 
+// LayerSeqLen returns the number of positions cached for the given layer.
+// See LayerSeqLenProvider for why attention must use this and not SeqLen.
+func (c *PagedKVCache[T]) LayerSeqLen(layer int) int {
+	if layer < 0 || layer >= c.numLayers {
+		return 0
+	}
+	return c.layerCursors[layer]
+}
+
 // Append writes new key and value data for the given layer. The tensors must
 // have shape [channels, seqLen, dim] where channels*dim equals the pool's
 // headDim. For standard caching channels=1; for GQA caching channels equals

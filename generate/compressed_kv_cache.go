@@ -63,6 +63,16 @@ func (c *CompressedKVCache[T]) SeqLen() int {
 	return lb.numChunks*c.chunkSize + lb.chunkCursor
 }
 
+// LayerSeqLen returns the number of positions cached for the given layer.
+// See LayerSeqLenProvider for why attention must use this and not SeqLen.
+func (c *CompressedKVCache[T]) LayerSeqLen(layer int) int {
+	if layer < 0 || layer >= len(c.layers) {
+		return 0
+	}
+	lb := &c.layers[layer]
+	return lb.numChunks*c.chunkSize + lb.chunkCursor
+}
+
 // Update appends new key and value tensors for the given layer.
 // Tensors must have shape [batch, seq_len, dim]. When the current chunk
 // fills up, it is compressed via mean pooling and moved to the compressed store.

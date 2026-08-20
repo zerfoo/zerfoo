@@ -19,6 +19,11 @@ func (a *tieredKVAdapter[T]) SeqLen() int {
 	return a.store.SeqLen()
 }
 
+// LayerSeqLen implements LayerSeqLenProvider by delegating to the hot tier.
+func (a *tieredKVAdapter[T]) LayerSeqLen(layer int) int {
+	return a.store.LayerSeqLen(layer)
+}
+
 func (a *tieredKVAdapter[T]) Reset() {
 	a.store.Reset()
 }

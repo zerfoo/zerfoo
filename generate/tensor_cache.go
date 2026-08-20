@@ -643,6 +643,15 @@ func (c *TensorCache[T]) SeqLen() int {
 	return c.layers[0].seqLen
 }
 
+// LayerSeqLen returns the number of positions cached for the given layer.
+// See LayerSeqLenProvider for why attention must use this and not SeqLen.
+func (c *TensorCache[T]) LayerSeqLen(layer int) int {
+	if layer < 0 || layer >= len(c.layers) {
+		return 0
+	}
+	return c.layers[layer].seqLen
+}
+
 // Reset clears sequence lengths to zero. Pre-allocated buffers are kept
 // for reuse; only data pointers are logically invalidated. The GPU counters
 // are also zeroed so that GPU-side kernels see the reset position.

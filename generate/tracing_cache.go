@@ -47,6 +47,15 @@ func (t *TracingCacheProvider[T]) SeqLen() int {
 	return t.real.SeqLen()
 }
 
+// LayerSeqLen delegates to the real cache when it implements
+// LayerSeqLenProvider, falling back to the pass-global SeqLen otherwise.
+func (t *TracingCacheProvider[T]) LayerSeqLen(layer int) int {
+	if p, ok := t.real.(LayerSeqLenProvider); ok {
+		return p.LayerSeqLen(layer)
+	}
+	return t.real.SeqLen()
+}
+
 // Reset delegates to the real cache.
 func (t *TracingCacheProvider[T]) Reset() {
 	t.real.Reset()

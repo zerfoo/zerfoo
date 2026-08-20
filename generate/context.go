@@ -18,6 +18,28 @@ type CacheProvider[T tensor.Numeric] interface {
 	Truncate(newSeqLen int)
 }
 
+// LayerSeqLenProvider is an optional CacheProvider extension that reports the
+// number of positions cached for one specific layer.
+//
+// Attention layers MUST derive their RoPE position offset from LayerSeqLen,
+// never from SeqLen. SeqLen reports layer 0's cursor, and layer 0 advances that
+// cursor with its own Update partway through a forward pass, so layers
+// 1..N-1 would read a value already advanced by the current chunk's length and
+// rotate their Q/K to positions shifted by +chunkLen. Within one pass the shift
+// is uniform and RoPE is relative, so the damage is invisible in a pure prefill
+// or a pure token-by-token decode; it appears at the prefill->decode transition,
+// where a decode query shifted by +1 is scored against keys cached with a
+// shift of +promptLen. That was zerfoo#990: correct first token, then decode
+// degrading into on-topic repetition on every architecture.
+//
+// Implementations whose SeqLen is already pass-stable (advanced only after the
+// last layer's Update, as GPUKVCache does) satisfy this trivially.
+type LayerSeqLenProvider interface {
+	// LayerSeqLen returns the number of positions currently cached for the
+	// given layer. Out-of-range layers return 0.
+	LayerSeqLen(layer int) int
+}
+
 // FullBufferProvider is an optional interface for caches that support
 // fixed-size (maxSeqLen) KV buffer access. This enables CUDA graph capture
 // for the decode attention loop: the FlashAttentionDecode kernel reads the

@@ -239,6 +239,17 @@ func (c *GPUKVCache) SeqLen() int {
 	return c.seqLen
 }
 
+// LayerSeqLen returns the number of positions cached for the given layer.
+// GPUKVCache advances seqLen only after the last layer's append, so the value
+// is already stable for the whole forward pass and every layer shares it.
+// See LayerSeqLenProvider.
+func (c *GPUKVCache) LayerSeqLen(layer int) int {
+	if layer < 0 || layer >= c.numLayers {
+		return 0
+	}
+	return c.seqLen
+}
+
 // GPUCounterPtr returns the device pointer to the GPU-resident int32 position
 // counter. Kernels (offset_memcpy, rope_select, increment_counter) use this
 // pointer to read/write the current sequence position on the GPU, enabling
