@@ -512,5 +512,37 @@
       ],
       "has_tests": false
     }
+  },
+  {
+    "id": "UC-H2-014",
+    "domain": "model-support",
+    "name": "Qwen 3 models load and generate",
+    "description": "A Qwen3-architecture GGUF loads through a dedicated qwen3 builder and produces coherent greedy decode, or is honestly marked experimental. Scoped to the architecture string, not one parameter size. Authorized as an ADR-093 exception; see docs/adr/095-qwen3-architecture-support.md.",
+    "actor": "zerfoo_user",
+    "preconditions": [
+      "a real Qwen3 GGUF staged in /var/lib/zerfoo/models"
+    ],
+    "interfaces": [
+      {
+        "type": "library",
+        "path": "inference/arch_config.go, inference/load_gguf.go"
+      }
+    ],
+    "expected_outcome": "qwen3 registered and dispatching; decode verified on GB10 OR architecture marked experimental at load (gemma4e precedent). Entering docs/verified-models.md requires parity + benchmark evidence -- merging the builder is not a support claim.",
+    "priority": "P2",
+    "tags": [
+      "model-support",
+      "phase-1",
+      "adr-095",
+      "founder-override"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "library"
+      ],
+      "has_tests": false
+    },
+    "note": "Baseline verified 2026-08-20: only qwen2/qwen_vl registered; zero qwen3 references in zerfoo or zonnx; unknown architectures fail cleanly at load_gguf.go's default branch (no silent-misload risk)."
   }
 ]

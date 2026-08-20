@@ -101,6 +101,7 @@ Inputs from the 2026 08 14 audit (seat audit, hq brain/zerfoo-audit-2026-08-14.m
 | D9 | Cross-repo release hygiene | TBD | ztensor #179 + #178, zmf #14 resolved; orphan branches dispositioned; stale branches pruned |
 | D10 | GQA fused path restored or tracked | TBD | ztensor#180 fixed + released + zerfoo re-enabled with GB10 proof, OR documented as tracked debt with mitigation noted in the matrix |
 | D11 | DGX workspace clean | TBD | residue removed; attic disposition decided by David |
+| D12 | Qwen 3 architecture supported (ADR-095 exception) | TBD | `qwen3` registered and building; decode verified on a real GGUF OR honestly marked experimental; matrix row only with evidence |
 
 ---
 
@@ -128,7 +129,7 @@ Component: docs + tests/parity + bench. The public support claim becomes this ma
 
 Component: docs. Acceptance: no public claim exceeds docs/verified-models.md.
 
-- [ ] T146.1 Amend docs/VISION.md throughput targets and architecture counts  Owner: TBD  Est: 2h  verifies: [UC-H2-013]  kind: agent
+- [x] T146.1 Amend docs/VISION.md throughput targets and architecture counts  Owner: agent  Est: 2h  verifies: [UC-H2-013]  kind: agent  (done 2026-08-20, PR #986 merged as 598de44a: Year-1/2/3 targets restated roofline-relative or hardware-conditional; static architecture counts replaced with verified-models.md pointers; dated amendment section preserves every original figure with the roofline arithmetic and its sources. Both introduced figures verified against docs/benchmarks.md:9 (241 vs Ollama 188 = 1.28x) and docs/product-strategy-2026-H2.md:95 (roofline ~257). Two items deliberately NOT changed and carried to T146.2 / founder: the "25+ custom CUDA kernels" count (VISION) vs 28 (strategy doc), and re-ranking design principle 1 below trust/adoption, which reads as a founder-level call.)
   - Replace the Year-1 "300+ tok/s" and Year-3 "500+ tok/s" targets with the ADR-093 ruling (GB10 roofline ~257 tok/s; targets restated as roofline-relative or hardware-conditional). Replace static architecture counts with a pointer to the matrix. Add a "targets amended 2026-08-14 per ADR-093" note preserving the original ambition language. Do NOT rewrite the thesis -- ADR-093 explicitly upholds it.
 - [ ] T146.2 Claim-consistency sweep  Owner: TBD  Est: 2h  verifies: [UC-H2-013]  kind: agent  blocked-by: [T136.5]
   - Grep README.md, docs/design.md, docs/updates.md, docs/distribution/ for: architecture counts (6/40/41/45 variants), "faster than Ollama", tok/s figures, model-family claims. Every hit either cites the current matrix/benchmarks.md or is removed. Record the sweep command + hit list in the PR body so it is repeatable at Phase 2 launch.
@@ -140,10 +141,16 @@ Component: ztensor, zmf, zonnx repos. Acceptance: D9. Dependency order: ztensor 
 - [ ] T147.1 Resolve ztensor#179 (ZTENSOR_DETERMINISTIC)  Owner: TBD  Est: 3h  verifies: [UC-H2-004]  kind: agent
   - The T135.5 deliverable exists only on branch feat-deterministic-mode (PR open since 2026 07 03; main has moved). Rebase on ztensor main, re-run the GB10 bitwise-identical proof (2 seeded runs, per-epoch losses identical; honest exclusion note for the FusedEncoderBackward atomicAdd path stays), merge. If the rebase surfaces conflicts beyond 2h of work, instead re-scope honestly: comment on #179 with the state, and correct the T135.5 completion claim in this plan's git history via a devlog note (the plan said "done"; the honest status is "implemented, unmerged").
   - Acceptance: #179 merged with fresh GB10 proof cited, OR #179 commented + devlog correction landed. No silent limbo.
-- [ ] T147.2 Land the release-please PRs; release; bump  Owner: TBD  Est: 2h  verifies: [infrastructure]  kind: agent  blocked-by: [T147.1]
-  - Merge ztensor #178 (or its successor after #179 lands) -> ztensor release tagged; merge zmf #14 (0.6.0). Bump zerfoo's ztensor dependency to the new tag; go build/vet/test -short green; standing gate green if kernel code moved.
-- [ ] T147.3 Disposition zmf fix/attribute-tensor + zonnx zmf-quantize spike  Owner: TBD  Est: 2h  verifies: [infrastructure]  kind: agent
-  - zmf branch fix/attribute-tensor (4 commits: Attribute_Tensor proto, Q4_0/Q8_0 enums) and zonnx untracked cmd/zmf-quantize/main.go are one abandoned March quantization thread. Decide as a unit: if the Q4_0/Q8_0 enums are needed by any current GGUF/ZMF path, rebase + PR + merge both; otherwise close the branch with a pointer comment and delete the untracked spike (paste its 1137 bytes into the closing comment first -- nothing is lost). Also remove zonnx's stray zonnx-converter.log and sync the local zonnx checkout to origin/main.
+- [ ] T147.2 Land the release-please PR; release; bump  Owner: TBD  Est: 2h  verifies: [infrastructure]  kind: agent  blocked-by: [T147.1]
+  - Merge ztensor #178 (or its successor after #179 lands) -> ztensor release tagged. Bump zerfoo's ztensor dependency to the new tag; go build/vet/test -short green; standing gate green if kernel code moved.
+  - **CORRECTED 2026-08-20 (was: "merge zmf #14 (0.6.0)").** `zerfoo/zmf` is ARCHIVED -- ZMF was superseded by GGUF (ADR-037). PR #14 reports MERGEABLE but cannot be merged into an archived repo. The zmf half of this task is void; do not attempt it. See T147.3's correction note.
+  - While here, resolve **ztensor#181** if it lands in the same release window: the v0.6.0 tag appears re-cut, so zonnx's pinned go.sum no longer verifies (builds only with GOSUMDB=off). Fix forward with a new patch version; do not re-point the tag again.
+- [x] T147.3 Disposition zmf fix/attribute-tensor + zonnx zmf-quantize spike  Owner: agent  Est: 2h  verifies: [infrastructure]  kind: agent  (done 2026-08-20)
+  - **THE TASK'S PREMISE WAS WRONG, and the correction matters more than the task.** This plan's 2026-08-14 audit read `origin` as the canonical `zerfoo/*` org in every checkout. That holds for zerfoo, ztensor and metee -- but zonnx and zmf are FORK checkouts (`origin` = `dndungu/*`, canonical = the `upstream` remote). Consequences: (a) zmf's "4 unmerged commits" actually shipped upstream in March as zmf PRs #9/#10 (9e4a2a1, 9d26c24, 5ef33c4), released v0.4.0/v0.5.0 -- `git diff upstream/main fix/attribute-tensor -- zerfoo.proto zerfoo.pb.go` is EMPTY; (b) zonnx local main was 39 commits BEHIND upstream, not 2 ahead; (c) `zerfoo/zmf` is ARCHIVED.
+  - The feature is LIVE and in production use (zonnx main consumes `zmf.Attribute_Tensor` at pkg/converter/converter.go:606 and pkg/importer/importer.go:348, and emits `zmf.Tensor_Q4_0/Q8_0` from pkg/quantize, all against released zmf v0.4.0). The BRANCH was dead-because-already-merged. No PR opened -- it would have been an empty diff against an archived repo.
+  - Executed: zmf branch deleted (fork + local) after preserving the full record, including the 52-line `cmd/zmf-quantize/main.go` source, in a commit comment on dndungu/zmf@22c46ed; local tag `archive/fix-attribute-tensor`. zonnx spike deleted (superseded by the shipped `zonnx convert --quantize <q4_0|q8_0>` flag calling the same pkg/quantize.Model) and its 0-byte stray log removed; zonnx local main reset to upstream/main v1.0.0 with safety tag `archive/pre-upstream-sync-main`.
+  - **Open, deliberately not done:** the fork `dndungu/zonnx` is left 38 behind upstream (its only unique file is a stray `.claude-checkpoint.md`). Force-pushing a fork is a remote write outside this task's scope -- needs a decision.
+  - **STANDING LESSON (generalize this):** `git branch -r` and ahead/behind counts are only as trustworthy as the remote they point at. In a fork-based checkout, "unmerged against origin" can mean "shipped months ago upstream". Always run `git remote -v` before reading ahead/behind as truth. Candidate for docs/lore.md.
 - [ ] T147.4 Prune stale branches (zerfoo + ztensor)  Owner: TBD  Est: 2h  verifies: [infrastructure]  kind: agent  blocked-by: [T147.1, T147.2]
   - zerfoo: delete origin/diag/gelu-internal-trace, origin/diag/ln-backward-trace after confirming their commits are merged or obsolete; disposition origin/feat-T131.1-dgx-validate (2 commits from 2026 07 02: dgx-validate.sh submit script + validate-arm64 manifest -- check whether equivalent functionality already landed on main via other PRs; merge or close with rationale). ztensor: for each of the ~40 wave-*/feat-*/fix-*/diag-* branches, `git cherry origin/main <branch>` to detect unmerged content; delete fully-landed ones, list survivors with one-line rationale in the PR/issue. Keep origin/handover (canonical session notes).
   - Acceptance: branch count reduced with a receipts list (branch -> disposition) posted as a gist or issue comment; zero branches deleted that carried unmerged non-obsolete work.
@@ -174,11 +181,38 @@ Component: inference (KV cache), internal/cuda (Gather), timeseries (PatchTST). 
 
 Component: the DGX host filesystem (not the repo). Acceptance: D11.
 
-- [ ] T150.1 Mechanical cleanup of the canonical workspace  Owner: TBD  Est: 1h  verifies: [infrastructure]  kind: agent
+- [x] T150.1 Mechanical cleanup of the canonical workspace  Owner: agent  Est: 1h  verifies: [infrastructure]  kind: agent  (done 2026-08-20, commit 58da1e5d + quarantine at ~/Code/_attic/quarantine-2026-08-20/DISPOSITIONS.md. NOTHING deleted outright -- everything quarantined and recoverable. t136-3-parity worktree removed after re-verifying its head is an ancestor of main; `git worktree prune` deliberately never run, which proved correct since two live agent worktrees appeared mid-task. ztensor switched off the obsolete nccl branch to main, equivalence proven by PATCH-ID not commit message. 2 of 3 ztensor stashes dropped as provably-on-main; stash@{0} (Q4NT_TRACE instrumentation) KEPT because not provable. Both zerfoo bundles quarantined -- their refs are ancestors of origin/main. scheduled_tasks.lock deletion staged rather than restored: it recorded a dead pid 21185 from March, and restoring it would re-plant a dead session's mutex that every clone inherits; also gitignored so it cannot recur. Two ztensor untracked CGo kernel files QUARANTINED AND FLAGGED, explicitly NOT proven obsolete -- see follow-up below.)
+  - **Follow-up, unowned:** the two quarantined ztensor files (`internal/cuda/kernels/elementwise_fp16_cgo.go` at `//go:build cuda`, `paged_attention_cuda_nocutlass.go` at `cuda && !cutlass`) fill real build-tag gaps that main does not cover (main's providers are `!cuda` and `cuda && cutlass`). They need review plus a GPU build before they can be landed or discarded. Note that no `-tags cuda` appears in ztensor's Makefiles or workflows, which may make both files dead in practice -- that question ties directly to zerfoo #921's "documented DGX-only build policy" disposition.
   - In ~/Code/zerfoo/zerfoo: `git worktree unlock .claude/worktrees/t136-3-parity && git worktree remove` it (zero commits over main -- verified 2026 08 14); delete the stray .claude-checkpoint.e11b361c-121.md; restore .claude/scheduled_tasks.lock or commit its deletion. In ~/Code/zerfoo/ztensor: switch to main (`git checkout main && git pull`) -- the nccl branch content is on main under rebased SHAs (verified); inspect the 3 stashes (`git stash show -p`), keep only if content is absent from main, else drop; delete or commit the 2 untracked kernel files after checking against main. Delete ~/zerfoo-latest.bundle and ~/zerfoo-transpose-fix.bundle (March 4, superseded by pushed history -- verify with `git bundle list-heads` against origin first).
   - Acceptance: `git -C ~/Code/zerfoo/<repo> status` clean on main for all five repos; a one-line disposition list per item in the receipt/PR.
 - [ ] T150.2 FOUNDER: attic clone disposition  Owner: David  Est: 30m decision  verifies: [infrastructure]  kind: human
   - Decision needed: delete ~/Code/_attic/zerfoo-home-102dirty-15stash and ~/Code/_attic/zerfoo-stale-726behind after a salvage pass? Prep (agent, before asking): enumerate the 15+9 stashes and the 41 ahead-of-upstream commits, mark each SALVAGE (content absent from origin and still relevant) or OBSOLETE (gemma4e-era work superseded by the 2026 08 10 demotion; benchmark JSONs superseded by T136.4). Route the go/no-go via Blink proposal with the salvage list attached; deletion is Tier-3 (destructive).
+
+### E151: Qwen 3 architecture support -- fidelity: executable
+
+Component: inference (arch registry, config parser, graph builder) + tests/parity. Acceptance: D12. Decision rationale: docs/adr/095-qwen3-architecture-support.md.
+
+**This epic is a deliberate exception to ADR-093 and to Phase 1's own non-goals**, authorized founder-direct on 2026-08-20 after the seat recommended a cheap sizing spike instead. ADR-095 records the override, its cost, and the precedent risk. It is in the plan rather than outside it precisely so the cost stays visible.
+
+Baseline (verified 2026-08-20): zerfoo registers `qwen2` and `qwen_vl` only; there is no `qwen3` string in zerfoo or zonnx Go source. A Qwen3 GGUF fails cleanly at `load_gguf.go`'s `default:` branch with `unsupported architecture` -- there is no silent-misload risk today, so this is a pure capability gap, not a correctness bug.
+
+- [ ] T151.1 Resolve which Qwen3 models actually exist  Owner: agent  Est: 1h  verifies: [UC-H2-014]  kind: agent
+  - The founder's ask named "Qwen 3.8 27B". That could not be verified as a real model: Qwen's line runs 1.5 -> 2 -> 2.5 -> 3, no "3.8" version is known, and 27B is a Gemma 3 size class. Enumerate the real current Qwen3 GGUF releases and repo IDs and state plainly whether anything matching the requested name exists. **Report what is real; do not bend findings to fit the requested name and do not invent a model to satisfy the ask.**
+  - Acceptance: a written list of real Qwen3 sizes/repo IDs, and an explicit verdict on the "3.8 27B" name.
+- [ ] T151.2 Verify the architecture delta against real GGUF tensor names  Owner: agent  Est: 2h  verifies: [UC-H2-014]  kind: agent  blocked-by: [T151.1]
+  - Download the SMALLEST current Qwen3 GGUF (0.6B/1.7B/4B class) per docs/lore.md L-0016 (`curl -4 --http1.1 --fail -C -`; size-verify against Content-Length -- plain curl silently truncates on this host). Read its actual architecture string and tensor list.
+  - The reported delta from qwen2 -- per-head QK RMSNorm (`attn_q_norm`/`attn_k_norm`), no QKV attention bias, possibly different RoPE theta -- is a HYPOTHESIS TO CHECK, not a specification. Confirm or refute each against the real tensor names before any builder code is written.
+- [ ] T151.3 Implement the qwen3 config parser + graph builder  Owner: agent  Est: 4h  verifies: [UC-H2-014]  kind: agent  blocked-by: [T151.2]
+  - Register in `DefaultArchConfigRegistry` (inference/arch_config.go), add the `buildArchGraph` case (inference/load_gguf.go), and wire arch dispatch + chat template (inference/auto_builder.go, inference/gguf.go, inference/registry_init.go). Mirror the existing qwen2 builder and its test shape (inference/arch_qwen.go, arch_qwen_test.go). Preserve the clean `unsupported architecture` failure for anything not implemented.
+  - Support the ARCHITECTURE STRING, not a parameter size -- that covers every family member and makes the unverified "27B" naming moot.
+- [ ] S151.3.1 Unit + parity tests  Owner: agent  Est: 2h  verifies: [UC-H2-014]  kind: agent  blocked-by: [T151.3]
+  - Unit tests mirroring inference/arch_qwen_test.go; parity test in tests/parity/ following qwen_test.go. Must use the T136.6 explicit-path model resolution, not directory-scan lookup. gofmt/vet/lint clean.
+- [ ] T151.4 GPU verification + honest disposition  Owner: agent  Est: 2h  verifies: [UC-H2-014]  kind: agent  blocked-by: [S151.3.1]
+  - Greedy decode on a real GGUF via `scripts/dgx-validate.sh` (one pod at a time; GPU-serial with E136/E148/E149 -- the matrix has priority). Coherent-English check per docs/QUALITY.md.
+  - **Honesty bar (gemma4e precedent, devlog 2026-08-10):** if decode is degenerate, report it as degenerate and mark the architecture experimental at load, exactly as gemma4/gemma4e/gemma4moe were. Do not quietly ship a builder that compiles but generates garbage.
+  - Per ADR-093 rule 1, Qwen 3 enters docs/verified-models.md only with parity + benchmark evidence attached. Merging the builder is NOT a support claim.
+- [ ] T151.5 Larger-model follow-up (conditional)  Owner: TBD  Est: 2h  verifies: [UC-H2-014]  kind: agent  blocked-by: [T151.4]
+  - Only after the architecture is proven green on a small model, consider staging a larger Qwen3. A 27B-class Q4_K_M is roughly 16GB on a demonstrably slow link -- time-box it, and treat non-completion as deferred-by-cost (like Llama 4 Scout and MiniMax-M2), not as failure.
 
 ### E138: Plan Phase 2 (Traction) -- fidelity: outline
 
@@ -198,20 +232,30 @@ Intent: Phase 2 turns verified capability into users -- website/docs site (Hugo 
 | P: Cross-repo hygiene | T147.1 -> T147.2 -> T147.4; T147.3 independent | T147.1 GB10 proof is GPU-serial |
 | Q: GQA kernel | T148.1 -> T148.2 (after T147.2) | GPU-serial; time-boxed |
 | R: Bug disposition | T149.1 -> T149.2 -> T149.3 (after T136.3) | GPU-serial; each time-boxed |
-| S: Workspace | T150.1 (now); T150.2 (founder, anytime) | host-side, no GPU |
+| S: Workspace | T150.1 (done); T150.2 (founder, anytime) | host-side, no GPU |
+| T: Qwen 3 (ADR-095) | T151.1 -> T151.2 -> T151.3 -> S151.3.1 -> T151.4 -> T151.5 | T151.1-T151.3 need no GPU; T151.4 is GPU-serial and yields to the matrix |
 | F: Next plan | T138.1 | after N and O converge |
 
-GPU queue order (one pod at a time): T136.3 -> T136.4 -> T147.1 proof -> T148.1/T148.2 -> T149.x. T136.6, T146.1, T147.3, T150.1 need no GPU and start immediately.
+GPU queue order (one pod at a time), matrix first: T136.3 -> T136.4 -> T147.1 proof -> T151.4 -> T148.1/T148.2 -> T149.x. T136.6, T146.1, T147.3, T150.1, T151.1-T151.3 need no GPU.
+
+**Contention note (ADR-095):** Track T is an authorized exception to ADR-093's one-front rule and competes for the single GB10 with the phase's core deliverable. Track N (the matrix) has priority at every scheduling decision. If Track T starts delaying milestone M-P1-4, surface the trade-off to the founder rather than letting Phase 1 exit slip silently.
 
 ### Waves
 
-### Wave 6: Unblock + hygiene fan-out (4 agents + 1 founder ask)
-- [ ] T136.6 + S136.6.1 harness honesty  verifies: [UC-H2-004]
-- [ ] T146.1 VISION.md amendment  verifies: [UC-H2-013]
-- [ ] T147.1 ztensor#179 resolution  verifies: [UC-H2-004]
-- [ ] T147.3 zmf/zonnx disposition  verifies: [infrastructure]
-- [ ] T150.1 workspace cleanup  verifies: [infrastructure]
-- [ ] T150.2 founder attic ask (route via Blink at wave start; does not block anything)  kind: human
+### Wave 6: Unblock + hygiene fan-out -- dispatched 2026-08-20, 3/5 landed
+- [ ] T136.6 + S136.6.1 harness honesty  verifies: [UC-H2-004]  -- IN FLIGHT
+- [x] T146.1 VISION.md amendment  verifies: [UC-H2-013]  -- DONE (PR #986, merged 598de44a)
+- [ ] T147.1 ztensor#179 resolution  verifies: [UC-H2-004]  -- NOT DISPATCHED (needs a GB10 slot for the bitwise proof; queue after the matrix)
+- [x] T147.3 zmf/zonnx disposition  verifies: [infrastructure]  -- DONE, and corrected this plan's remote premise (see the task entry)
+- [x] T150.1 workspace cleanup  verifies: [infrastructure]  -- DONE (58da1e5d + quarantine)
+- [ ] T150.2 founder attic ask  kind: human  -- BLOCKED ON PREP, not on David: the salvage enumeration must exist before the ask is meaningful. Blink MCP is NOT available on this host, so the plan's "route via Blink" instruction cannot be followed; ask David directly instead.
+- [ ] T151.1 -> T151.5 Qwen 3 support (ADR-095)  verifies: [UC-H2-014]  -- IN FLIGHT, added mid-wave by founder direction
+
+### Wave 6 findings (filed, unowned -- do not lose these)
+- **zerfoo/ztensor#181**: v0.6.0 tag appears re-cut; zonnx's pinned go.sum no longer verifies (builds only with GOSUMDB=off). Module-integrity issue for every consumer pinned to v0.6.0. Folded into T147.2.
+- **zerfoo/ztensor#182**: Q5_K GEMV parity test asserts pure-absolute 1e-3 while the commit that set it (488862c) records measured error ~1e-6 -- ~1000x slack, relative check removed. Justification (near-zero refs, catastrophic cancellation) is sound; the bar is not, versus T135.3's combined abs+rel pattern. Separately, docs/kernel-tolerances.md wrongly lists gemv_q5k.cu as having NO dedicated test. Same "is this gate real?" class as T136.6.
+- **Two ztensor untracked CGo kernel files** filling real build-tag gaps -- see T150.1's follow-up note.
+- **Fork `dndungu/zonnx` left 38 behind upstream** -- force-push decision outstanding (T147.3).
 
 ### Wave 7: The matrix (GPU-serial, run in-session on the DGX host)
 - [ ] T136.3 parity runs  (after T136.6)
@@ -252,7 +296,9 @@ Estimated wall-clock: 3-6 working days of GPU-serial work plus review latency. M
 | R11 | Dispatch lane dies on a wait-state again, delivering nothing | Med | Med | run parity in-session on the DGX host; per-model incremental writes to verified-models.md; bounded polls, never open-ended waits |
 | R12 | "Done" claims that never merged (T135.5/#179 class) recur | Med | Med | task completion requires the merged PR/tag cited in the checkbox annotation; T147.1 corrects the existing instance |
 | R13 | Bug-fix scope creep on #981/#982/#983 or #180 | Med | Med | ADR-093 rule 3 pre-committed: one time-boxed attempt each, then park with honest matrix annotation |
-| R14 | Branch pruning deletes unmerged work | High | Low | `git cherry` content check per branch; disposition list receipt; when in doubt, keep and list |
+| R14 | Branch pruning deletes unmerged work | High | Low | `git cherry` content check per branch; disposition list receipt; when in doubt, keep and list. **Sharpened 2026-08-20 by T147.3:** check `git remote -v` FIRST -- zonnx and zmf are fork checkouts where origin is `dndungu/*`, so ahead/behind against origin is not a merge fact. Compare against `upstream`, and prefer patch-id equivalence over commit-message matching (T150.1's method) |
+| R15 | E151 (Qwen 3) delays the verified-model matrix via GB10 contention | Med | Med | ADR-095 accepts this knowingly. Track N has GPU priority at every scheduling decision; T151.1-T151.3 are CPU-only and can proceed in parallel regardless. If M-P1-4 starts slipping, surface the trade to the founder -- do not absorb it silently |
+| R16 | A verification gate is loose enough to pass a real regression | High | Med | The T136.6 class, and ztensor#182 is a live instance one repo over (1e-3 bar against ~1e-6 measured error). Tolerances get sized against measured worst case, not round numbers; a bar that has never been red-proofed is not evidence |
 
 ---
 
@@ -278,6 +324,14 @@ Estimated wall-clock: 3-6 working days of GPU-serial work plus review latency. M
 ---
 
 ## Progress Log
+
+### 2026 08 20 -- Change Summary: Wave 6 dispatched, 3 landed; E151 added by founder override; the plan's own remote premise corrected
+
+- **Wave 6 dispatched.** T146.1 done and merged (PR #986, 598de44a). T147.3 done. T150.1 done (58da1e5d + quarantine). T136.6 in flight. T147.1 not dispatched -- it needs a GB10 slot and the matrix has priority.
+- **This plan's audit premise was wrong and is corrected in T147.3's entry.** `origin` is the canonical org for zerfoo/ztensor/metee but the `dndungu/*` FORK for zonnx and zmf. zmf's "4 unmerged commits" shipped upstream in March; zonnx was 39 behind, not 2 ahead; `zerfoo/zmf` is ARCHIVED so T147.2's "merge zmf #14" is void. R14 sharpened accordingly.
+- **E151 (Qwen 3 architecture support) added mid-phase by founder direction**, overriding ADR-093's one-expansion-front rule and Phase 1's "new model classes parked" non-goal. Recorded in docs/adr/095-qwen3-architecture-support.md with its cost and precedent risk; new risk R15 tracks the GB10 contention against the matrix. Baseline verified: only `qwen2`/`qwen_vl` registered, no `qwen3` anywhere, unknown archs fail cleanly (no silent-misload risk). UC-H2-014 added.
+- **Two new ztensor issues filed from incidental findings**: #181 (v0.6.0 tag re-cut, go.sum mismatch) and #182 (Q5_K parity bar ~1000x looser than measured error; tolerance table also misstates coverage). New risk R16 generalizes the second.
+- T150.2's "route via Blink" instruction is not executable -- no Blink MCP on this host; ask David directly, after the salvage enumeration exists.
 
 ### 2026 08 14 -- Change Summary: plan trimmed + closeout scope merged from the seat audit
 
