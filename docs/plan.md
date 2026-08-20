@@ -67,7 +67,7 @@ Exit state unchanged: zero known silent-correctness bugs, matrix published, benc
 
 | Metric | Target | Measured by |
 |---|---|---|
-| Harness honesty | per-row model identity proven | T136.6 test red-proofs the flat-dir hazard, then green |
+| Harness honesty | per-row model identity proven | MET 2026-08-20 (T136.6, PR #987): hazard red-proofed real, exact-path resolution + identity gate shipped, 9/9 staged models verified distinct |
 | Verified matrix | 9 GPU rows + honest gaps published | docs/verified-models.md, zero `pending T136.3` markers |
 | Benchmarks | reproducible at current versions | manifests in docs/bench/; benchmarks.md refreshed |
 | Claim consistency | zero claims exceeding the matrix | grep sweep of README/VISION/design/updates finds no unbacked counts or comparisons |
@@ -111,11 +111,15 @@ Inputs from the 2026 08 14 audit (seat audit, hq brain/zerfoo-audit-2026-08-14.m
 
 Component: docs + tests/parity + bench. The public support claim becomes this matrix (strategy doc P1). Completed: T136.1 (schema, 2026 07 02), T136.2 (9/11 models staged, 2026 08 10).
 
-- [ ] T136.6 Harness honesty: prove each parity row loads its own model file  Owner: TBD  Est: 3h  verifies: [UC-H2-004]  kind: agent
-  - Audit how the parity suite resolves each matrix model's GGUF against the flat /var/lib/zerfoo/models directory. If any path funnels through directory-scan resolution (`findGGUF`, inference/inference.go:317, or a glob), replace it with explicit per-row filenames (matrix row -> exact file path table, checked into tests/parity or docs/bench/manifests). Add an identity assertion to the parity runner: for each row, assert the resolved absolute path matches the row's declared file AND log the GGUF header's architecture string; fail the subtest on mismatch.
-  - Acceptance: a red-proof first -- demonstrate (or conclusively refute, with the resolution code path quoted in the PR) that two different matrix rows pointed at the flat dir can load the same file; then the identity assertion makes that class impossible. CI-runnable without GPU (path resolution is host-side).
-- [ ] S136.6.1 Tests + lint  Owner: TBD  Est: 1h  verifies: [UC-H2-004]  kind: agent  blocked-by: [T136.6]
-  - Unit test for the resolver (unknown row -> error, not fallback; duplicate resolution across rows -> error). gofmt/vet/lint clean.
+- [x] T136.6 Harness honesty: prove each parity row loads its own model file  Owner: agent  Est: 3h  verifies: [UC-H2-004]  kind: agent  (done 2026-08-20, PR #987 merged as 00a52f96)
+  - **HAZARD CONFIRMED REAL -- reproduced against the production code path, not inferred.** Two distinct model IDs pointed at one flat directory holding two distinct stub GGUFs both read the SAME bytes; the second file was never opened. Witness test: `TestDirectoryScanCollapsesDistinctRowsOntoOneFile`.
+  - **The standing GB10 gate was the vector, which is the part that matters.** Chain: `validate-arm64.yaml` mounts flat `/var/lib/zerfoo/models` -> `scripts/dgx-validate-inpod.sh:84-88` grepped EVERY `ModelDirEnvVar:` out of tests/parity and exported them ALL to that one directory -> `RunModelGeneration` -> `ModelDirOrSkip` -> `DirRegistry` -> `findGGUF` (inference/inference.go:317, first `.gguf` in ReadDir order). Gemma, Llama, Mistral, Phi and Qwen parity would all have loaded `DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf`.
+  - **Blast radius on already-published claims: NONE.** Every `verified` row in docs/verified-models.md marks its parity evidence "GB10 re-run pending T136.3", and its throughput numbers come from per-model bench manifests that pin exact files (e.g. gemma3-tps.yaml), not the flat-dir parity path. The flat hostPath mount landed 2026-08-10 (e348a8cc) and the only parity attempt since -- the 2026-08-11 lane -- died producing nothing. The gate would have lied the first time T136.3 ran; it never got the chance.
+  - **Aggravating finding:** `general.architecture` alone CANNOT discriminate the staged set -- `llama` covers both Llama 3.2 and Mistral 7B, `qwen2` covers both Qwen2-7B and the DeepSeek distill, `gemma3` covers 1B and 4B. An architecture-only assertion would still have passed a vacuous matrix. Exact resolved path is the identity check; the header is corroboration only.
+  - Shipped: new `tests/parity/modelset/` package with an embedded row->exact-filename table where every ambiguity is an error (unknown row, unpinned row, absent file, duplicate resolution via `os.SameFile`, symlink aliasing via `EvalSymlinks`); `ModelParityConfig.MatrixRow` now required across all 13 suites; loads via `inference.LoadFile` instead of a directory; `dgx-validate-inpod.sh` exports `ZERFOO_MODELS_DIR` once and runs the identity gate FIRST, reporting `parity_no_model_identity` if models are mounted but nothing was verified -- which kills the all-skipped-but-green variant too. docs/lore.md **L-0018**.
+  - Independently re-verified by the seat on the real host, not taken on report: all 9 staged models resolve to their own distinct files with matching architecture/size, and the 8 unstaged rows skip with an explicit "pins no GGUF file" reason.
+  - Residual, deliberate: `BenchmarkGemma3Q4TokPerSec` keeps directory scanning (ZMF-era fixture, outside the matrix).
+- [x] S136.6.1 Tests + lint  Owner: agent  Est: 1h  verifies: [UC-H2-004]  kind: agent  blocked-by: [T136.6]  (done 2026-08-20, in PR #987: 15 modelset unit tests covering unknown-row-is-error, no-fallback-for-unstaged, missing-pinned-file-is-error, duplicate files/rows/aliases rejected, recorder catches two rows on one file, wrong-file and wrong-architecture both caught. Full CI green incl. CodeQL and `test (1.26)`.)
 - [ ] T136.3 Run the parity subset for the matrix on GB10; close T86.5.8  Owner: TBD  Est: 4h  verifies: [UC-H2-004]  kind: agent  blocked-by: [T136.6]
   - Standing gate with models mounted: parity stage runs for every matrix model present, using the T136.6 explicit-path table. Record per-model results in docs/verified-models.md AS EACH MODEL COMPLETES (checkpoint continuously -- the 2026 08 11 lane died with zero results banked). Close T86.5.8 (#572 epic if fully satisfied) referencing the run.
   - Acceptance: verified-models.md has zero `pending T136.3` markers; every GPU row cites pod ID + date + commit; rows for the 2 unfetched models and Chronos-2 carry honest absence notes.
@@ -243,7 +247,7 @@ GPU queue order (one pod at a time), matrix first: T136.3 -> T136.4 -> T147.1 pr
 ### Waves
 
 ### Wave 6: Unblock + hygiene fan-out -- dispatched 2026-08-20, 3/5 landed
-- [ ] T136.6 + S136.6.1 harness honesty  verifies: [UC-H2-004]  -- IN FLIGHT
+- [x] T136.6 + S136.6.1 harness honesty  verifies: [UC-H2-004]  -- DONE (PR #987, merged 00a52f96). Hazard was REAL and the standing GB10 gate was the vector; no published claim was affected. **T136.3 is now unblocked and is the phase's critical path.**
 - [x] T146.1 VISION.md amendment  verifies: [UC-H2-013]  -- DONE (PR #986, merged 598de44a)
 - [ ] T147.1 ztensor#179 resolution  verifies: [UC-H2-004]  -- NOT DISPATCHED (needs a GB10 slot for the bitwise proof; queue after the matrix)
 - [x] T147.3 zmf/zonnx disposition  verifies: [infrastructure]  -- DONE, and corrected this plan's remote premise (see the task entry)
@@ -324,6 +328,13 @@ Estimated wall-clock: 3-6 working days of GPU-serial work plus review latency. M
 ---
 
 ## Progress Log
+
+### 2026 08 20 (later) -- Change Summary: T136.6 done -- the vacuous-parity hazard was REAL and the standing gate was the vector
+
+- **T136.6 + S136.6.1 done, PR #987 merged as 00a52f96.** The hazard was reproduced against the production code path, not argued: two distinct model rows over one flat directory both read the alphabetically-first GGUF. The vector was `scripts/dgx-validate-inpod.sh` exporting every `*_MODEL_DIR` to the single mounted flat directory, so the standing GB10 gate itself would have produced a fake-green matrix on T136.3's first run.
+- **No published claim was affected** -- every `verified` row's parity evidence is marked pending T136.3, and its throughput numbers come from exact-file bench manifests. The flat mount landed 2026-08-10 and the one parity attempt since died producing nothing. Caught before it lied, not after.
+- Architecture strings alone cannot discriminate the staged set (`llama` = Llama 3.2 AND Mistral; `qwen2` = Qwen2-7B AND the DeepSeek distill), so exact resolved path is the identity check. Fix ships as `tests/parity/modelset/` where every ambiguity is an error, plus an identity gate that fails on mounted-but-unverified. docs/lore.md L-0018.
+- **T136.3 is unblocked and is now the phase's critical path.** The matrix table is ready to drive the GB10 run and every row will log its resolved absolute path.
 
 ### 2026 08 20 -- Change Summary: Wave 6 dispatched, 3 landed; E151 added by founder override; the plan's own remote premise corrected
 
