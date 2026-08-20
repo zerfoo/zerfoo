@@ -155,3 +155,100 @@ func TestQwen3GGUFForwardPass(t *testing.T) {
 	}
 	t.Logf("qwen3 forward pass: %d logits, range %.4f..%.4f", len(data), minV, maxV)
 }
+
+// TestQwen3GPUParity builds the same real Qwen 3 GGUF on the CPU and GPU
+// engines and compares the logits element-by-element. Qwen 3 is the first
+// architecture in the tree combining QK RMSNorm with a head dimension that is
+// not HiddenSize/NumHeads, so the GPU attention path is exercised in a shape
+// combination no existing model covers. Skips when no GPU is present.
+func TestQwen3GPUParity(t *testing.T) {
+	layerreg.RegisterAll()
+	path := qwen3GGUFPath(t)
+
+	ops := numeric.Float32Ops{}
+
+	gmCPU, err := inference.LoadGGUF(path)
+	if err != nil {
+		t.Fatalf("LoadGGUF (cpu): %v", err)
+	}
+	cpuEngine := compute.Engine[float32](compute.NewCPUEngine[float32](ops))
+	cpuGraph, _, err := inference.AutoBuild(gmCPU.Tensors, gmCPU.Config, cpuEngine)
+	if err != nil {
+		t.Fatalf("AutoBuild (cpu): %v", err)
+	}
+
+	gpuEngPtr, err := compute.NewGPUEngine[float32](ops, 0)
+	if err != nil {
+		t.Skipf("GPU not available: %v", err)
+	}
+	gpuEngine := compute.Engine[float32](gpuEngPtr)
+
+	// Load a second copy: the builder uploads/transposes weights in place for
+	// GPU engines, so the CPU graph must not share tensors with it.
+	gmGPU, err := inference.LoadGGUF(path)
+	if err != nil {
+		t.Fatalf("LoadGGUF (gpu): %v", err)
+	}
+	gpuGraph, _, err := inference.AutoBuild(gmGPU.Tensors, gmGPU.Config, gpuEngine)
+	if err != nil {
+		t.Fatalf("AutoBuild (gpu): %v", err)
+	}
+
+	tokenIDs := []float32{9707, 11, 1879, 0, 358}
+	cpuIn, err := tensor.New([]int{1, len(tokenIDs)}, tokenIDs)
+	if err != nil {
+		t.Fatalf("cpu input: %v", err)
+	}
+	gpuIn, err := tensor.New([]int{1, len(tokenIDs)}, tokenIDs)
+	if err != nil {
+		t.Fatalf("gpu input: %v", err)
+	}
+
+	cpuOut, err := cpuGraph.Forward(context.Background(), cpuIn)
+	if err != nil {
+		t.Fatalf("cpu forward: %v", err)
+	}
+	gpuOut, err := gpuGraph.Forward(context.Background(), gpuIn)
+	if err != nil {
+		t.Fatalf("gpu forward: %v", err)
+	}
+
+	cpuData := cpuOut.Data()
+	gpuData := gpuOut.Data()
+	if len(cpuData) != len(gpuData) {
+		t.Fatalf("length mismatch: cpu=%d gpu=%d", len(cpuData), len(gpuData))
+	}
+
+	maxDiff, maxIdx := float64(0), 0
+	for i := range cpuData {
+		d := math.Abs(float64(cpuData[i] - gpuData[i]))
+		if d > maxDiff {
+			maxDiff, maxIdx = d, i
+		}
+	}
+
+	// Compare the decisions, not just the numbers: greedy decode only cares
+	// which logit is largest.
+	argmax := func(v []float32) int {
+		best := 0
+		for i := range v {
+			if v[i] > v[best] {
+				best = i
+			}
+		}
+
+		return best
+	}
+	cpuTop, gpuTop := argmax(cpuData), argmax(gpuData)
+
+	t.Logf("qwen3 CPU/GPU parity: len=%d maxDiff=%.6e at idx=%d (cpu=%.6f gpu=%.6f)",
+		len(cpuData), maxDiff, maxIdx, cpuData[maxIdx], gpuData[maxIdx])
+	t.Logf("qwen3 argmax: cpu=%d gpu=%d", cpuTop, gpuTop)
+
+	if cpuTop != gpuTop {
+		t.Errorf("CPU and GPU disagree on the greedy token: cpu=%d gpu=%d", cpuTop, gpuTop)
+	}
+	if maxDiff > 0.1 {
+		t.Errorf("maxDiff=%.4f exceeds threshold 0.1", maxDiff)
+	}
+}
