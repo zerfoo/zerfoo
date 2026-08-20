@@ -100,6 +100,9 @@ var (
 		"llama-3-8b-q4":  "meta-llama/Llama-3.1-8B-Instruct-GGUF",
 		"mistral-7b-q4":  "mistralai/Mistral-7B-Instruct-v0.3-GGUF",
 		"qwen-2.5-7b-q4": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+		"qwen-3-0.6b":    "Qwen/Qwen3-0.6B-GGUF",
+		"qwen-3-4b":      "Qwen/Qwen3-4B-GGUF",
+		"qwen-3-8b":      "Qwen/Qwen3-8B-GGUF",
 	}
 )
 
