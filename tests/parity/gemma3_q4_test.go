@@ -22,6 +22,7 @@ var gemma3Q4Config = testutil.ModelParityConfig{
 	ZMFEnvVar:      "GEMMA3_Q4_ZMF_PATH",
 	ModelDirEnvVar: "GEMMA3_Q4_MODEL_DIR",
 	ModelID:        "gemma-3-q4",
+	MatrixRow:      "gemma3-q4",
 	MinVocabSize:   256000,
 }
 

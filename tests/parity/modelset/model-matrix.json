@@ -1,0 +1,181 @@
+{
+  "comment": [
+    "Verified-model matrix row -> exact GGUF filename table (T136.6).",
+    "",
+    "This table is the ONLY way the parity suite is allowed to turn a matrix row into",
+    "a GGUF file. Directory scanning ('first *.gguf in the directory', the findGGUF",
+    "pattern at inference/inference.go:317) is banned for parity/bench because the",
+    "flagship models are staged FLAT in /var/lib/zerfoo/models: every row pointed at",
+    "that directory resolved to the alphabetically-first file and the whole matrix",
+    "went green while proving nothing. See docs/lore.md L-0018.",
+    "",
+    "Fields:",
+    "  row            stable matrix-row key; referenced by ModelParityConfig.MatrixRow",
+    "  label          human label, matches docs/verified-models.md",
+    "  model_dir_env  env var naming the DIRECTORY the pinned file lives in",
+    "  file           exact filename, joined onto the directory; \"\" = not staged",
+    "  architecture   expected GGUF general.architecture (asserted per row)",
+    "  gguf_name      expected GGUF general.name when the file declares one",
+    "  size_bytes     expected file size when pinned; 0 = unchecked",
+    "",
+    "architecture is corroboration, NOT identity: 'llama' covers both Llama 3.2 and",
+    "Mistral, and 'qwen2' covers both Qwen2-7B and the DeepSeek-R1 distill, so an",
+    "architecture-only check would still have passed the vacuous matrix. The exact",
+    "path is the identity assertion."
+  ],
+  "rows": [
+    {
+      "row": "gemma3-1b",
+      "label": "Gemma 3 1B",
+      "model_dir_env": "GEMMA3_MODEL_DIR",
+      "file": "gemma3-1b-it-Q4_K_M.gguf",
+      "architecture": "gemma3",
+      "gguf_name": "",
+      "size_bytes": 815310432
+    },
+    {
+      "row": "gemma3-4b",
+      "label": "Gemma 3 4B",
+      "model_dir_env": "GEMMA3_4B_MODEL_DIR",
+      "file": "gemma-3-4b-it-Q4_K_M.gguf",
+      "architecture": "gemma3",
+      "gguf_name": "Gemma 3 4b It",
+      "size_bytes": 2489757856
+    },
+    {
+      "row": "gemma4-e2b-q4",
+      "label": "Gemma 4 E2B (Q4_K_M)",
+      "model_dir_env": "GEMMA4_MODEL_DIR",
+      "file": "gemma-4-E2B-it-Q4_K_M.gguf",
+      "architecture": "gemma4",
+      "gguf_name": "Gemma-4-E2B-It",
+      "size_bytes": 3106735776
+    },
+    {
+      "row": "gemma4-e2b-q8",
+      "label": "Gemma 4 E2B (Q8_0)",
+      "model_dir_env": "GEMMA4_Q8_MODEL_DIR",
+      "file": "gemma-4-E2B-it-Q8_0.gguf",
+      "architecture": "gemma4",
+      "gguf_name": "",
+      "size_bytes": 7162394016
+    },
+    {
+      "row": "llama3-3b",
+      "label": "Llama 3.2 3B Instruct",
+      "model_dir_env": "LLAMA3_MODEL_DIR",
+      "file": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+      "architecture": "llama",
+      "gguf_name": "Llama 3.2 3B Instruct",
+      "size_bytes": 2019377696
+    },
+    {
+      "row": "mistral-7b",
+      "label": "Mistral 7B Instruct v0.3",
+      "model_dir_env": "MISTRAL_MODEL_DIR",
+      "file": "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+      "architecture": "llama",
+      "gguf_name": "Mistral-7B-Instruct-v0.3",
+      "size_bytes": 4372812000
+    },
+    {
+      "row": "phi4",
+      "label": "Phi-4",
+      "model_dir_env": "PHI4_MODEL_DIR",
+      "file": "phi-4-Q4_K.gguf",
+      "architecture": "phi3",
+      "gguf_name": "Phi 4",
+      "size_bytes": 9053114560
+    },
+    {
+      "row": "qwen2-7b",
+      "label": "Qwen 2 7B Instruct",
+      "model_dir_env": "QWEN25_MODEL_DIR",
+      "file": "qwen2-7b-instruct-q4_k_m.gguf",
+      "architecture": "qwen2",
+      "gguf_name": "qwen2-7b-instruct",
+      "size_bytes": 4683071264
+    },
+    {
+      "row": "deepseek-r1-distill-qwen-1.5b",
+      "label": "DeepSeek-R1-Distill-Qwen 1.5B (qwen2 builder)",
+      "model_dir_env": "DEEPSEEK_R1_QWEN_MODEL_DIR",
+      "file": "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+      "architecture": "qwen2",
+      "gguf_name": "DeepSeek R1 Distill Qwen 1.5B",
+      "size_bytes": 1117320800
+    },
+    {
+      "row": "deepseek-v3",
+      "label": "DeepSeek-V3",
+      "model_dir_env": "DEEPSEEK_MODEL_DIR",
+      "file": "",
+      "architecture": "deepseek_v3",
+      "gguf_name": "",
+      "size_bytes": 0
+    },
+    {
+      "row": "llama4-scout",
+      "label": "Llama 4 Scout",
+      "model_dir_env": "LLAMA4_MODEL_DIR",
+      "file": "",
+      "architecture": "llama4",
+      "gguf_name": "",
+      "size_bytes": 0
+    },
+    {
+      "row": "gemma3n",
+      "label": "Gemma 3n",
+      "model_dir_env": "GEMMA3N_MODEL_DIR",
+      "file": "",
+      "architecture": "gemma3n",
+      "gguf_name": "",
+      "size_bytes": 0
+    },
+    {
+      "row": "gemma3-q4",
+      "label": "Gemma 3 (Q4 fixture)",
+      "model_dir_env": "GEMMA3_Q4_MODEL_DIR",
+      "file": "",
+      "architecture": "gemma3",
+      "gguf_name": "",
+      "size_bytes": 0
+    },
+    {
+      "row": "mixtral",
+      "label": "Mixtral 8x7B",
+      "model_dir_env": "MIXTRAL_MODEL_DIR",
+      "file": "",
+      "architecture": "llama",
+      "gguf_name": "",
+      "size_bytes": 0
+    },
+    {
+      "row": "commandr",
+      "label": "Command R",
+      "model_dir_env": "COMMANDR_MODEL_DIR",
+      "file": "",
+      "architecture": "command-r",
+      "gguf_name": "",
+      "size_bytes": 0
+    },
+    {
+      "row": "falcon",
+      "label": "Falcon",
+      "model_dir_env": "FALCON_MODEL_DIR",
+      "file": "",
+      "architecture": "falcon",
+      "gguf_name": "",
+      "size_bytes": 0
+    },
+    {
+      "row": "rwkv",
+      "label": "RWKV",
+      "model_dir_env": "RWKV_MODEL_DIR",
+      "file": "",
+      "architecture": "rwkv",
+      "gguf_name": "",
+      "size_bytes": 0
+    }
+  ]
+}

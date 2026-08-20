@@ -13,6 +13,7 @@ var rwkvConfig = testutil.ModelParityConfig{
 	ZMFEnvVar:      "RWKV_ZMF_PATH",
 	ModelDirEnvVar: "RWKV_MODEL_DIR",
 	ModelID:        "rwkv",
+	MatrixRow:      "rwkv",
 	MinVocabSize:   60000, // RWKV vocab: 65536
 }
 

@@ -13,6 +13,7 @@ var gemma3nConfig = testutil.ModelParityConfig{
 	ZMFEnvVar:      "GEMMA3N_ZMF_PATH",
 	ModelDirEnvVar: "GEMMA3N_MODEL_DIR",
 	ModelID:        "gemma3n",
+	MatrixRow:      "gemma3n",
 	MinVocabSize:   256000, // Gemma 3n vocab: 262144 (same tokenizer as Gemma 3)
 }
 

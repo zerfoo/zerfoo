@@ -39,20 +39,24 @@ const pjrtTolerance = 1e-4
 
 // pjrtParityCase describes one model fixture under parity comparison.
 type pjrtParityCase struct {
-	name           string
-	modelID        string
-	modelDirEnvVar string
-	prompt         string
+	name      string
+	modelID   string
+	matrixRow string
+	prompt    string
 }
 
 // pjrtParityCases lists the fixtures the parity matrix should cover. Kept
 // table-driven so additional models slot in without touching control flow.
+//
+// matrixRow, not a directory: when this scaffold is wired up it must resolve
+// its GGUF through testutil.ResolveMatrixModelOrSkip. Resolving from a
+// directory picks the first .gguf in it (see docs/lore.md L-0018).
 var pjrtParityCases = []pjrtParityCase{
 	{
-		name:           "gemma3_1b",
-		modelID:        "gemma-3",
-		modelDirEnvVar: "GEMMA3_MODEL_DIR",
-		prompt:         "The capital of France is",
+		name:      "gemma3_1b",
+		modelID:   "gemma-3",
+		matrixRow: "gemma3-1b",
+		prompt:    "The capital of France is",
 	},
 }
 
@@ -77,11 +81,9 @@ func TestPJRTCPUParity(t *testing.T) {
 	for _, tc := range pjrtParityCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			modelDir := os.Getenv(tc.modelDirEnvVar)
-			if modelDir == "" {
-				t.Skipf("%s not set; skipping", tc.modelDirEnvVar)
-			}
-			// When a logits hook lands, replace this body with:
+			// When a logits hook lands, resolve the model with
+			//   path := testutil.ResolveMatrixModelOrSkip(t, cfg)  // cfg.MatrixRow = tc.matrixRow
+			// and load with inference.LoadFile(path). Then replace this body with:
 			//   nativeLogits := <load without WithPJRT> -> first-token logits
 			//   pjrtLogits   := <load with    WithPJRT(plugin)> -> first-token logits
 			//   compare element-wise with pjrtTolerance.

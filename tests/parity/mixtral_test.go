@@ -13,6 +13,7 @@ var mixtralConfig = testutil.ModelParityConfig{
 	ZMFEnvVar:      "MIXTRAL_ZMF_PATH",
 	ModelDirEnvVar: "MIXTRAL_MODEL_DIR",
 	ModelID:        "mixtral",
+	MatrixRow:      "mixtral",
 	MinVocabSize:   30000, // Mixtral vocab: 32000 (same tokenizer as Mistral)
 }
 

@@ -13,6 +13,7 @@ var phi4Config = testutil.ModelParityConfig{
 	ZMFEnvVar:      "PHI4_ZMF_PATH",
 	ModelDirEnvVar: "PHI4_MODEL_DIR",
 	ModelID:        "phi-3",
+	MatrixRow:      "phi4",
 	MinVocabSize:   30000, // Phi-3-mini vocab: 32064
 }
 

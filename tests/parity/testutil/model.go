@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/zerfoo/zerfoo/generate"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/model/registry"
+	"github.com/zerfoo/zerfoo/tests/parity/modelset"
 	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -180,6 +182,12 @@ type ModelParityConfig struct {
 	ModelID string
 	// MinVocabSize is the minimum expected vocabulary dimension.
 	MinVocabSize int
+	// MatrixRow is the verified-model matrix row key
+	// (tests/parity/modelset/model-matrix.json) that pins the exact GGUF
+	// filename for this suite. It is REQUIRED: without it the suite would
+	// have to scan the model directory, and the models are staged flat, so
+	// every suite would silently load the same file. See docs/lore.md L-0018.
+	MatrixRow string
 }
 
 // RunModelForwardPass runs the forward pass test for a model family.
@@ -202,14 +210,83 @@ func RunModelGreedyDecode(t *testing.T, cfg ModelParityConfig) {
 	RunGreedyDecodeTest(t, g, []float32{1, 2, 3}, 5)
 }
 
-// RunModelGeneration runs the generation test suite for a model family.
+// RunModelGeneration runs the generation test suite for a model family against
+// the exact GGUF file its matrix row pins, after asserting the resolved file's
+// identity. It never scans a directory for "some .gguf".
 func RunModelGeneration(t *testing.T, cfg ModelParityConfig) {
 	t.Helper()
-	modelDir := ModelDirOrSkip(t, cfg.ModelDirEnvVar, cfg.ZMFEnvVar)
+	modelPath := ResolveMatrixModelOrSkip(t, cfg)
 	RunGenerationTests(t, GenerationTestConfig{
-		ModelID:  cfg.ModelID,
-		ModelDir: modelDir,
+		ModelID:   cfg.ModelID,
+		ModelPath: modelPath,
 	})
+}
+
+// ResolveMatrixModelOrSkip turns a parity config into the absolute path of the
+// one GGUF its matrix row declares, verifying the file's self-reported identity
+// and refusing to let two rows claim the same file.
+//
+// It fails the test (rather than skipping) for anything that would produce a
+// dishonest green: a config without a matrix row, an unknown row, an identity
+// mismatch, or a duplicate resolution. It skips only when the model is genuinely
+// not available on this host.
+func ResolveMatrixModelOrSkip(t *testing.T, cfg ModelParityConfig) string {
+	t.Helper()
+
+	if cfg.MatrixRow == "" {
+		t.Fatalf("%s: ModelParityConfig.MatrixRow is empty; every parity suite must pin "+
+			"a matrix row in tests/parity/modelset/model-matrix.json", cfg.Name)
+	}
+
+	matrix, err := modelset.Default()
+	if err != nil {
+		t.Fatalf("load verified-model matrix: %v", err)
+	}
+
+	row, err := matrix.Row(cfg.MatrixRow)
+	if err != nil {
+		t.Fatalf("%s: %v", cfg.Name, err)
+	}
+	if !row.Staged() {
+		t.Skipf("%s: matrix row %q pins no GGUF file (model not staged); "+
+			"skipping instead of scanning a directory", cfg.Name, row.Key)
+	}
+
+	baseDir, err := matrix.BaseDir(row.Key)
+	if err != nil {
+		t.Skipf("%s: %v", cfg.Name, err)
+	}
+
+	path, err := matrix.Resolve(row.Key, baseDir)
+	if err != nil {
+		if errors.Is(err, modelset.ErrFileMissing) {
+			t.Skipf("%s: %v", cfg.Name, err)
+		}
+		t.Fatalf("%s: %v", cfg.Name, err)
+	}
+
+	AssertModelIdentity(t, row, path)
+
+	return path
+}
+
+// AssertModelIdentity verifies that path is the file row declares and that the
+// GGUF header agrees, then claims the file for this row process-wide.
+func AssertModelIdentity(t *testing.T, row modelset.Row, path string) {
+	t.Helper()
+
+	id, err := modelset.Inspect(path)
+	if err != nil {
+		t.Fatalf("row %q: %v", row.Key, err)
+	}
+	if err := row.VerifyIdentity(id); err != nil {
+		t.Fatalf("row %q identity check failed: %v", row.Key, err)
+	}
+	if err := modelset.RecordResolution(row.Key, path); err != nil {
+		t.Fatalf("row %q: %v", row.Key, err)
+	}
+	t.Logf("matrix row %q -> %s (general.architecture=%q general.name=%q size=%d)",
+		row.Key, id.Path, id.Architecture, id.Name, id.SizeBytes)
 }
 
 // EnvOrSkip returns the value of the named env var, or skips the test.
@@ -223,6 +300,11 @@ func EnvOrSkip(t *testing.T, key string) string {
 }
 
 // ModelDirOrSkip resolves a model directory from env vars, or skips the test.
+//
+// Deprecated: a directory alone is not enough to identify a model, because the
+// flagship GGUFs are staged flat in one directory and inference.Load resolves a
+// directory through findGGUF (first .gguf wins). Parity and bench code must use
+// ResolveMatrixModelOrSkip, which returns an exact, identity-checked file path.
 func ModelDirOrSkip(t *testing.T, dirEnvVar, zmfEnvVar string) string {
 	t.Helper()
 	if d := os.Getenv(dirEnvVar); d != "" {
@@ -237,23 +319,26 @@ func ModelDirOrSkip(t *testing.T, dirEnvVar, zmfEnvVar string) string {
 
 // GenerationTestConfig holds parameters for generation tests via inference API.
 type GenerationTestConfig struct {
-	ModelID  string
-	ModelDir string
+	// ModelID labels the model under test.
+	ModelID string
+	// ModelPath is the absolute path of the exact GGUF file to load. It is a
+	// FILE, never a directory: directory-based loading funnels through
+	// inference.findGGUF, which returns the first .gguf it finds.
+	ModelPath string
 }
 
 // RunGenerationTests runs greedy, stream, and chat tests on an inference.Model.
 func RunGenerationTests(t *testing.T, cfg GenerationTestConfig) {
 	t.Helper()
 
-	reg := &DirRegistry{
-		Models: map[string]*registry.ModelInfo{
-			cfg.ModelID: {ID: cfg.ModelID, Path: cfg.ModelDir},
-		},
+	if cfg.ModelPath == "" {
+		t.Fatal("GenerationTestConfig.ModelPath is empty; parity tests must name an exact GGUF file")
 	}
 
-	mdl, err := inference.Load(cfg.ModelID, inference.WithRegistry(reg))
+	t.Logf("%s: loading %s", cfg.ModelID, cfg.ModelPath)
+	mdl, err := inference.LoadFile(cfg.ModelPath)
 	if err != nil {
-		t.Fatalf("inference.Load failed: %v", err)
+		t.Fatalf("inference.LoadFile(%s) failed: %v", cfg.ModelPath, err)
 	}
 
 	ctx := context.Background()
