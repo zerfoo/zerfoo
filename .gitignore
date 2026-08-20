@@ -39,6 +39,8 @@ GEMINI.md
 
 # Claude Code artifacts
 .claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude-checkpoint.*.md
 docs/updates-archive-*.md
 
 # Build artifacts

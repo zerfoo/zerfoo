@@ -184,13 +184,14 @@
       "cuda-graph",
       "phase-1"
     ],
-    "wiring_status": "PLANNED",
+    "wiring_status": "WIRED",
     "coverage": {
       "interfaces_found": [
         "library"
       ],
       "has_tests": true
-    }
+    },
+    "note": "Delivered: E133 closed 2026-07-03 (PRs #928/#933/#937/#946), fixture green on GB10, gate removed."
   },
   {
     "id": "UC-H2-004",
@@ -220,7 +221,8 @@
         "docs"
       ],
       "has_tests": false
-    }
+    },
+    "note": "Remaining Phase 1 deliverable. T136.6 harness-honesty gate (vacuous-parity hazard) must pass before T136.3 parity runs count. 9 models staged and verified intact 2026-08-14."
   },
   {
     "id": "UC-H2-005",
@@ -244,13 +246,14 @@
       "correctness",
       "phase-1"
     ],
-    "wiring_status": "PLANNED",
+    "wiring_status": "WIRED",
     "coverage": {
       "interfaces_found": [
         "cli"
       ],
-      "has_tests": false
-    }
+      "has_tests": true
+    },
+    "note": "Delivered honestly 2026-08-10: fix candidate refuted, gemma4/gemma4e/gemma4moe demoted to experimental (PRs #980/#985); #766 closed, #757 parked."
   },
   {
     "id": "UC-H2-006",
@@ -272,13 +275,14 @@
       "phase-1",
       "contributor-prereq"
     ],
-    "wiring_status": "PLANNED",
+    "wiring_status": "WIRED",
     "coverage": {
       "interfaces_found": [
         "library"
       ],
-      "has_tests": false
-    }
+      "has_tests": true
+    },
+    "note": "Delivered: ztensor v1.19.1 darwin dlopen guard 2026-07-02; ztensor#171 closed."
   },
   {
     "id": "UC-H2-007",
@@ -303,14 +307,14 @@
       "deep-review-002",
       "untrusted-input"
     ],
-    "wiring_status": "PLANNED",
+    "wiring_status": "WIRED",
     "coverage": {
       "interfaces_found": [
         "library"
       ],
-      "has_tests": false
+      "has_tests": true
     },
-    "note": "deep-review 002 findings F1/F2/F3 + OCI-1/OCI-2 (digest verification, https-only); see docs/deep-reviews/002-full-codebase.md and plan.md E139"
+    "note": "Delivered: E139 + F4 (PRs #945/#940/#951/#949/#968/#972/#978); re-verified in T145.2 2026-08-09."
   },
   {
     "id": "UC-H2-008",
@@ -335,14 +339,14 @@
       "deep-review-002",
       "distributed"
     ],
-    "wiring_status": "PLANNED",
+    "wiring_status": "WIRED",
     "coverage": {
       "interfaces_found": [
         "rpc"
       ],
-      "has_tests": false
+      "has_tests": true
     },
-    "note": "deep-review 002 findings DIST-1/DIST-2; see plan.md E140"
+    "note": "Delivered: E140 (PRs #947/#955/#956) + T145.1 CLI flags (#977); re-verified in T145.2."
   },
   {
     "id": "UC-H2-009",
@@ -367,14 +371,14 @@
       "deep-review-002",
       "native-loading"
     ],
-    "wiring_status": "PLANNED",
+    "wiring_status": "WIRED",
     "coverage": {
       "interfaces_found": [
         "library"
       ],
-      "has_tests": false
+      "has_tests": true
     },
-    "note": "deep-review 002 findings CUDA-1/CUDA-2; see plan.md E141"
+    "note": "Delivered: E141 (PRs #943/#958); re-verified in T145.2."
   },
   {
     "id": "UC-H2-010",
@@ -405,14 +409,14 @@
       "deep-review-002",
       "concurrency"
     ],
-    "wiring_status": "PLANNED",
+    "wiring_status": "WIRED",
     "coverage": {
       "interfaces_found": [
         "api"
       ],
-      "has_tests": false
+      "has_tests": true
     },
-    "note": "deep-review 002 findings CONC-H1/H2/M1/M2/L1; see plan.md E142"
+    "note": "Delivered: E142 (PRs #948/#944/#957/#953/#950); re-verified in T145.2."
   },
   {
     "id": "UC-H2-011",
@@ -438,14 +442,14 @@
       "deep-review-002",
       "http-server"
     ],
-    "wiring_status": "PLANNED",
+    "wiring_status": "WIRED",
     "coverage": {
       "interfaces_found": [
         "api"
       ],
-      "has_tests": false
+      "has_tests": true
     },
-    "note": "deep-review 002 findings SERVE-1/2/3/3b/4/5/6/7, SSRF-1, HF-1; see plan.md E143"
+    "note": "Delivered: E143 (PRs #942/#941/#954/#967/#964/#969/#961/#966/#960/#962); re-verified in T145.2."
   },
   {
     "id": "UC-H2-012",
@@ -470,13 +474,43 @@
       "deep-review-002",
       "supply-chain"
     ],
-    "wiring_status": "PLANNED",
+    "wiring_status": "WIRED",
     "coverage": {
       "interfaces_found": [
         "cli"
       ],
-      "has_tests": false
+      "has_tests": true
     },
-    "note": "deep-review 002 findings CICD-1..6, L1-L3, SLSA; see plan.md E144"
+    "note": "Delivered: E144 (PRs #938/#939/#959/#963/#965/#973/#970); re-verified in T145.2."
+  },
+  {
+    "id": "UC-H2-013",
+    "domain": "trust-evidence",
+    "name": "Public claims never exceed verified evidence",
+    "description": "Every architecture count, performance comparison, and throughput target in README.md, docs/VISION.md, docs/design.md, docs/updates.md, and docs/distribution/ is backed by docs/verified-models.md or docs/benchmarks.md, or removed. VISION.md throughput targets amended per ADR-093 (GB10 roofline ~257 tok/s; 500+ banned).",
+    "actor": "prospective_user",
+    "preconditions": [
+      "verified-model matrix published (UC-H2-004)"
+    ],
+    "interfaces": [
+      {
+        "type": "docs",
+        "path": "README.md, docs/VISION.md, docs/updates.md"
+      }
+    ],
+    "expected_outcome": "Claim-consistency sweep (T146.2) finds zero unbacked claims; sweep command recorded for reuse at Phase 2 launch.",
+    "priority": "P0",
+    "tags": [
+      "trust",
+      "phase-1",
+      "adr-093"
+    ],
+    "wiring_status": "PLANNED",
+    "coverage": {
+      "interfaces_found": [
+        "docs"
+      ],
+      "has_tests": false
+    }
   }
 ]
