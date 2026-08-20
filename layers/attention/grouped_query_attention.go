@@ -443,6 +443,31 @@ func (gqa *GroupedQueryAttention[T]) Parameters() []*graph.Parameter[T] {
 	return params
 }
 
+// cachedPositions returns the number of positions already cached for layer,
+// which is the absolute RoPE position of the first token of the current chunk.
+//
+// It must never be derived from cache.SeqLen(): that reports layer 0's cursor,
+// and layer 0 has already appended the current chunk by the time layers 1..N-1
+// run, so every layer but the first would rotate its Q/K by +chunkLen. The
+// shift is uniform inside one pass (and RoPE is relative, so a pure prefill or
+// a pure token-at-a-time decode still looks right), but at the prefill->decode
+// transition the decode query is shifted by +1 against keys cached with a shift
+// of +promptLen and attention scores go to garbage — zerfoo#990.
+//
+// Caches that cannot report per-layer lengths fall back to the length of the
+// keys they have already stored for this layer, which is the same quantity.
+func cachedPositions[T tensor.Numeric](cache generate.CacheProvider[T], layer int) int {
+	if p, ok := cache.(generate.LayerSeqLenProvider); ok {
+		return p.LayerSeqLen(layer)
+	}
+	if kv, ok := cache.Get(layer); ok && kv.Key != nil {
+		if shape := kv.Key.Shape(); len(shape) == 3 {
+			return shape[1]
+		}
+	}
+	return 0
+}
+
 // Forward computes the grouped query attention.
 func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
 	if len(inputs) < 1 {
@@ -607,7 +632,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 			if cosAngles == nil && angleErr == nil {
 				posOffset := 0
 				if hasCache {
-					posOffset = cache.SeqLen()
+					posOffset = cachedPositions(cache, gqa.LayerIndex)
 				}
 				cosAngles, sinAngles, halfRotary, angleErr = gqa.rope.GetAngles(posOffset, 1)
 			}
@@ -771,7 +796,7 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 					}
 				}
 				if !gpuRoPEApplied {
-					gqa.rope.SetPositionOffset(cache.SeqLen())
+					gqa.rope.SetPositionOffset(cachedPositions(cache, gqa.LayerIndex))
 				}
 			} else {
 				gqa.rope.SetPositionOffset(0)
