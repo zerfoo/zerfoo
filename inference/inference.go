@@ -506,7 +506,15 @@ func (m *Model) Generate(ctx context.Context, prompt string, opts ...GenerateOpt
 // the input prompts. If a prompt fails, its corresponding error is non-nil.
 //
 // Concurrency is capped at maxBatchConcurrency (default 8) to prevent
-// resource exhaustion on GPU-backed models.
+// resource exhaustion on GPU-backed models. Each in-flight prompt takes its
+// own session from the pool, so prompts never share KV-cache or position
+// state.
+//
+// Sessions are checked out concurrently but their generations do NOT overlap
+// in time: generate.InferenceSession.Generate holds the Generator's shared
+// graph mutex for the duration of the call because *graph.Graph is not
+// concurrency-safe, so exactly one prompt is inside graph Forward at any
+// instant. Do not write tests that assert batch generations run in parallel.
 //
 // [Deviation: Architectural] Used parallel goroutines instead of shared
 // PagedKV decode — full multi-seq requires deeper Generator refactor.

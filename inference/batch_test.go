@@ -2,7 +2,7 @@ package inference
 
 import (
 	"context"
-	"sync/atomic"
+	"sync"
 	"testing"
 
 	"github.com/zerfoo/zerfoo/generate"
@@ -222,20 +222,27 @@ func TestGenerateBatch_UsesSessionPool(t *testing.T) {
 	}
 }
 
+// TestGenerateBatch_ConcurrentSessions verifies the invariant batch generation
+// actually depends on: every simultaneously in-flight prompt holds its OWN
+// generate.InferenceSession, drawn from and returned to the model's session
+// pool. Session isolation is what keeps one prompt's KV cache and position
+// state out of another's; aliasing two live prompts onto one session, or
+// bypassing the pool entirely, silently corrupts output.
+//
+// It deliberately does NOT assert that generations overlap in wall-clock time.
+// InferenceSession.Generate holds the Generator's shared graph mutex for the
+// whole call because *graph.Graph is not concurrency-safe (see CONC-H1 in
+// speculative_concurrency_test.go), so exactly one generation is inside graph
+// Forward at any instant no matter how many sessions are checked out. An
+// earlier version of this test sampled len(sessionPool) from a spinning
+// goroutine and required a "peak concurrent sessions >= 2" reading; that
+// reading is a scheduling artifact of the moment sampling happened to land,
+// not a property the API provides, and it failed ~70% of runs on main. See
+// docs/lore.md L-0019.
 func TestGenerateBatch_ConcurrentSessions(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Flaky on CI runners due to goroutine scheduling timing")
-	}
-	// Verify that GenerateBatch runs multiple sessions concurrently rather than
-	// serializing through the generator mutex. We use a longer token sequence
-	// (no immediate EOS) so sessions overlap in time, and track peak concurrency
-	// with an atomic counter.
-	//
-	// The test instruments acquireSession/releaseSession indirectly: we give the
-	// model a session pool and enough concurrency, then check that the total
-	// wall-clock time is consistent with parallel execution (i.e., all prompts
-	// produce correct output under -race).
-	m := buildTestModel(t, 8, []int{6, 7, 6, 7, 6, 2}) // longer sequence before EOS
+	// Token 6 = "foo", token 2 = EOS: every generation is exactly two graph
+	// Forward calls, so each result is independent of interleaving.
+	m := buildTestModel(t, 8, []int{6, 2})
 
 	const poolSize = 4
 	pool := make(chan *generate.InferenceSession[float32], poolSize)
@@ -245,66 +252,85 @@ func TestGenerateBatch_ConcurrentSessions(t *testing.T) {
 	m.sessionPool = pool
 	m.maxBatchConcurrency = poolSize
 
-	// Run enough prompts that they must overlap if concurrency > 1.
+	// Part 1: acquireSession never aliases. poolSize holders acquire before any
+	// of them releases -- the arrival barrier makes that ordering deterministic
+	// rather than a scheduling race -- so all poolSize sessions are live at once
+	// and must be distinct.
+	sessions := make([]*generate.InferenceSession[float32], poolSize)
+	var arrived, finished sync.WaitGroup
+	arrived.Add(poolSize)
+	finished.Add(poolSize)
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	// A t.Fatalf below would abandon the holders on <-release; make their exit
+	// path unconditional.
+	t.Cleanup(func() {
+		unblock()
+		finished.Wait()
+	})
+	for i := range poolSize {
+		go func(idx int) {
+			defer finished.Done()
+			sess := m.acquireSession()
+			sessions[idx] = sess
+			arrived.Done()
+			<-release
+			m.releaseSession(sess)
+		}(i)
+	}
+	arrived.Wait()
+
+	seen := make(map[*generate.InferenceSession[float32]]int, poolSize)
+	for i, sess := range sessions {
+		if sess == nil {
+			t.Fatalf("holder %d acquired a nil session", i)
+		}
+		if prev, dup := seen[sess]; dup {
+			t.Fatalf("acquireSession handed the same session to live holders %d and %d", prev, i)
+		}
+		seen[sess] = i
+	}
+	unblock()
+	finished.Wait()
+
+	if got := len(pool); got != poolSize {
+		t.Fatalf("after releasing every holder, pool holds %d sessions, want %d", got, poolSize)
+	}
+
+	// Part 2: GenerateBatch must route every prompt through
+	// acquireSession/releaseSession rather than driving the Generator directly.
+	// Draining the pool first makes that a deterministic observation: a batch
+	// that never touches the pool leaves it empty, a batch that releases
+	// sessions refills it.
+	for range poolSize {
+		<-pool
+	}
+	if got := len(pool); got != 0 {
+		t.Fatalf("pool not drained: %d sessions left", got)
+	}
+
 	const numPrompts = 8
 	prompts := make([]string, numPrompts)
 	for i := range prompts {
 		prompts[i] = "hello"
 	}
 
-	// Track peak concurrent session usage via a wrapper. We wrap acquire/release
-	// by observing pool channel length changes.
-	var peak atomic.Int32
-	var active atomic.Int32
-
-	// Run the batch and observe pool behavior.
-	done := make(chan struct{})
-	var results []string
-	var batchErr error
-	go func() {
-		defer close(done)
-		// Monkey-patch is not possible, so we verify via pool drain observation.
-		results, batchErr = m.GenerateBatch(context.Background(), prompts, WithTemperature(0), WithMaxTokens(10))
-	}()
-
-	// Poll active session count while batch runs.
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				// Pool capacity minus current pool length = sessions checked out.
-				checkedOut := int32(poolSize) - int32(len(pool))
-				if checkedOut > 0 {
-					active.Store(checkedOut)
-					for {
-						old := peak.Load()
-						if checkedOut <= old || peak.CompareAndSwap(old, checkedOut) {
-							break
-						}
-					}
-				}
-			}
-		}
-	}()
-
-	<-done
-	if batchErr != nil {
-		t.Fatalf("unexpected error: %v", batchErr)
+	results, err := m.GenerateBatch(context.Background(), prompts, WithTemperature(0), WithMaxTokens(10))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(results) != numPrompts {
 		t.Fatalf("got %d results, want %d", len(results), numPrompts)
 	}
+	// Cross-session state contamination shows up here as a wrong or empty
+	// string; -race additionally catches unsynchronized access to the shared
+	// graph node.
 	for i, r := range results {
-		if r == "" {
-			t.Errorf("results[%d] is empty", i)
+		if r != "foo" {
+			t.Errorf("results[%d] = %q, want %q", i, r, "foo")
 		}
 	}
-
-	// With poolSize=4 and 8 prompts, we expect at least 2 concurrent sessions.
-	// The race detector will also catch any shared-state issues.
-	if p := peak.Load(); p < 2 {
-		t.Errorf("peak concurrent sessions = %d, want >= 2 (sessions should run concurrently)", p)
+	if len(pool) == 0 {
+		t.Error("session pool still empty after GenerateBatch: no session was returned via releaseSession, so the batch bypassed the session pool")
 	}
 }
