@@ -59,6 +59,7 @@ from GGUF metadata via the AutoBuilder.
 | Mistral | GGUF | Text decoder (sliding window) | Working |
 | Mixtral | GGUF | MoE text decoder | Working |
 | Qwen 2 | GGUF | Text decoder (attention bias) | Working |
+| Qwen 3 (dense) | GGUF | Text decoder (QK norm, no attn bias) | Working (forward pass verified; decode not bit-exact) |
 | Phi-3/4 | GGUF | Text decoder (partial RoPE) | Working |
 | DeepSeek V3 | GGUF | MoE text decoder (MLA) | Working |
 | Command R | GGUF | Text decoder | Working |
@@ -1395,6 +1396,7 @@ routing patterns that are handled through the config registry and layer builders
 | LLaMA 3 | GQA | Standard | RMSNorm | No | `llama` |
 | Mistral | GQA | Standard | RMSNorm | No | `mistral` |
 | Qwen 2.5 | GQA | YaRN scaling | RMSNorm | No | `qwen2` |
+| Qwen 3 | GQA | Standard (theta 1M) | RMSNorm + QK norm | No | `qwen3` |
 | Phi-4 | GQA | Partial (0.75) | LayerNorm | No | `phi` |
 | DeepSeek V3 | MLA | Standard | RMSNorm | Shared expert | `deepseek` |
 
