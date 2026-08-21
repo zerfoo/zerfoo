@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.60.0](https://github.com/zerfoo/zerfoo/compare/v1.59.0...v1.60.0) (2026-08-21)
+
+
+### Features
+
+* **generate:** add CacheProvider.LayerSeqLen so attention can read its own layer's cursor ([b14cd93](https://github.com/zerfoo/zerfoo/commit/b14cd938672ad93ad2761a3b1af03af326783e23))
+* **inference:** add Qwen 3 dense architecture support ([f7031d9](https://github.com/zerfoo/zerfoo/commit/f7031d9cf30f54d15f8dc2a519e2869885214218))
+* **inference:** add Qwen 3 GGUF model aliases ([e12bd1c](https://github.com/zerfoo/zerfoo/commit/e12bd1c68d0ba5316910594cfb98f7ceb14dfa73))
+
+
+### Bug Fixes
+
+* **generate:** use one batch-major layout throughout TensorCache ([5de52da](https://github.com/zerfoo/zerfoo/commit/5de52da409e79b7d95357dbe944fc77a570d09fe)), closes [#981](https://github.com/zerfoo/zerfoo/issues/981)
+* **layers:** take the RoPE position offset from the layer's own cache cursor ([865c310](https://github.com/zerfoo/zerfoo/commit/865c310ed445e871caf70b50afbd87c4deaeddcf))
+* **parity:** resolve each matrix row to its own GGUF file, not the first in the directory ([00a52f9](https://github.com/zerfoo/zerfoo/commit/00a52f9666a812dbf8948d2fa0213b64036d79ff))
+
 ## [1.59.0](https://github.com/zerfoo/zerfoo/compare/v1.58.0...v1.59.0) (2026-08-10)
 
 
