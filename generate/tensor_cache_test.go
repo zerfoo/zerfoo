@@ -705,6 +705,258 @@ func TestTensorCache_FP16_GPU_MultiHead_PrefillAndDecode(t *testing.T) {
 	}
 }
 
+// kvFixture builds a [heads, tokens, dim] block of pairwise-distinct values
+// starting at base. Distinctness is what makes a layout test able to fail: if
+// two cached elements shared a value, a misplaced token could still satisfy
+// the assertion (see docs/lore.md L-0009).
+func kvFixture(base, heads, tokens, dim int) []float32 {
+	out := make([]float32, heads*tokens*dim)
+	for i := range out {
+		out[i] = float32(base + i)
+	}
+	return out
+}
+
+// assertDistinct fails if want contains a repeated value, which would make the
+// caller's layout assertion satisfiable by the wrong data.
+func assertDistinct(t *testing.T, name string, want []float32) {
+	t.Helper()
+	seen := make(map[float32]int, len(want))
+	for i, v := range want {
+		if j, dup := seen[v]; dup {
+			t.Fatalf("%s is not position-discriminating: want[%d] == want[%d] == %v; "+
+				"a layout bug could satisfy this assertion", name, j, i, v)
+		}
+		seen[v] = i
+	}
+}
+
+// wantHeadMajor returns the expected contiguous [heads, tokens, dim] readback
+// after appending the given per-step fixtures, i.e. every head's tokens laid
+// out back to back in append order. This is the layout TensorCache.Get
+// documents and the layout KVCache.Get produces.
+func wantHeadMajor(heads, dim int, steps [][]float32, stepTokens []int) []float32 {
+	total := 0
+	for _, n := range stepTokens {
+		total += n
+	}
+	out := make([]float32, 0, heads*total*dim)
+	for h := range heads {
+		for s, data := range steps {
+			n := stepTokens[s]
+			off := h * n * dim
+			out = append(out, data[off:off+n*dim]...)
+		}
+	}
+	return out
+}
+
+// maxAbsDiff reports the largest elementwise gap between got and want, and the
+// index where it occurs. Length mismatch is reported as index -1.
+func maxAbsDiff(got, want []float32) (float32, int) {
+	if len(got) != len(want) {
+		return -1, -1
+	}
+	var worst float32
+	idx := 0
+	for i := range want {
+		d := got[i] - want[i]
+		if d < 0 {
+			d = -d
+		}
+		if d > worst {
+			worst, idx = d, i
+		}
+	}
+	return worst, idx
+}
+
+// TestTensorCache_MultiHeadStridedLayout is the regression test for #981.
+//
+// TensorCache allocates [batch, maxSeqLen, dim] but used to append at a flat
+// token-major offset (seqLen*dim*batch) and read back a compacted head-major
+// view. The three layouts coincide only at batch == 1, so the defect stayed
+// invisible until GroupedQueryAttention folded numKVHeads > 1 into the batch
+// axis, at which point a decode append landed in the wrong head's region.
+//
+// The test drives a multi-head prefill plus several single-token decodes and
+// checks the readback against both an analytically-constructed expectation and
+// KVCache, the reference implementation the layout is meant to match.
+func TestTensorCache_MultiHeadStridedLayout(t *testing.T) {
+	const (
+		heads     = 3
+		dim       = 4
+		maxSeqLen = 16
+	)
+
+	stepTokens := []int{3, 1, 1, 1}
+	kSteps := make([][]float32, len(stepTokens))
+	vSteps := make([][]float32, len(stepTokens))
+	for i, n := range stepTokens {
+		kSteps[i] = kvFixture(1+i*1000, heads, n, dim)
+		vSteps[i] = kvFixture(500001+i*1000, heads, n, dim)
+	}
+
+	wantK := wantHeadMajor(heads, dim, kSteps, stepTokens)
+	wantV := wantHeadMajor(heads, dim, vSteps, stepTokens)
+	assertDistinct(t, "wantK", wantK)
+	assertDistinct(t, "wantV", wantV)
+
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 1, maxSeqLen)
+	ref := NewKVCache[float32](1, maxSeqLen)
+
+	cursor := 0
+	for i, n := range stepTokens {
+		shape := []int{heads, n, dim}
+		if err := cache.Update(0, makeTensor(t, shape, kSteps[i]), makeTensor(t, shape, vSteps[i])); err != nil {
+			t.Fatalf("step %d: TensorCache.Update: %v", i, err)
+		}
+		if err := ref.Update(0, makeTensor(t, shape, kSteps[i]), makeTensor(t, shape, vSteps[i])); err != nil {
+			t.Fatalf("step %d: KVCache.Update: %v", i, err)
+		}
+		cursor += n
+
+		if got := cache.SeqLen(); got != cursor {
+			t.Fatalf("step %d: SeqLen = %d, want %d", i, got, cursor)
+		}
+
+		lkv, ok := cache.Get(0)
+		if !ok {
+			t.Fatalf("step %d: Get(0) returned false", i)
+		}
+		if got := lkv.Key.Shape(); len(got) != 3 || got[0] != heads || got[1] != cursor || got[2] != dim {
+			t.Fatalf("step %d: Key shape = %v, want [%d %d %d]", i, got, heads, cursor, dim)
+		}
+
+		// Expected readback is the head-major prefix of the full expectation:
+		// head h occupies [h*cursor*dim, (h+1)*cursor*dim) once compacted.
+		expK := make([]float32, 0, heads*cursor*dim)
+		expV := make([]float32, 0, heads*cursor*dim)
+		full := len(wantK) / heads
+		for h := range heads {
+			expK = append(expK, wantK[h*full:h*full+cursor*dim]...)
+			expV = append(expV, wantV[h*full:h*full+cursor*dim]...)
+		}
+
+		if d, idx := maxAbsDiff(lkv.Key.Data(), expK); d != 0 {
+			t.Errorf("step %d: Key layout wrong: maxAbsDiff=%v at index %d (got %v, want %v)",
+				i, d, idx, lkv.Key.Data(), expK)
+		}
+		if d, idx := maxAbsDiff(lkv.Value.Data(), expV); d != 0 {
+			t.Errorf("step %d: Value layout wrong: maxAbsDiff=%v at index %d (got %v, want %v)",
+				i, d, idx, lkv.Value.Data(), expV)
+		}
+
+		// Differential check against KVCache, which implements the same
+		// [batch, maxSeqLen, dim] layout and is the reference for this fix.
+		refKV, ok := ref.Get(0)
+		if !ok {
+			t.Fatalf("step %d: KVCache.Get(0) returned false", i)
+		}
+		if d, idx := maxAbsDiff(lkv.Key.Data(), refKV.Key.Data()); d != 0 {
+			t.Errorf("step %d: Key diverges from KVCache: maxAbsDiff=%v at index %d", i, d, idx)
+		}
+		if d, idx := maxAbsDiff(lkv.Value.Data(), refKV.Value.Data()); d != 0 {
+			t.Errorf("step %d: Value diverges from KVCache: maxAbsDiff=%v at index %d", i, d, idx)
+		}
+	}
+}
+
+// TestTensorCache_MultiHeadStridedLayout_AfterTruncate checks that rolling the
+// cursor back and re-appending keeps each head's tokens in that head's own
+// region rather than sliding into a neighbour's.
+func TestTensorCache_MultiHeadStridedLayout_AfterTruncate(t *testing.T) {
+	const (
+		heads     = 2
+		dim       = 3
+		maxSeqLen = 8
+	)
+
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 1, maxSeqLen)
+
+	prefill := kvFixture(1, heads, 3, dim)
+	if err := cache.Update(0, makeTensor(t, []int{heads, 3, dim}, prefill), makeTensor(t, []int{heads, 3, dim}, prefill)); err != nil {
+		t.Fatalf("prefill: %v", err)
+	}
+
+	cache.Truncate(2)
+
+	replaced := kvFixture(90001, heads, 1, dim)
+	if err := cache.Update(0, makeTensor(t, []int{heads, 1, dim}, replaced), makeTensor(t, []int{heads, 1, dim}, replaced)); err != nil {
+		t.Fatalf("re-append: %v", err)
+	}
+
+	// Head h keeps prefill tokens 0-1, then the re-appended token at slot 2.
+	exp := make([]float32, 0, heads*3*dim)
+	for h := range heads {
+		exp = append(exp, prefill[h*3*dim:h*3*dim+2*dim]...)
+		exp = append(exp, replaced[h*dim:(h+1)*dim]...)
+	}
+	assertDistinct(t, "exp", exp)
+
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) returned false")
+	}
+	if d, idx := maxAbsDiff(lkv.Key.Data(), exp); d != 0 {
+		t.Errorf("Key layout wrong after Truncate: maxAbsDiff=%v at index %d (got %v, want %v)",
+			d, idx, lkv.Key.Data(), exp)
+	}
+}
+
+// TestTensorCache_FP16_MultiHeadStridedLayout is the FP16/GPU counterpart of
+// TestTensorCache_MultiHeadStridedLayout. It skips when no GPU is available.
+func TestTensorCache_FP16_MultiHeadStridedLayout(t *testing.T) {
+	const (
+		heads     = 3
+		dim       = 4
+		maxSeqLen = 16
+	)
+
+	stepTokens := []int{3, 1, 1}
+	kSteps := make([][]float32, len(stepTokens))
+	for i, n := range stepTokens {
+		// Keep values small: FP16 has 11 bits of mantissa, so integers above
+		// 2048 are no longer exactly representable.
+		kSteps[i] = kvFixture(1+i*100, heads, n, dim)
+	}
+
+	wantK := wantHeadMajor(heads, dim, kSteps, stepTokens)
+	assertDistinct(t, "wantK", wantK)
+	for _, v := range wantK {
+		if v > 2048 {
+			t.Fatalf("fixture value %v exceeds exact FP16 integer range", v)
+		}
+	}
+
+	eng := compute.NewCPUEngine(numeric.Float32Ops{})
+	cache := NewTensorCache[float32](eng, 1, maxSeqLen, WithKVDtype("fp16"))
+
+	cursor := 0
+	for i, n := range stepTokens {
+		shape := []int{heads, n, dim}
+		k := makeGPUTensor(t, shape, kSteps[i])
+		if err := cache.Update(0, k, k); err != nil {
+			t.Fatalf("step %d: Update: %v", i, err)
+		}
+		cursor += n
+	}
+	if got := cache.SeqLen(); got != cursor {
+		t.Fatalf("SeqLen = %d, want %d", got, cursor)
+	}
+
+	lkv, ok := cache.Get(0)
+	if !ok {
+		t.Fatal("Get(0) returned false")
+	}
+	if d, idx := maxAbsDiff(lkv.Key.Data(), wantK); d > 0.01 {
+		t.Errorf("FP16 Key layout wrong: maxAbsDiff=%v at index %d (got %v, want %v)",
+			d, idx, lkv.Key.Data(), wantK)
+	}
+}
+
 func TestTensorCache_FP16_Free(t *testing.T) {
 	eng := compute.NewCPUEngine(numeric.Float32Ops{})
 	cache := NewTensorCache[float32](eng, 1, 128, WithKVDtype("fp16"))
