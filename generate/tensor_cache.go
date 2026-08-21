@@ -15,6 +15,14 @@ import (
 // tensorLayerBuf holds pre-allocated K/V buffers for a single layer.
 // For GPU-resident tensors, buffers are backed by GPUStorage with direct D2D
 // memcpy appends. For CPU tensors, flat Go slices are used with copy.
+//
+// Buffer layout is [batch, maxSeqLen, dim] — batch-major, exactly as
+// KVCache lays its buffers out. Batch element bi owns the contiguous region
+// [bi*maxSeqLen*dim, (bi+1)*maxSeqLen*dim), and the token at sequence
+// position p lives at bi*maxSeqLen*dim + p*dim. Every read and write in this
+// file must use that stride: a flat token-major offset (seqLen*dim*batch)
+// only coincides with it when batch == 1, and silently corrupts the cache
+// once GroupedQueryAttention folds numKVHeads > 1 into the batch axis.
 type tensorLayerBuf[T tensor.Numeric] struct {
 	// GPU path: pre-allocated persistent GPU memory (F32 mode).
 	kStorage *tensor.GPUStorage[T]
@@ -47,11 +55,12 @@ type TensorCache[T tensor.Numeric] struct {
 	stream    gpuapi.Stream // GPU stream for async D2D/H2D copies (nil for CPU)
 	kvFP16    bool          // when true, store KV cache in FP16 (GPU-only)
 
-	// Shared F32 scratch buffers for FP16→F32 readback in Get.
-	// Sized to batch*maxSeqLen*dim on first use. Reused across layers
-	// (Get is called sequentially per layer).
-	fp16ScratchK *tensor.GPUStorage[T]
-	fp16ScratchV *tensor.GPUStorage[T]
+	// Shared F32 scratch buffers used by Get for FP16→F32 readback and for
+	// compacting a partially-filled multi-batch buffer into the contiguous
+	// [batch, seqLen, dim] tensor callers expect. Sized on first use and
+	// reused across layers (Get is called sequentially per layer).
+	scratchK *tensor.GPUStorage[T]
+	scratchV *tensor.GPUStorage[T]
 
 	// GPU-resident int32 position counter for CUDA graph capture.
 	// When non-nil, Update uses offset_memcpy kernel (reads counter on GPU)
@@ -204,23 +213,41 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 		if kOK && vOK {
 			counterPtr := c.gpuCounter.Ptr()
 			streamPtr := c.stream.Ptr()
-			tokenDim := dim * batch
+			// offset_memcpy writes dst[counter*dim + i] = src[i], so it must be
+			// launched once per batch element with both pointers pre-strided:
+			// dst into that element's maxSeqLen*dim region, src into its single
+			// token of dim elements. Passing dim*batch as the copy width would
+			// write a flat token-major block instead (see tensorLayerBuf).
+			batchStride := c.maxSeqLen * dim
+			srcElem := elemSize[T]()
 
 			if c.kvFP16 && lb.kFP16 != nil {
 				// FP16 path: offset_memcpy_fp16 converts F32 src to FP16
 				// and writes at the GPU-counter offset. Graph-capturable.
-				if err := kernels.OffsetMemcpyFP16(lb.kFP16.Ptr(), kGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
-					return fmt.Errorf("offset_memcpy_fp16 K layer %d: %w", layer, err)
-				}
-				if err := kernels.OffsetMemcpyFP16(lb.vFP16.Ptr(), vGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
-					return fmt.Errorf("offset_memcpy_fp16 V layer %d: %w", layer, err)
+				for bi := range batch {
+					dstK := unsafe.Add(lb.kFP16.Ptr(), bi*batchStride*fp16Bytes)
+					dstV := unsafe.Add(lb.vFP16.Ptr(), bi*batchStride*fp16Bytes)
+					srcK := unsafe.Add(kGS.Ptr(), bi*dim*srcElem)
+					srcV := unsafe.Add(vGS.Ptr(), bi*dim*srcElem)
+					if err := kernels.OffsetMemcpyFP16(dstK, srcK, counterPtr, dim, c.maxSeqLen, streamPtr); err != nil {
+						return fmt.Errorf("offset_memcpy_fp16 K layer %d head %d: %w", layer, bi, err)
+					}
+					if err := kernels.OffsetMemcpyFP16(dstV, srcV, counterPtr, dim, c.maxSeqLen, streamPtr); err != nil {
+						return fmt.Errorf("offset_memcpy_fp16 V layer %d head %d: %w", layer, bi, err)
+					}
 				}
 			} else {
-				if err := kernels.OffsetMemcpy(lb.kStorage.Ptr(), kGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
-					return fmt.Errorf("offset_memcpy K layer %d: %w", layer, err)
-				}
-				if err := kernels.OffsetMemcpy(lb.vStorage.Ptr(), vGS.Ptr(), counterPtr, tokenDim, c.maxSeqLen, streamPtr); err != nil {
-					return fmt.Errorf("offset_memcpy V layer %d: %w", layer, err)
+				for bi := range batch {
+					dstK := unsafe.Add(lb.kStorage.Ptr(), bi*batchStride*srcElem)
+					dstV := unsafe.Add(lb.vStorage.Ptr(), bi*batchStride*srcElem)
+					srcK := unsafe.Add(kGS.Ptr(), bi*dim*srcElem)
+					srcV := unsafe.Add(vGS.Ptr(), bi*dim*srcElem)
+					if err := kernels.OffsetMemcpy(dstK, srcK, counterPtr, dim, c.maxSeqLen, streamPtr); err != nil {
+						return fmt.Errorf("offset_memcpy K layer %d head %d: %w", layer, bi, err)
+					}
+					if err := kernels.OffsetMemcpy(dstV, srcV, counterPtr, dim, c.maxSeqLen, streamPtr); err != nil {
+						return fmt.Errorf("offset_memcpy V layer %d head %d: %w", layer, bi, err)
+					}
 				}
 			}
 
@@ -235,32 +262,50 @@ func (c *TensorCache[T]) Update(layer int, newK, newV *tensor.TensorNumeric[T]) 
 		}
 	}
 
-	// Append data at current offset.
-	offset := lb.seqLen * dim * batch
-	numElems := seqLen * dim * batch
+	// Append the new tokens at the current cursor, once per batch element.
+	// Layout is [batch, maxSeqLen, dim] (see tensorLayerBuf): each batch
+	// element's chunk of seqLen*dim elements lands at cursor*dim inside its
+	// own maxSeqLen*dim region. This mirrors KVCache.Update.
+	batchStride := c.maxSeqLen * dim
+	chunk := seqLen * dim
 
 	switch {
 	case lb.isGPU && c.kvFP16 && lb.kFP16 != nil:
 		// FP16 path: convert F32 source to FP16, then copy into FP16 cache.
-		if err := appendFP16(lb.kFP16, offset, numElems, newK, c.stream); err != nil {
-			return fmt.Errorf("append K fp16 layer %d: %w", layer, err)
-		}
-		if err := appendFP16(lb.vFP16, offset, numElems, newV, c.stream); err != nil {
-			return fmt.Errorf("append V fp16 layer %d: %w", layer, err)
+		for bi := range batch {
+			dstOff := bi*batchStride + lb.seqLen*dim
+			srcOff := bi * chunk
+			if err := appendFP16(lb.kFP16, dstOff, srcOff, chunk, newK, c.stream); err != nil {
+				return fmt.Errorf("append K fp16 layer %d head %d: %w", layer, bi, err)
+			}
+			if err := appendFP16(lb.vFP16, dstOff, srcOff, chunk, newV, c.stream); err != nil {
+				return fmt.Errorf("append V fp16 layer %d head %d: %w", layer, bi, err)
+			}
 		}
 	case lb.isGPU:
-		if err := appendGPU(lb.kStorage, offset, numElems, newK, c.stream); err != nil {
-			return fmt.Errorf("append K layer %d: %w", layer, err)
-		}
-		if err := appendGPU(lb.vStorage, offset, numElems, newV, c.stream); err != nil {
-			return fmt.Errorf("append V layer %d: %w", layer, err)
+		for bi := range batch {
+			dstOff := bi*batchStride + lb.seqLen*dim
+			srcOff := bi * chunk
+			if err := appendGPU(lb.kStorage, dstOff, srcOff, chunk, newK, c.stream); err != nil {
+				return fmt.Errorf("append K layer %d head %d: %w", layer, bi, err)
+			}
+			if err := appendGPU(lb.vStorage, dstOff, srcOff, chunk, newV, c.stream); err != nil {
+				return fmt.Errorf("append V layer %d head %d: %w", layer, bi, err)
+			}
 		}
 	default:
 		if _, srcIsGPU := newK.GetStorage().(*tensor.GPUStorage[T]); srcIsGPU {
 			slog.Warn("KV cache CPU fallback with GPU tensor, D2H copy triggered", "layer", layer)
 		}
-		copy(lb.kBuf[offset:offset+numElems], newK.Data())
-		copy(lb.vBuf[offset:offset+numElems], newV.Data())
+		// Hoist Data() out of the loop: on a GPU-resident source it is a D2H copy.
+		kData := newK.Data()
+		vData := newV.Data()
+		for bi := range batch {
+			dstOff := bi*batchStride + lb.seqLen*dim
+			srcOff := bi * chunk
+			copy(lb.kBuf[dstOff:dstOff+chunk], kData[srcOff:srcOff+chunk])
+			copy(lb.vBuf[dstOff:dstOff+chunk], vData[srcOff:srcOff+chunk])
+		}
 	}
 
 	lb.seqLen += seqLen
@@ -301,18 +346,23 @@ func promoteToGPU[T tensor.Numeric](lb *tensorLayerBuf[T], batch, maxSeqLen, dim
 		return fmt.Errorf("alloc V GPU storage: %w", err)
 	}
 
-	// Upload any existing CPU-cached data.
+	// Upload any existing CPU-cached data, preserving the [batch, maxSeqLen,
+	// dim] stride: each batch element's cached prefix sits at its own offset,
+	// so a single flat prefix copy would only be correct for batch == 1.
 	if lb.seqLen > 0 {
-		cached := lb.seqLen * dim * batch
-		if err := kSt.CopyFromHost(lb.kBuf[:cached], 0); err != nil {
-			_ = kSt.Free()
-			_ = vSt.Free()
-			return fmt.Errorf("upload K: %w", err)
-		}
-		if err := vSt.CopyFromHost(lb.vBuf[:cached], 0); err != nil {
-			_ = kSt.Free()
-			_ = vSt.Free()
-			return fmt.Errorf("upload V: %w", err)
+		cached := lb.seqLen * dim
+		for bi := range batch {
+			off := bi * maxSeqLen * dim
+			if err := kSt.CopyFromHost(lb.kBuf[off:off+cached], off); err != nil {
+				_ = kSt.Free()
+				_ = vSt.Free()
+				return fmt.Errorf("upload K head %d: %w", bi, err)
+			}
+			if err := vSt.CopyFromHost(lb.vBuf[off:off+cached], off); err != nil {
+				_ = kSt.Free()
+				_ = vSt.Free()
+				return fmt.Errorf("upload V head %d: %w", bi, err)
+			}
 		}
 	}
 
@@ -324,21 +374,34 @@ func promoteToGPU[T tensor.Numeric](lb *tensorLayerBuf[T], batch, maxSeqLen, dim
 	return nil
 }
 
-// appendGPU copies tensor data into the pre-allocated GPU buffer at the given
-// element offset, using D2D memcpy for GPU sources or H2D for CPU sources.
+// fp16Bytes is the size in bytes of one float16.Float16 element, used for
+// pointer arithmetic into FP16 cache buffers.
+const fp16Bytes = 2
+
+// elemSize returns the size in bytes of one element of T, for pointer
+// arithmetic into GPU storage that only exposes an untyped base pointer.
+func elemSize[T tensor.Numeric]() int {
+	var zero T
+	return int(unsafe.Sizeof(zero))
+}
+
+// appendGPU copies numElems elements starting at srcOffset in the source
+// tensor into the pre-allocated GPU buffer at dstOffset, using D2D memcpy for
+// GPU sources or H2D for CPU sources. Both offsets are in elements.
 // When stream is non-nil, async memcpy is used (required for CUDA graph
 // capture compatibility).
-func appendGPU[T tensor.Numeric](dst *tensor.GPUStorage[T], offset, numElems int, src *tensor.TensorNumeric[T], stream gpuapi.Stream) error {
+func appendGPU[T tensor.Numeric](dst *tensor.GPUStorage[T], dstOffset, srcOffset, numElems int, src *tensor.TensorNumeric[T], stream gpuapi.Stream) error {
 	if gs, ok := src.GetStorage().(*tensor.GPUStorage[T]); ok {
 		if stream != nil {
-			return dst.CopyFromDeviceAsync(gs, offset, 0, numElems, stream)
+			return dst.CopyFromDeviceAsync(gs, dstOffset, srcOffset, numElems, stream)
 		}
-		return dst.CopyFromDevice(gs, offset, 0, numElems)
+		return dst.CopyFromDevice(gs, dstOffset, srcOffset, numElems)
 	}
+	data := src.Data()[srcOffset : srcOffset+numElems]
 	if stream != nil {
-		return dst.CopyFromHostAsync(src.Data(), offset, stream)
+		return dst.CopyFromHostAsync(data, dstOffset, stream)
 	}
-	return dst.CopyFromHost(src.Data(), offset)
+	return dst.CopyFromHost(data, dstOffset)
 }
 
 // allocFP16Buffers allocates half-precision GPU buffers for the KV cache layer.
@@ -357,61 +420,70 @@ func allocFP16Buffers[T tensor.Numeric](lb *tensorLayerBuf[T], totalElems int) e
 	return nil
 }
 
-// appendFP16 converts F32 source tensor data to FP16 and writes directly into
-// the FP16 cache buffer at the given element offset. No temporary buffer is
-// allocated — the F32→FP16 kernel writes directly to dst + offset, which is
-// safe because the kernel is stream-ordered (async) and touches no other memory.
-func appendFP16[T tensor.Numeric](dst *tensor.GPUStorage[float16.Float16], offset, numElems int, src *tensor.TensorNumeric[T], stream gpuapi.Stream) error {
+// appendFP16 converts numElems elements starting at srcOffset in the F32
+// source tensor to FP16 and writes them directly into the FP16 cache buffer at
+// dstOffset. Both offsets are in elements. No temporary buffer is allocated —
+// the F32→FP16 kernel writes directly to dst + dstOffset, which is safe
+// because the kernel is stream-ordered (async) and touches no other memory.
+func appendFP16[T tensor.Numeric](dst *tensor.GPUStorage[float16.Float16], dstOffset, srcOffset, numElems int, src *tensor.TensorNumeric[T], stream gpuapi.Stream) error {
 	srcGS, isGPU := src.GetStorage().(*tensor.GPUStorage[T])
 	if !isGPU {
 		return fmt.Errorf("FP16 KV cache requires GPU-resident source tensors")
 	}
 
 	// Convert F32 → FP16 directly into the cache at the correct offset.
-	// Pointer arithmetic: offset is in elements, each FP16 element is 2 bytes.
-	dstPtr := unsafe.Add(dst.Ptr(), offset*2)
+	// Pointer arithmetic: offsets are in elements, each FP16 element is 2 bytes.
+	dstPtr := unsafe.Add(dst.Ptr(), dstOffset*fp16Bytes)
+	srcPtr := unsafe.Add(srcGS.Ptr(), srcOffset*elemSize[T]())
 
 	streamPtr := unsafe.Pointer(nil)
 	if stream != nil {
 		streamPtr = stream.Ptr()
 	}
-	if err := kernels.F32ToFP16(srcGS.Ptr(), dstPtr, numElems, streamPtr); err != nil {
+	if err := kernels.F32ToFP16(srcPtr, dstPtr, numElems, streamPtr); err != nil {
 		return fmt.Errorf("f32_to_fp16: %w", err)
 	}
 
 	return nil
 }
 
-// ensureFP16Scratch allocates or grows the shared F32 scratch buffers for
-// FP16→F32 readback in Get. The scratch is reused across layers.
-func (c *TensorCache[T]) ensureFP16Scratch(minElems int) error {
-	if c.fp16ScratchK != nil && c.fp16ScratchK.Len() >= minElems {
+// ensureScratch allocates or grows the shared F32 scratch buffers used by Get
+// for FP16→F32 readback and for compacting a strided multi-batch buffer.
+// The scratch is reused across layers.
+func (c *TensorCache[T]) ensureScratch(minElems int) error {
+	if c.scratchK != nil && c.scratchK.Len() >= minElems {
 		return nil
 	}
-	if c.fp16ScratchK != nil {
-		_ = c.fp16ScratchK.Free()
+	if c.scratchK != nil {
+		_ = c.scratchK.Free()
 	}
-	if c.fp16ScratchV != nil {
-		_ = c.fp16ScratchV.Free()
+	if c.scratchV != nil {
+		_ = c.scratchV.Free()
 	}
 	var err error
-	c.fp16ScratchK, err = tensor.NewGPUStorage[T](minElems)
+	c.scratchK, err = tensor.NewGPUStorage[T](minElems)
 	if err != nil {
-		return fmt.Errorf("alloc FP16 scratch K: %w", err)
+		return fmt.Errorf("alloc scratch K: %w", err)
 	}
-	c.fp16ScratchV, err = tensor.NewGPUStorage[T](minElems)
+	c.scratchV, err = tensor.NewGPUStorage[T](minElems)
 	if err != nil {
-		_ = c.fp16ScratchK.Free()
-		c.fp16ScratchK = nil
-		return fmt.Errorf("alloc FP16 scratch V: %w", err)
+		_ = c.scratchK.Free()
+		c.scratchK = nil
+		return fmt.Errorf("alloc scratch V: %w", err)
 	}
 	return nil
 }
 
-// Get returns the cached key-value pair for the given layer.
-// For GPU-backed layers, returns a view into the pre-allocated buffer.
-// For CPU-backed layers, returns a tensor wrapping the buffer slice.
-// Returns false if the layer index is out of range or the layer is empty.
+// Get returns the cached key-value pair for the given layer, shaped
+// [batch, seqLen, dim].
+//
+// The backing buffer is strided at maxSeqLen per batch element, so the valid
+// data is only contiguous when batch == 1 or the buffer is completely full.
+// In those cases Get returns a zero-copy view over the pre-allocated buffer;
+// otherwise each batch element's prefix is compacted into a contiguous result
+// (into GPU scratch for GPU layers, a fresh slice for CPU layers), exactly as
+// KVCache.Get does. Returns false if the layer index is out of range or the
+// layer is empty.
 func (c *TensorCache[T]) Get(layer int) (*LayerKV[T], bool) {
 	if layer < 0 || layer >= len(c.layers) {
 		return nil, false
@@ -423,41 +495,91 @@ func (c *TensorCache[T]) Get(layer int) (*LayerKV[T], bool) {
 
 	viewElems := lb.batch * lb.seqLen * lb.dim
 	viewShape := []int{lb.batch, lb.seqLen, lb.dim}
+	// Valid data is contiguous only when there is a single batch element or
+	// the buffer is filled to capacity; otherwise there are gaps between the
+	// per-batch regions that must be squeezed out.
+	contiguous := lb.batch == 1 || lb.seqLen == c.maxSeqLen
+	srcStride := c.maxSeqLen * lb.dim
+	dstStride := lb.seqLen * lb.dim
 
 	if lb.isGPU && c.kvFP16 && lb.kFP16 != nil {
 		// FP16 readback: convert cached FP16 data to F32 scratch buffers.
-		if err := c.ensureFP16Scratch(viewElems); err != nil {
+		// Converting per batch element also performs the compaction.
+		if err := c.ensureScratch(viewElems); err != nil {
 			return nil, false
 		}
 		streamPtr := unsafe.Pointer(nil)
 		if c.stream != nil {
 			streamPtr = c.stream.Ptr()
 		}
-		kView := tensor.NewGPUStorageView(c.fp16ScratchK, 0, viewElems)
-		if err := kernels.FP16ToF32(lb.kFP16.Ptr(), kView.Ptr(), viewElems, streamPtr); err != nil {
-			return nil, false
+		kView := tensor.NewGPUStorageView(c.scratchK, 0, viewElems)
+		vView := tensor.NewGPUStorageView(c.scratchV, 0, viewElems)
+		if contiguous {
+			if err := kernels.FP16ToF32(lb.kFP16.Ptr(), kView.Ptr(), viewElems, streamPtr); err != nil {
+				return nil, false
+			}
+			if err := kernels.FP16ToF32(lb.vFP16.Ptr(), vView.Ptr(), viewElems, streamPtr); err != nil {
+				return nil, false
+			}
+		} else {
+			dstElem := elemSize[T]()
+			for bi := range lb.batch {
+				kSrc := unsafe.Add(lb.kFP16.Ptr(), bi*srcStride*fp16Bytes)
+				vSrc := unsafe.Add(lb.vFP16.Ptr(), bi*srcStride*fp16Bytes)
+				kDst := unsafe.Add(kView.Ptr(), bi*dstStride*dstElem)
+				vDst := unsafe.Add(vView.Ptr(), bi*dstStride*dstElem)
+				if err := kernels.FP16ToF32(kSrc, kDst, dstStride, streamPtr); err != nil {
+					return nil, false
+				}
+				if err := kernels.FP16ToF32(vSrc, vDst, dstStride, streamPtr); err != nil {
+					return nil, false
+				}
+			}
 		}
 		kTensor, _ := tensor.NewWithStorage(viewShape, kView)
-
-		vView := tensor.NewGPUStorageView(c.fp16ScratchV, 0, viewElems)
-		if err := kernels.FP16ToF32(lb.vFP16.Ptr(), vView.Ptr(), viewElems, streamPtr); err != nil {
-			return nil, false
-		}
 		vTensor, _ := tensor.NewWithStorage(viewShape, vView)
 		return &LayerKV[T]{Key: kTensor, Value: vTensor}, true
 	}
 
 	if lb.isGPU {
-		kView := tensor.NewGPUStorageView(lb.kStorage, 0, viewElems)
-		vView := tensor.NewGPUStorageView(lb.vStorage, 0, viewElems)
+		var kView, vView *tensor.GPUStorage[T]
+		if contiguous {
+			kView = tensor.NewGPUStorageView(lb.kStorage, 0, viewElems)
+			vView = tensor.NewGPUStorageView(lb.vStorage, 0, viewElems)
+		} else {
+			if err := c.ensureScratch(viewElems); err != nil {
+				return nil, false
+			}
+			for bi := range lb.batch {
+				if err := c.scratchK.CopyFromDevice(lb.kStorage, bi*dstStride, bi*srcStride, dstStride); err != nil {
+					return nil, false
+				}
+				if err := c.scratchV.CopyFromDevice(lb.vStorage, bi*dstStride, bi*srcStride, dstStride); err != nil {
+					return nil, false
+				}
+			}
+			kView = tensor.NewGPUStorageView(c.scratchK, 0, viewElems)
+			vView = tensor.NewGPUStorageView(c.scratchV, 0, viewElems)
+		}
 		kTensor, _ := tensor.NewWithStorage(viewShape, kView)
 		vTensor, _ := tensor.NewWithStorage(viewShape, vView)
 		return &LayerKV[T]{Key: kTensor, Value: vTensor}, true
 	}
 
-	// CPU path: wrap the pre-allocated slice.
-	kTensor, _ := tensor.New(viewShape, lb.kBuf[:viewElems])
-	vTensor, _ := tensor.New(viewShape, lb.vBuf[:viewElems])
+	// CPU path: wrap the pre-allocated slice, compacting first if needed.
+	kData, vData := lb.kBuf[:viewElems], lb.vBuf[:viewElems]
+	if !contiguous {
+		kData = make([]T, viewElems)
+		vData = make([]T, viewElems)
+		for bi := range lb.batch {
+			srcOff := bi * srcStride
+			dstOff := bi * dstStride
+			copy(kData[dstOff:dstOff+dstStride], lb.kBuf[srcOff:srcOff+dstStride])
+			copy(vData[dstOff:dstOff+dstStride], lb.vBuf[srcOff:srcOff+dstStride])
+		}
+	}
+	kTensor, _ := tensor.New(viewShape, kData)
+	vTensor, _ := tensor.New(viewShape, vData)
 	return &LayerKV[T]{Key: kTensor, Value: vTensor}, true
 }
 
@@ -481,18 +603,18 @@ func (c *TensorCache[T]) GetFullBuffer(layer int) (k, v *tensor.TensorNumeric[T]
 
 	if c.kvFP16 && lb.kFP16 != nil {
 		// FP16 path: convert full buffer to F32 scratch.
-		if err := c.ensureFP16Scratch(fullElems); err != nil {
+		if err := c.ensureScratch(fullElems); err != nil {
 			return nil, nil
 		}
 		streamPtr := unsafe.Pointer(nil)
 		if c.stream != nil {
 			streamPtr = c.stream.Ptr()
 		}
-		kView := tensor.NewGPUStorageView(c.fp16ScratchK, 0, fullElems)
+		kView := tensor.NewGPUStorageView(c.scratchK, 0, fullElems)
 		if err := kernels.FP16ToF32(lb.kFP16.Ptr(), kView.Ptr(), fullElems, streamPtr); err != nil {
 			return nil, nil
 		}
-		vView := tensor.NewGPUStorageView(c.fp16ScratchV, 0, fullElems)
+		vView := tensor.NewGPUStorageView(c.scratchV, 0, fullElems)
 		if err := kernels.FP16ToF32(lb.vFP16.Ptr(), vView.Ptr(), fullElems, streamPtr); err != nil {
 			return nil, nil
 		}
@@ -621,13 +743,13 @@ func (c *TensorCache[T]) Free() {
 		c.layers[i].seqLen = 0
 		c.layers[i].batch = 0
 	}
-	if c.fp16ScratchK != nil {
-		_ = c.fp16ScratchK.Free()
-		c.fp16ScratchK = nil
+	if c.scratchK != nil {
+		_ = c.scratchK.Free()
+		c.scratchK = nil
 	}
-	if c.fp16ScratchV != nil {
-		_ = c.fp16ScratchV.Free()
-		c.fp16ScratchV = nil
+	if c.scratchV != nil {
+		_ = c.scratchV.Free()
+		c.scratchV = nil
 	}
 	if c.gpuCounter != nil {
 		_ = c.gpuCounter.Free()

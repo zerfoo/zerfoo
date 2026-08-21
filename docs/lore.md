@@ -227,3 +227,17 @@ the next `L-NNNN` ID; never renumber. See `~/.claude/skills/lore/SKILL.md`
 **Trigger:** Any test that infers concurrency from a sampled counter, channel length, or elapsed time rather than from a barrier the test itself controls; any claim that batching parallelizes decode on the current Generator; a `testing.Short()` skip added to quiet a "flaky" concurrency test instead of establishing what the code actually guarantees.
 
 **Source:** `inference/batch_test.go` (`TestGenerateBatch_ConcurrentSessions`); `generate/session.go` `graphMu`; commits `9ef47892`, `54051087`; `inference/speculative_concurrency_test.go` (CONC-H1).
+
+## L-0020: One buffer, one layout -- KV cache buffers are [batch, maxSeqLen, dim], and a flat token-major offset only coincides with that at batch == 1
+
+**Tags:** #kv-cache #generate #gqa #layout #invariant
+**Date:** 2026-08-20
+**Repo:** zerfoo/zerfoo
+
+**Rule:** Every read and write of a `generate` KV cache buffer must use the batch-major stride: batch element `bi` owns `[bi*maxSeqLen*dim, (bi+1)*maxSeqLen*dim)`, and the token at position `p` lives at `bi*maxSeqLen*dim + p*dim`. Append once per batch element (as `KVCache.Update` does), compact per batch element on readback when `batch > 1 && cursor < maxSeqLen`, and never hand `dim*batch` to `offset_memcpy` as if the buffer were token-major. Any new cache type must be diffed against `KVCache` on a multi-head prefill-plus-decode before it is trusted.
+
+**Why:** `TensorCache` held three mutually inconsistent layouts over one allocation: it allocated `batch*maxSeqLen*dim` (batch-major), `Update` appended at the flat token-major offset `seqLen*dim*batch` in a single copy, and `Get` returned `kBuf[:batch*seqLen*dim]` shaped `[batch, seqLen, dim]` (batch-major, compacted). All three agree at `batch == 1`, so every single-sequence test passed and the defect sat on `main` undetected. `GroupedQueryAttention` reshapes K/V to `[batch*numKVHeads, seqLen, headDim]`, folding heads into the batch axis; the first decode append after prefill then wrote head 0's new token into head 1's prefill region, and readback returned shifted keys (issue #981: `Key[12] = 13, want ~25`). It reproduces on plain CPU -- the issue title's "GPU" framing is wrong, since `compute.NewCPUEngine` never takes a GPU branch -- and it is unrelated to the RoPE position-offset bug in #990/#993.
+
+**Trigger:** Offset arithmetic in a cache buffer that multiplies the cursor by `batch`; a single flat `copy`/memcpy/kernel launch covering all batch elements at once; a readback that slices `[:batch*seqLen*dim]` from position 0 of a `maxSeqLen`-strided buffer; a multi-head cache whose only tests use `batch == 1`.
+
+**Source:** issue #981; `generate/tensor_cache.go` (`Update`, `Get`, `promoteToGPU`, `appendGPU`, `appendFP16`); reference implementation `generate/kvcache.go` (`Update` per-batch stride, `Get` per-batch compaction); `layers/attention/grouped_query_attention.go` reshape to `[batch*numKVHeads, seqLen, headDim]`.
