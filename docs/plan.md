@@ -101,7 +101,8 @@ Inputs from the 2026 08 14 audit (seat audit, hq brain/zerfoo-audit-2026-08-14.m
 | D9 | Cross-repo release hygiene | TBD | ztensor #179 + #178, zmf #14 resolved; orphan branches dispositioned; stale branches pruned |
 | D10 | GQA fused path restored or tracked | TBD | ztensor#180 fixed + released + zerfoo re-enabled with GB10 proof, OR documented as tracked debt with mitigation noted in the matrix |
 | D11 | DGX workspace clean | TBD | residue removed; attic disposition decided by David |
-| D12 | Qwen 3 architecture supported (ADR-095 exception) | TBD | `qwen3` registered and building; decode verified on a real GGUF OR honestly marked experimental; matrix row only with evidence |
+| D12 | Qwen 3 DENSE architecture supported (ADR-095 exception) | TBD | `qwen3` registered and building; decode verified on a real GGUF OR honestly marked experimental; matrix row only with evidence. NOTE: does NOT cover Qwen3.8-27B, which is `qwen35` -- see E153 |
+| D13 | Decode path correct across architectures | TBD | #990 fixed and merged; pre-#993 baselines regenerated; parity suite audited for vacuous assertions (T152.3) |
 
 ---
 
@@ -120,7 +121,8 @@ Component: docs + tests/parity + bench. The public support claim becomes this ma
   - Independently re-verified by the seat on the real host, not taken on report: all 9 staged models resolve to their own distinct files with matching architecture/size, and the 8 unstaged rows skip with an explicit "pins no GGUF file" reason.
   - Residual, deliberate: `BenchmarkGemma3Q4TokPerSec` keeps directory scanning (ZMF-era fixture, outside the matrix).
 - [x] S136.6.1 Tests + lint  Owner: agent  Est: 1h  verifies: [UC-H2-004]  kind: agent  blocked-by: [T136.6]  (done 2026-08-20, in PR #987: 15 modelset unit tests covering unknown-row-is-error, no-fallback-for-unstaged, missing-pinned-file-is-error, duplicate files/rows/aliases rejected, recorder catches two rows on one file, wrong-file and wrong-architecture both caught. Full CI green incl. CodeQL and `test (1.26)`.)
-- [ ] T136.3 Run the parity subset for the matrix on GB10; close T86.5.8  Owner: TBD  Est: 4h  verifies: [UC-H2-004]  kind: agent  blocked-by: [T136.6]
+- [ ] T136.3 Run the parity subset for the matrix on GB10; close T86.5.8  Owner: TBD  Est: 4h  verifies: [UC-H2-004]  kind: agent  blocked-by: [T136.6, T152.1]
+  - **DO NOT RUN THIS BEFORE PR #993 IS ON MAIN AND ANY PRE-#993 BASELINE IS REGENERATED.** #993 (merged 2026-08-20, 865c310e) fixed a RoPE position-offset bug that corrupted EVERY generation past the first token, on every architecture. Any golden output, cached parity baseline, or "verified" generation captured before it is INVALID. Publishing the matrix on pre-#993 evidence would certify known-wrong output.
   - Standing gate with models mounted: parity stage runs for every matrix model present, using the T136.6 explicit-path table. Record per-model results in docs/verified-models.md AS EACH MODEL COMPLETES (checkpoint continuously -- the 2026 08 11 lane died with zero results banked). Close T86.5.8 (#572 epic if fully satisfied) referencing the run.
   - Acceptance: verified-models.md has zero `pending T136.3` markers; every GPU row cites pod ID + date + commit; rows for the 2 unfetched models and Chronos-2 carry honest absence notes.
 - [ ] T136.4 Re-run the Ollama comparison with reproduction manifests  Owner: TBD  Est: 1d  verifies: [UC-H2-004]  kind: agent  blocked-by: [T136.6]
@@ -174,12 +176,30 @@ Component: ztensor internal CUDA kernels + zerfoo layers/attention. Acceptance: 
 
 Component: inference (KV cache), internal/cuda (Gather), timeseries (PatchTST). Each issue has a full repro from 2026 08 10. ADR-093 rule 3 applies per bug: ONE time-boxed root-cause attempt, then park with an honest annotation. GPU-serial; schedule after T136.3/T136.4 so the matrix ships first.
 
-- [ ] T149.1 #981 KV-cache multi-head prefill+decode key offset bug  Owner: TBD  Est: 4h  verifies: [UC-H2-004]  kind: agent  blocked-by: [T136.3]
-  - Retrieved keys shifted/misplaced after decode append (FP16 GPU multi-head). This is silent-wrong-output class -- highest priority of the three. Fix with an ADR-091 fixture, or park with: which matrix models/configs are affected, and an annotation on their verified-models.md rows.
+- [x] T149.1 #981 KV-cache multi-head prefill+decode key offset bug  Owner: agent  Est: 4h  verifies: [UC-H2-004]  kind: agent  (done 2026-08-20, PR #995 merged as 5de52da4 -- brought forward ahead of T136.3 because its test was RED ON MAIN, making every PR's CI red)
+  - **Root cause: one buffer, three layouts.** `generate/tensor_cache.go` allocated `[batch, maxSeqLen, dim]` (`:143`, matching `GetFullBuffer` at `:480`), but `Update` (`:239`) wrote at a flat **token-major** offset `seqLen*dim*batch` while `Get` (`:459`) read **batch-major compacted**. Identical behaviour at `batch == 1`, which is why it survived; it breaks the moment GQA flattens `numKVHeads > 1` into the batch dimension. `generate/kvcache.go:130-135` had it right all along and was used as the reference.
+  - Diagnosis was confirmed by ARITHMETIC BEFORE ANY CODE: predicted `got[12]=13/want 25`, `got[16]=17/want 13`, `got[24]=25/want 21` and `got[28:32]` correct -- reproducing the issue's reported output character for character, including which indices report nothing.
+  - **The two corrections posted to #981 matter as much as the fix:** it is NOT GPU-specific (reproduces on plain CPU `go test ./generate/`, no GB10 needed -- the issue title was wrong), and PR #993 does NOT fix it (different bug, same family).
+  - Existing test was CORRECT and left untouched -- no assertion weakened. New fixtures self-assert sensitivity per lore L-0009; red-proof maxdiff 988 at index 12 (head 0's decode slot, the issue's exact divergence point), 89994 after truncate, 184 on the FP16 path. `go test ./generate/... -count=1` green, `-race` clean. Invariant recorded as lore **L-0020**.
 - [ ] T149.2 #982 intermittent Gather cudaMemcpy invalid-argument  Owner: TBD  Est: 3h  verifies: [UC-H2-004]  kind: agent  blocked-by: [T149.1]
   - Rotating sub-case failure in TestGatherInt64Parity. Fix or park with frequency data + affected-path annotation.
 - [ ] T149.3 #983 PatchTST tiny-training GPU convergence failure  Owner: TBD  Est: 3h  verifies: [UC-H2-004]  kind: agent  blocked-by: [T149.2]
   - Fix or park; if parked, the timeseries row/absence note in the matrix states it.
+
+### E152: Decode-path correctness (found by E151, 2026-08-20) -- fidelity: executable
+
+Component: layers/attention + generate. The Qwen 3 lane surfaced that multi-token decode diverged from llama.cpp on EVERY architecture, not one builder. This epic exists because that turned out to be the most consequential finding of the day and it gates the matrix.
+
+- [x] T152.1 Root-cause and fix the cross-architecture decode divergence (#990)  Owner: agent  Est: 1d  verifies: [UC-H2-004]  kind: agent  (done 2026-08-20, PR #993 merged as 865c310e)
+  - **Root cause: `GroupedQueryAttention` read its RoPE position offset from `CacheProvider.SeqLen()`**, which reports **layer 0's** cursor in every provider except `GPUKVCache` -- and layer 0 appends the current chunk inside its own `Forward`. So layers 1..N-1 rotated by an offset already advanced by `chunkLen`. Sites: `layers/attention/grouped_query_attention.go:774` and `:610` (fused path).
+  - Hid for months because the shift is UNIFORM WITHIN A PASS and RoPE is relative: pure prefill and pure token-at-a-time decode are each internally self-consistent. It only bites at the prefill->decode boundary. Split-prompt logit maxAbsDiff vs one-shot prefill scaled exactly with chunk size: 7.45 / 6.53 / 4.64 / 0.84 / 0.00006 for k=5/4/3/2/1.
+  - Fix: new `LayerSeqLenProvider` implemented across all 9 cache providers; both offset sites now use `cachedPositions(cache, LayerIndex)`. Lore **L-0021**.
+  - **My stated lead was WRONG and the agent correctly refuted it.** I pointed at the `CompileTraced plan validation failed` line as the likely cause; three independent evidence lines disproved it (a no-plan `graph.Forward` harness reproduced the divergence; the wrong token is chosen before `compileGraph` runs; #993 touches no compile code yet fixes decode). Filed separately as **#994** -- `embeddingLookupNode.Forward` builds its output in plain Go with no engine calls, so the tracer has no instruction producing it and plan validation can NEVER succeed for any GGUF arch. Wasteful, not causal.
+  - Regression test asserts its OWN sensitivity first: an earlier draft passed WITH the bug present because default random init saturated the softmax and made the stack position-blind (lore L-0009). It also flags the existing `TestGQA_CachedForward` as vacuous for the same reason.
+- [ ] T152.2 Fix or close #994 (CompileTraced can never validate for GGUF architectures)  Owner: TBD  Est: 4h  verifies: [infrastructure]  kind: agent
+  - Either make `embeddingLookupNode` emit a traced instruction (or freeze its slot) so the plan validates, or delete the traced path for GGUF loads and stop paying validation cost + log noise on every generation. Decide with measurements, not preference.
+- [ ] T152.3 Audit the parity suite for vacuous assertions  Owner: TBD  Est: 4h  verifies: [UC-H2-004]  kind: agent
+  - THREE separate instances of "a gate that passes with a real bug present" surfaced on 2026-08-20 alone: the directory-scan parity harness (T136.6), ztensor#182's 1000x-loose Q5_K bound, and `TestGQA_CachedForward` saturating softmax via random init. That is a pattern, not a coincidence. Sweep `tests/parity/` and `layers/*_test.go` for assertions that would pass against known-bad code, using the lore L-0009 saturation trap and the T136.6 identity pattern as the two known shapes. Red-proof each suspect before trusting it.
 
 ### E150: DGX workspace hygiene -- fidelity: executable
 
@@ -216,7 +236,24 @@ Baseline (verified 2026-08-20): zerfoo registers `qwen2` and `qwen_vl` only; the
   - **Honesty bar (gemma4e precedent, devlog 2026-08-10):** if decode is degenerate, report it as degenerate and mark the architecture experimental at load, exactly as gemma4/gemma4e/gemma4moe were. Do not quietly ship a builder that compiles but generates garbage.
   - Per ADR-093 rule 1, Qwen 3 enters docs/verified-models.md only with parity + benchmark evidence attached. Merging the builder is NOT a support claim.
 - [ ] T151.5 Larger-model follow-up (conditional)  Owner: TBD  Est: 2h  verifies: [UC-H2-014]  kind: agent  blocked-by: [T151.4]
-  - Only after the architecture is proven green on a small model, consider staging a larger Qwen3. A 27B-class Q4_K_M is roughly 16GB on a demonstrably slow link -- time-box it, and treat non-completion as deferred-by-cost (like Llama 4 Scout and MiniMax-M2), not as failure.
+  - Only after the architecture is proven green on a small model, consider staging a larger DENSE Qwen3 (up to 32B). Do NOT fetch Qwen3.8-27B for this task -- it is `qwen35`, not `qwen3`, and will not load. See E153.
+
+### E153: qwen35 (Qwen3.5/3.6/3.8) -- SIZED, NOT SCHEDULED -- fidelity: outline
+
+**This is the model David actually asked for on 2026-08-20 ("Qwen 3.8 27B"), and E151 does NOT deliver it.** Qwen3.8-27B is real (released 2026-08-14, Apache 2.0) but declares architecture `qwen35` (`model_type: qwen3_5`) -- a hybrid model the `qwen3` builder cannot load. Feasibility spike merged 2026-08-20: `docs/spikes/qwen35-feasibility.md` (PR #991).
+
+Honest sizing from the spike: **text-only Qwen3.8-27B is 14-22 engineer-days**; vision is a further 15-25 and should be funded as a separate epic. Phases: M0 golden llama.cpp per-layer reference (1d) -> M1 text-only forward pass on the 812MB Qwen3.5-0.8B (6-9d) -> M2 recurrent state cache for linear-time decode (5-8d) -> M3 Qwen3.8-27B end to end as a text model (2-4d, **the actual ask**) -> M4 performance (5-10d+) -> M5 vision (15-25d, separate).
+
+What helps: the hybrid layout is ONE metadata integer (`qwen35.full_attention_interval=4` -> 48 Gated DeltaNet + 16 attention layers, tensor count confirms 48x14 + 16x11 + 3 = 851); the 16 attention layers are essentially E151's qwen3 plus a gate; partial rotary 0.25 already falls out of existing metadata; `arch_nemotron_h.go` has a probe-and-switch hybrid loop to copy. **Two whole workstreams are removable:** MTP ships as a separate `mtp-*.gguf` that plain decode never loads, and mRoPE degenerates exactly to 1D RoPE when there are no image tokens.
+
+Genuinely new: the Gated DeltaNet delta rule (~250-400 lines; its `-b*k(k^T S)` erase term breaks the single fused pass `MIMOMambaBlock.headSelectiveScan` uses) and a recurrent state cache (first of its kind here -- `generate/ssm_state.go` is 72 dead lines with zero callers).
+
+**Biggest risk: M2, the state cache.** The "we already have mamba/jamba" lead (mine) is structurally real but EMPIRICALLY UNPROVEN -- `docs/verified-models.md` has no row for mamba/mamba3/jamba/nemotron_h/rwkv, and `arch_jamba.go:421-428` looks up HuggingFace tensor names that no llama.cpp GGUF emits, so that builder has almost certainly never loaded a real file. Do not budget on the assumption that it works.
+**Biggest unknown:** the exact DeltaNet gating formulas. The GGUF pins every shape and no formula; wrong alpha/beta construction yields finite, plausible, WRONG logits -- which is why M0 exists as its own milestone.
+Practical: build against `unsloth/Qwen3.5-0.8B-GGUF` Q8_0 (812MB, identical architecture), not the 27B (18.97GB, ~31min from the mini, hours on a slow link).
+
+- [ ] T153.0 PLAN: expand E153 to executable fidelity  Owner: TBD  Est: 2h  delivers: [E153 decomposed into M0-M4 tasks]  kind: plan  blocked-by: [T138.1]
+  - **FOUNDER GATE: not scheduled.** E151 was already an ADR-093 exception (ADR-095); E153 is an order of magnitude larger and would dominate Phase 2. Do not start without an explicit founder decision on sequencing against Traction. When that decision comes, run /plan scoped to E153 with the spike as input.
 
 ### E138: Plan Phase 2 (Traction) -- fidelity: outline
 
@@ -235,7 +272,8 @@ Intent: Phase 2 turns verified capability into users -- website/docs site (Hugo 
 | O: Trust surface | T146.1 (now); T146.2 (after T136.5) | docs only, no GPU |
 | P: Cross-repo hygiene | T147.1 -> T147.2 -> T147.4; T147.3 independent | T147.1 GB10 proof is GPU-serial |
 | Q: GQA kernel | T148.1 -> T148.2 (after T147.2) | GPU-serial; time-boxed |
-| R: Bug disposition | T149.1 -> T149.2 -> T149.3 (after T136.3) | GPU-serial; each time-boxed |
+| R: Bug disposition | T149.1 DONE (brought forward, was blocking CI); T149.2 -> T149.3 | GPU-serial; each time-boxed |
+| U: Decode correctness | T152.1 DONE; T152.2 (#994); T152.3 vacuous-assertion audit | CPU-only; T152.1 gates T136.3 |
 | S: Workspace | T150.1 (done); T150.2 (founder, anytime) | host-side, no GPU |
 | T: Qwen 3 (ADR-095) | T151.1 -> T151.2 -> T151.3 -> S151.3.1 -> T151.4 -> T151.5 | T151.1-T151.3 need no GPU; T151.4 is GPU-serial and yields to the matrix |
 | F: Next plan | T138.1 | after N and O converge |
@@ -328,6 +366,15 @@ Estimated wall-clock: 3-6 working days of GPU-serial work plus review latency. M
 ---
 
 ## Progress Log
+
+### 2026 08 21 -- Change Summary: a cross-architecture decode correctness bug found and fixed; main was red; Qwen 3 landed but is NOT Qwen 3.8
+
+- **The day's most consequential finding was not about Qwen.** E151 surfaced that multi-token decode diverged from llama.cpp on EVERY architecture. Root-caused to a RoPE position offset read from layer 0's cursor (T152.1, PR #993, merged 865c310e). **Every generation zerfoo produced past the first token was affected**; any pre-#993 golden output or parity baseline is invalid. T136.3 is now explicitly blocked on this.
+- **main was RED** on `TestTensorCache_FP16_GPU_MultiHead_PrefillAndDecode` (the #981 test), which made every PR's CI red and masked real signal. Fixed and merged (T149.1, PR #995) -- one buffer with three inconsistent layouts, invisible at batch==1. Brought forward ahead of its planned slot for that reason.
+- Flaky `TestGenerateBatch_ConcurrentSessions` fixed (PR #992): the assertion was never satisfiable -- batch generations cannot overlap by design because `Generate` holds the shared `graphMu` for its whole call. A `testing.Short()` skip had been bolted on and suppressed nothing since CI never passes `-short`. Lore L-0019.
+- **E153 added (outline, founder-gated):** Qwen3.8-27B is real but is `qwen35`, which E151's `qwen3` builder cannot load. Spike merged (PR #991): 14-22 engineer-days text-only, +15-25 for vision. This is the model David actually asked for and it is NOT delivered -- the plan says so plainly rather than letting E151 read as if it were.
+- **New epic E152 (decode-path correctness)** carries #994 (CompileTraced can never validate for GGUF loads -- wasteful, not causal) and T152.3, an audit of the parity suite for vacuous assertions. THREE instances of "a gate that passes with a real bug present" surfaced in one day (T136.6's directory scan, ztensor#182's 1000x-loose bound, `TestGQA_CachedForward`'s saturated softmax). That is a pattern worth a dedicated sweep.
+- Process note: three parallel agents each independently claimed lore ID **L-0019**, causing a rebase conflict. Renumbered to L-0019/L-0020/L-0021. Wide fan-out needs ID ranges or a merge-time renumbering convention for append-only files.
 
 ### 2026 08 20 (later) -- Change Summary: T136.6 done -- the vacuous-parity hazard was REAL and the standing gate was the vector
 
