@@ -22,6 +22,10 @@ import (
 // debugOnnx caches the ZERFOO_DEBUG_ONNX environment variable check at init time.
 var debugOnnx = os.Getenv("ZERFOO_DEBUG_ONNX") == "1"
 
+// tracedPlanEnabled caches the ZERFOO_TRACED_PLAN environment variable check
+// at init time. Traced compilation is off by default; see compileGraph.
+var tracedPlanEnabled = os.Getenv("ZERFOO_TRACED_PLAN") == "1"
+
 // ModelConfig holds model architecture parameters needed for generation.
 type ModelConfig struct {
 	VocabSize  int // Total tokens in vocabulary
@@ -291,13 +295,25 @@ func (gen *Generator[T]) EAGLEEnabled() bool {
 	return err == nil
 }
 
-// compileGraph tries CompileTraced when an EngineProxy is available, with
-// graceful fallback to Compile on error or plan validation failure.
+// compileGraph compiles the decode graph into an ExecutionPlan.
 //
-// Compilation runs Forward on graph nodes to trace operations. To prevent
+// Compilation runs Forward on graph nodes to determine shapes. To prevent
 // these extra forward passes from corrupting the inference KV cache (which
 // would cause duplicate entries and wrong RoPE positions), we strip the
 // KV cache from the context used for compilation.
+//
+// Traced compilation (graph.CompileTraced) is opt-in via ZERFOO_TRACED_PLAN=1
+// and off by default. It cannot produce a runnable plan for any architecture
+// built by the inference package: those architectures compute many tensors in
+// plain Go rather than through engine calls (embedding row lookup, RoPE tables,
+// KV cache slices, attention masks), so nothing in the trace produces the slots
+// that consume them and the plan fails validation on its first instruction.
+// Measured on gemma3-1b Q4_K_M: 341 of 1701 traced slots have no producer;
+// on Qwen3-0.6B Q8_0: 283 of 1831. Every EngineProxy in this repository is
+// installed by an inference architecture builder, so there is no graph here
+// for which tracing succeeds -- attempting it cost ~0.7s of wasted trace per
+// generator against ~0.1ms for Compile, and logged a failure that reads like
+// a correctness bug. See issue #994.
 func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.TensorNumeric[T]) {
 	gen.planOnce.Do(func() {
 		// Use a cache-free context for compilation so tracing and
@@ -306,7 +322,7 @@ func (gen *Generator[T]) compileGraph(ctx context.Context, tokenTensor *tensor.T
 
 		var compiled *graph.ExecutionPlan[T]
 		var cErr error
-		if proxy := gen.graph.EngineProxy(); proxy != nil {
+		if proxy := gen.graph.EngineProxy(); proxy != nil && tracedPlanEnabled {
 			compiled, cErr = gen.graph.CompileTraced(compileCtx, tokenTensor)
 			if cErr == nil {
 				// Validate traced plan with a test run.
