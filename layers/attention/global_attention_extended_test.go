@@ -2,6 +2,7 @@ package attention
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/zerfoo/ztensor/compute"
@@ -105,8 +106,31 @@ func TestGlobalAttention_ScaleRope(t *testing.T) {
 		t.Fatalf("NewGlobalAttention failed: %v", err)
 	}
 
-	if err := ga.ScaleRope(ctx, 2.0); err != nil {
+	// Sensitivity control (T152.3): see TestGroupedQueryAttention_ScaleRope.
+	// A no-op ScaleRope passed this test before the angle-table check existed.
+	if ga.gqa.rope == nil {
+		t.Fatal("GlobalAttention has no RoPE: this test would pass vacuously")
+	}
+	before, _, _, err := ga.gqa.rope.GetAngles(0, 4)
+	if err != nil {
+		t.Fatalf("GetAngles before: %v", err)
+	}
+	prev := append([]float32(nil), before.Data()...)
+
+	const factor = 2.0
+	if err := ga.ScaleRope(ctx, factor); err != nil {
 		t.Errorf("ScaleRope failed: %v", err)
+	}
+
+	after, _, _, err := ga.gqa.rope.GetAngles(0, 4)
+	if err != nil {
+		t.Fatalf("GetAngles after: %v", err)
+	}
+	for i, got := range after.Data() {
+		want := prev[i] * factor
+		if diff := math.Abs(float64(got - want)); diff > 1e-6 {
+			t.Fatalf("cos angle[%d] = %g after ScaleRope(%g), want %g (diff=%g)", i, got, factor, want, diff)
+		}
 	}
 }
 
