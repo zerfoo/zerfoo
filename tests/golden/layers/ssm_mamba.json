@@ -359,5 +359,5 @@
     8,
     4
   ],
-  "tolerance": 0.001
+  "tolerance": 1e-08
 }
