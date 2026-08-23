@@ -1,7 +1,19 @@
 # ADR 028: Tracing Compiler for Automatic Primitive Op Decomposition
 
 ## Status
-Accepted
+Accepted, but NOT ACTIVE for any model this repository loads.
+
+`generate.compileGraph` no longer attempts `CompileTraced` unless
+`ZERFOO_TRACED_PLAN=1` is set. The mechanism below works as described, but it
+cannot produce a *runnable* plan for an architecture built by `inference/`:
+those architectures materialise many tensors in plain Go rather than through
+engine calls, so the trace contains no instruction producing those slots and
+the plan fails validation on its first instruction. Measured: 341 of 1701
+traced slots dangle on gemma3-1b-it-Q4_K_M, 283 of 1831 on Qwen3-0.6B-Q8_0 --
+the embedding lookup named in the table below is only the first of them.
+The decomposition this ADR describes is therefore a precondition for the
+megakernel emitter (ADR 026) that is necessary but not sufficient. See
+issue #994 and docs/lore.md L-0022 before reviving it.
 
 ## Date
 2026-03-07
