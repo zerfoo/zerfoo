@@ -96,3 +96,39 @@ Results in devlog, 2026-03-27.
 ## Flash Decode (GPU, pending)
 
 Target: ≥ 1.5x speedup at seqLen_KV > 1024 (E43). To be benchmarked on DGX Spark after GPU streaming GEMM lands.
+
+## Fused GQA repeat-interleave restored (2026-08-23, T148.2)
+
+The fused GQA KV-head-expansion kernel is back in use on GPU. It was disabled
+outright in `layers/attention/grouped_query_attention.go` from 2026-08-09 to
+2026-08-23 as the mitigation for ztensor#180, during which every GQA model
+(Llama, Mistral, Qwen, Gemma) ran the slower `Reshape -> Repeat -> Reshape`
+chain instead. Fixed upstream in ztensor#183 (an optional kernel symbol was
+launched through a null function pointer, killing the process instead of
+returning an error) plus a refresh of the DGX's deployed
+`/opt/zerfoo/lib/libkernels.so`, which had not been rebuilt since 2026-07-03
+and did not export `launch_repeat_interleave_f32` at all.
+
+**Every throughput number above this section was measured on a build where
+this path was NOT disabled** (they predate 2026-08-09) **and remains true for
+that build.** No figure in this file has been restated. Nothing was
+re-benchmarked for this change: it restores a previously-shipped code path
+rather than introducing a new one, and a throughput comparison for it is not
+yet measured. Treat the perf effect as unquantified until an A/B run lands.
+
+Correctness on the restored path, GB10, ztensor
+`v1.19.3-0.20260823235001-c29246e8ac17`:
+
+```
+--- PASS: TestGPUParity_GQA
+    gqa_forward: maxDiff=7.629395e-06 at idx=5, mismatches=0/64
+--- PASS: TestGPUParity_GQA_FusedRepeatInterleave
+    cpu reference range=8.011882e+01 (min=-46.216557 max=33.902267) over 64 elements
+    gqa_forward_fused_repeat_interleave: maxDiff=7.629395e-06 at idx=5, mismatches=0/64
+```
+
+`TestGPUParity_GQA` alone does not establish that the fused path ran --
+GroupedQueryAttention falls back silently and correctly, so that test is green
+either way (verified: it passes against the pre-refresh library too). The
+companion test asserts `FusedRepeatInterleaveAvailable()` first and fails
+rather than skips, which is what makes the claim in this section checkable.

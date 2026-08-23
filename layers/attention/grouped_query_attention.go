@@ -976,40 +976,38 @@ func (gqa *GroupedQueryAttention[T]) Forward(ctx context.Context, inputs ...*ten
 		if gqa.numQueryHeads != gqa.numKeyValueHeads && gqa.numKeyValueHeads > 1 {
 			replicationFactor := gqa.numQueryHeads / gqa.numKeyValueHeads
 
-			// Fused RepeatInterleave (single kernel replacing
-			// Reshape -> Repeat -> Reshape for each of K and V) is disabled:
-			// ztensor v1.19.2's GPU RepeatInterleaveF32 kernel launch
-			// segfaults (SIGSEGV, null-pointer CUDA kernel call) whenever
-			// this path actually runs -- reproduced via
-			// tests/parity.TestGPUParity_GQA, 2026-08-09. This affects any
-			// model with numQueryHeads != numKeyValueHeads (i.e. essentially
-			// every modern GQA architecture: Llama, Mistral, Qwen, Gemma) the
-			// moment SDPA runs without a flash-decode shortcut on GPU. The
-			// bug is upstream in ztensor, not fixable from this repo; unlike
-			// a normal error return, a kernel-launch SIGSEGV kills the whole
-			// process before Go's error handling (or the fallback below) can
-			// run, so the type-assertion gate alone cannot protect against
-			// it. Tracked upstream: github.com/zerfoo/ztensor issue #180.
-			// Re-enable once ztensor ships a fix and zerfoo bumps to it.
-			const fusedRepeatInterleaveEnabled = false
+			// Fused RepeatInterleave: one kernel in place of
+			// Reshape -> Repeat -> Reshape for each of K and V.
+			//
+			// This was disabled outright between 2026-08-09 and 2026-08-23
+			// (ztensor#180): ztensor's GPU RepeatInterleaveF32 launched an
+			// UNRESOLVED optional kernel symbol, i.e. jumped to address 0, so
+			// it did not return an error -- it killed the process with SIGSEGV
+			// before the fallback below could run. A type-assertion gate cannot
+			// defend against a crash inside the call it is gating, so the only
+			// safe move from this repo was not to call it at all.
+			//
+			// ztensor now checks the function pointer and returns an error when
+			// the deployed libkernels.so lacks the kernel (ztensor#183), which
+			// makes the error-handling below sufficient again: fusedOK stays
+			// false and we take the same fallback as before, with no crash.
+			// Proven on the GB10 by tests/parity.TestGPUParity_GQA.
 			fusedOK := false
-			if fusedRepeatInterleaveEnabled {
-				type repeatInterleaver[U tensor.Numeric] interface {
-					RepeatInterleave(ctx context.Context, a *tensor.TensorNumeric[U], axis int, reps int, dst ...*tensor.TensorNumeric[U]) (*tensor.TensorNumeric[U], error)
-				}
-				realEng := compute.Engine[T](gqa.engine)
-				if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
-					realEng = proxy.Real()
-				}
-				if ri, ok := realEng.(repeatInterleaver[T]); ok {
-					kExp, kErr := ri.RepeatInterleave(ctx, kHeadsRoPE, 1, replicationFactor)
-					if kErr == nil {
-						vExp, vErr := ri.RepeatInterleave(ctx, vHeads, 1, replicationFactor)
-						if vErr == nil {
-							kHeadsRoPE = kExp
-							vHeads = vExp
-							fusedOK = true
-						}
+			type repeatInterleaver[U tensor.Numeric] interface {
+				RepeatInterleave(ctx context.Context, a *tensor.TensorNumeric[U], axis int, reps int, dst ...*tensor.TensorNumeric[U]) (*tensor.TensorNumeric[U], error)
+			}
+			realEng := compute.Engine[T](gqa.engine)
+			if proxy, ok := gqa.engine.(*compute.EngineProxy[T]); ok {
+				realEng = proxy.Real()
+			}
+			if ri, ok := realEng.(repeatInterleaver[T]); ok {
+				kExp, kErr := ri.RepeatInterleave(ctx, kHeadsRoPE, 1, replicationFactor)
+				if kErr == nil {
+					vExp, vErr := ri.RepeatInterleave(ctx, vHeads, 1, replicationFactor)
+					if vErr == nil {
+						kHeadsRoPE = kExp
+						vHeads = vExp
+						fusedOK = true
 					}
 				}
 			}
