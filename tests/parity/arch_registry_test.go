@@ -77,7 +77,17 @@ func TestArchitectureRegistry(t *testing.T) {
 
 // TestArchitectureBuilderNonNil verifies every registered builder is callable.
 func TestArchitectureBuilderNonNil(t *testing.T) {
-	for _, name := range inference.ListArchitectures() {
+	names := inference.ListArchitectures()
+
+	// Sensitivity control (T152.3): the loop below draws its cases from the
+	// registry itself, so an empty registry means zero subtests and a green
+	// result. Red-proofed: with ListArchitectures stubbed to return nil this
+	// test passed while claiming every architecture was callable.
+	if len(names) == 0 {
+		t.Fatal("registry is empty: this test would pass vacuously")
+	}
+
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			builder, ok := inference.GetArchitecture(name)
 			if !ok {

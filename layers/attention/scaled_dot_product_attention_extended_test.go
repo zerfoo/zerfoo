@@ -68,6 +68,26 @@ func TestScaledDotProductAttention_ForwardWithMask(t *testing.T) {
 			t.Fatalf("output contains NaN at index %d", i)
 		}
 	}
+
+	// Sensitivity control (T152.3): shape and NaN assertions alone cannot tell
+	// whether the mask was applied or silently dropped. Red-proofed: with
+	// Forward discarding the caller's mask, everything above still passed.
+	// The masked result must differ from the unmasked one.
+	unmasked, err := sdpa.Forward(context.Background(), q, k, v, nil)
+	if err != nil {
+		t.Fatalf("Forward without mask failed: %v", err)
+	}
+	differs := false
+	for i, got := range out.Data() {
+		if got != unmasked.Data()[i] {
+			differs = true
+
+			break
+		}
+	}
+	if !differs {
+		t.Error("masked and unmasked outputs are identical: the mask was not applied")
+	}
 }
 
 func TestScaledDotProductAttention_BackwardFullFlow(t *testing.T) {

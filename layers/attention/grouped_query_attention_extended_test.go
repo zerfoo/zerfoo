@@ -84,8 +84,33 @@ func TestGroupedQueryAttention_ScaleRope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewGroupedQueryAttention failed: %v", err)
 	}
-	if err := gqa.ScaleRope(ctx, 2.0); err != nil {
+	// Sensitivity control (T152.3): asserting only that ScaleRope returns nil
+	// makes the test pass against `func ScaleRope(...) error { return nil }`.
+	// Red-proofed: with ScaleRope stubbed to a no-op, nothing in this package
+	// failed. Capture the angle table and assert it actually scaled.
+	if gqa.rope == nil {
+		t.Fatal("GQA has no RoPE: this test would pass vacuously")
+	}
+	before, _, _, err := gqa.rope.GetAngles(0, 4)
+	if err != nil {
+		t.Fatalf("GetAngles before: %v", err)
+	}
+	prev := append([]float32(nil), before.Data()...)
+
+	const factor = 2.0
+	if err := gqa.ScaleRope(ctx, factor); err != nil {
 		t.Errorf("ScaleRope failed: %v", err)
+	}
+
+	after, _, _, err := gqa.rope.GetAngles(0, 4)
+	if err != nil {
+		t.Fatalf("GetAngles after: %v", err)
+	}
+	for i, got := range after.Data() {
+		want := prev[i] * factor
+		if diff := math.Abs(float64(got - want)); diff > 1e-6 {
+			t.Fatalf("cos angle[%d] = %g after ScaleRope(%g), want %g (diff=%g)", i, got, factor, want, diff)
+		}
 	}
 }
 
