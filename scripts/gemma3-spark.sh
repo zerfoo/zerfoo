@@ -3,11 +3,15 @@
 # the DGX host, poll the pod until it terminates, stream its logs, and exit
 # with its status.
 #
-# Purpose: recertify (or refute) the published 241 tok/s / +28% vs Ollama
-# figure in docs/benchmarks.md. The original 241 tok/s was measured with a
-# different binary; after the ztensor module extraction the same kernel hit
-# 186 tok/s. This script runs cmd/bench_tps against the current main branch
-# to establish the real current number.
+# Purpose: establish a current Gemma 3 1B Q4_K_M throughput figure for
+# docs/benchmarks.md. The most recent committed evidence is 235 tok/s
+# (1.25x Ollama 188) in results/benchmark-2026-03-27.json.
+#
+# This also settles the withdrawn 241 tok/s / +28% figure, which was published
+# without a result file: it was measured with a different binary, and after the
+# ztensor module extraction the same kernel hit 186 tok/s. This script runs
+# cmd/bench_tps against the current main branch to establish the real current
+# number.
 #
 # Usage:
 #   scripts/gemma3-spark.sh \

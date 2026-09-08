@@ -31,15 +31,15 @@ here; until then the "Status" column is authoritative.
 
 | Model | Architecture (Zerfoo builder) | GGUF source (public) | Quant | Parity evidence | Benchmark evidence | GPU-verified | Status |
 |-------|------------------------------|----------------------|-------|-----------------|--------------------|--------------|--------|
-| Gemma 3 1B | `gemma3` (`gemma`/`gemma3` alias) | `ggml-org/gemma-3-1b-it-GGUF` (file `gemma-3-1b-it-Q4_K_M.gguf`, per `docs/bench/manifests/gemma3-tps.yaml`) | Q4_K_M | `TestGemma3ForwardPass` / `TestGemma3GreedyDecode` / `TestGemma3Generation` (`tests/parity/gemma3_test.go`) — require `GEMMA3_MODEL_DIR`; GB10 re-run pending T136.3 | 241 tok/s (1.28x Ollama 188), `docs/benchmarks.md` "Throughput vs Ollama" row, 2026-03-31, v1.38.4; reproduction manifest `docs/bench/manifests/gemma3-tps.yaml` | Yes (2026-03-31) | verified |
+| Gemma 3 1B | `gemma3` (`gemma`/`gemma3` alias) | `ggml-org/gemma-3-1b-it-GGUF` (file `gemma-3-1b-it-Q4_K_M.gguf`, per `docs/bench/manifests/gemma3-tps.yaml`) | Q4_K_M | `TestGemma3ForwardPass` / `TestGemma3GreedyDecode` / `TestGemma3Generation` (`tests/parity/gemma3_test.go`) — require `GEMMA3_MODEL_DIR`; GB10 re-run pending T136.3 | 235 tok/s (1.25x Ollama 188), `results/benchmark-2026-03-27.json` via the `docs/benchmarks.md` "Throughput vs Ollama" row, 2026-03-27; reproduction manifest `docs/bench/manifests/gemma3-tps.yaml` | Yes (2026-03-31) | verified |
 | Gemma 3 4B | `gemma3` (same builder as 1B) | `ggml-org/gemma-3-4b-it-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M (intended) | Same `TestGemma3*` harness, parameterized by `GEMMA3_MODEL_DIR`; not yet run against a 4B GGUF | — (pending T136.4) | No | pending |
-| Llama 3.2 3B | `llama` | `bartowski/Llama-3.2-3B-Instruct-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M | `TestLlama3ForwardPass` / `TestLlama3GreedyDecode` / `TestLlama3Generation` (`tests/parity/llama3_test.go`) — require `LLAMA3_MODEL_DIR`; GB10 re-run pending T136.3 | 92 tok/s (0.99x Ollama 93), `docs/benchmarks.md` "Throughput vs Ollama" row, 2026-03-30, v1.38.4; per-model reproduction manifest pending T136.4 | Yes (2026-03-30) | verified |
+| Llama 3.2 3B | `llama` | `bartowski/Llama-3.2-3B-Instruct-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M | `TestLlama3ForwardPass` / `TestLlama3GreedyDecode` / `TestLlama3Generation` (`tests/parity/llama3_test.go`) — require `LLAMA3_MODEL_DIR`; GB10 re-run pending T136.3 | 92 tok/s (0.99x Ollama 93 — Ollama marginally ahead), `results/benchmark-2026-03-27.json` via the `docs/benchmarks.md` "Throughput vs Ollama" row, 2026-03-27; per-model reproduction manifest pending T136.4 | Yes (2026-03-30) | verified |
 | Llama 4 (Scout, smallest runnable) | `llama4` | `unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M (intended) | `TestLlama4ForwardPass` / `TestLlama4GreedyDecode` / `TestLlama4Generation` (`tests/parity/llama4_test.go`) — require `LLAMA4_MODEL_DIR`; not yet run | — (pending T136.4) | No | pending |
-| Mistral 7B | `mistral` | `bartowski/Mistral-7B-Instruct-v0.3-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M | `TestMistralForwardPass` / `TestMistralGreedyDecode` / `TestMistralGeneration` (`tests/parity/mistral_test.go`) — require `MISTRAL_MODEL_DIR`; GB10 re-run pending T136.3 | 44 tok/s (1.00x Ollama 44), `docs/benchmarks.md` "Throughput vs Ollama" row, 2026-03-30, v1.38.4; per-model reproduction manifest pending T136.4 | Yes (2026-03-30) | verified |
+| Mistral 7B | `mistral` | `bartowski/Mistral-7B-Instruct-v0.3-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M | `TestMistralForwardPass` / `TestMistralGreedyDecode` / `TestMistralGeneration` (`tests/parity/mistral_test.go`) — require `MISTRAL_MODEL_DIR`; GB10 re-run pending T136.3 | 44 tok/s (1.00x Ollama 44 — parity), benchmarked at Q5_K_M per `results/benchmark-2026-03-27.json` via the `docs/benchmarks.md` "Throughput vs Ollama" row, 2026-03-27; per-model reproduction manifest pending T136.4 | Yes (2026-03-30) | verified |
 | Qwen 2 | `qwen2` | `Qwen/Qwen2-7B-Instruct-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M (intended) | `TestQwen25ForwardPass` / `TestQwen25GreedyDecode` / `TestQwen25Generation` (`tests/parity/qwen_test.go`, `qwen2` builder; test fixtures target Qwen2.5) — require `QWEN25_MODEL_DIR`; not yet run against a Qwen 2 GGUF | — (pending T136.4) | No | pending |
 | Qwen 3 0.6B (dense) | `qwen3` | `Qwen/Qwen3-0.6B-GGUF` (file `Qwen3-0.6B-Q8_0.gguf`, 639,446,688 bytes, sha256 `9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031`, size- and hash-verified against HuggingFace `Content-Length` / `X-Linked-ETag`) | Q8_0 | `TestQwen3GGUFArchitectureDelta` / `TestQwen3GGUFForwardPass` (`tests/parity/qwen3_test.go`, require `QWEN3_GGUF_PATH`) — **run and passing** on the file above, 2026-08-20. Asserts QK norms `[headDim]` on all 28 layers, zero attention-bias tensors, Q width = `NumHeads*HeadDim`, and finite non-degenerate logits (range -10.0548..17.0491) | — (not benchmarked) | Not yet (CPU forward pass + decode only) | partial — forward pass verified; **greedy decode is NOT bit-exact vs llama.cpp** (6/8 first-token match on the byte-identical GGUF; multi-token decode diverges, but `gemma3` reproduces the identical divergence on the same harness, so it is a pre-existing decode issue, not a `qwen3` builder defect) |
 | Phi-4 | `phi` / `phi3` alias | `microsoft/phi-4-gguf` (exact file pinned at provisioning, T136.2) | Q4_K_M (intended) | `TestPhi4ForwardPass` / `TestPhi4GreedyDecode` / `TestPhi4Generation` (`tests/parity/phi4_test.go`) — require `PHI4_MODEL_DIR`; not yet run | — (pending T136.4) | No | pending |
-| DeepSeek-R1-Distill 1.5B | `qwen2` (the 1.5B distill is a Qwen2-architecture model; see note below) | `bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M | No dedicated parity test; `tests/parity/deepseek_test.go` (`TestDeepSeekV3*`) targets the `deepseek_v3` architecture, **not** this Qwen2 distill. Parity via the `qwen2` path pending T136.3 | 186 tok/s (1.11x Ollama 168), `docs/benchmarks.md` "Throughput vs Ollama" row ("DeepSeek-R1 1.5B"), 2026-03-30, v1.38.4; per-model reproduction manifest pending T136.4 | Yes (2026-03-30) | verified |
+| DeepSeek-R1-Distill 1.5B | `qwen2` (the 1.5B distill is a Qwen2-architecture model; see note below) | `bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF` (exact file pinned at provisioning, T136.2) | Q4_K_M | No dedicated parity test; `tests/parity/deepseek_test.go` (`TestDeepSeekV3*`) targets the `deepseek_v3` architecture, **not** this Qwen2 distill. Parity via the `qwen2` path pending T136.3 | 186 tok/s (1.11x Ollama 167), `results/benchmark-2026-03-27.json` via the `docs/benchmarks.md` "Throughput vs Ollama" row ("DeepSeek-R1-Distill 1.5B"), 2026-03-27; per-model reproduction manifest pending T136.4 | Yes (2026-03-30) | verified |
 | MiniMax-M2 229B (CPU / over-RAM) | MoE; loaded via the GGUF path on CPU (over-RAM mmap). Builder not in the `arch_registry_test` expected list — see note below | MiniMaxAI MiniMax-M2 GGUF (229B MoE, 3 shards, 128.8 GB Q4_K_M; exact repo/file pinned at provisioning, T136.2) | Q4_K_M | No GPU parity test (CPU-only over-RAM path); load + decode demonstrated in `docs/devlog.md` 2026-03-29 entry ("MiniMax-M2 229B inference verified on 128 GB DGX Spark") | 0.06 tok/s CPU over-RAM, `docs/benchmarks.md` "Over-RAM Inference" row, 2026-03-29 (NVMe-bound; Ollama failed to load with a 500 error on same hardware) | No (CPU-only; no GPU over-RAM path yet) | verified |
 | Chronos-2 (timeseries, non-LLM) | `BuildChronos` T5 graph builder exists (`inference/timeseries/arch_chronos.go`, with a weight converter in `convert_chronos.go`) but is not registered in the GGUF architecture registry (`inference.ListArchitectures()`) — gate check 1 fails | Amazon `amazon/chronos-2` (not currently distributed as GGUF; conversion path unconfirmed) | — | Structural/shape tests only (`timeseries/chronos_test.go`, `inference/timeseries/arch_chronos_test.go`); no numeric parity test in `tests/parity/` | — | No | arch-unconfirmed |
 
@@ -121,15 +121,15 @@ it stays `pending` or `arch-unconfirmed` with empty evidence cells.
 
 | Candidate | Current status | Basis |
 |-----------|----------------|-------|
-| Gemma 3 1B | verified (GPU) | `benchmarks.md` 241 tok/s row (2026-03-31) + `gemma3-tps.yaml` + `TestGemma3*` |
+| Gemma 3 1B | verified (GPU) | `benchmarks.md` 235 tok/s row (2026-03-27) + `results/benchmark-2026-03-27.json` + `gemma3-tps.yaml` + `TestGemma3*` |
 | Gemma 3 4B | pending | `gemma3` builder registered; no evidence yet |
-| Llama 3.2 3B | verified (GPU) | `benchmarks.md` 92 tok/s row (2026-03-30) + `TestLlama3*` |
+| Llama 3.2 3B | verified (GPU) | `benchmarks.md` 92 tok/s row (2026-03-27, 0.99x — Ollama ahead) + `TestLlama3*` |
 | Llama 4 (Scout) | pending | `llama4` builder registered; `TestLlama4*` present but not run |
-| Mistral 7B | verified (GPU) | `benchmarks.md` 44 tok/s row (2026-03-30) + `TestMistral*` |
+| Mistral 7B | verified (GPU) | `benchmarks.md` 44 tok/s row (2026-03-27, Q5_K_M, 1.00x — parity) + `TestMistral*` |
 | Qwen 2 | pending | `qwen2` builder registered; `TestQwen25*` fixtures target Qwen2.5 |
 | Qwen 3 0.6B (dense) | partial (CPU) | `TestQwen3GGUF*` run and passing on a hash-verified Q8_0 GGUF (2026-08-20); forward pass verified, decode not bit-exact — see row above |
 | Phi-4 | pending | `phi`/`phi3` builder registered; `TestPhi4*` present but not run |
-| DeepSeek-R1-Distill 1.5B | verified (GPU) | `benchmarks.md` 186 tok/s row (2026-03-30); loads via `qwen2` builder |
+| DeepSeek-R1-Distill 1.5B | verified (GPU) | `benchmarks.md` 186 tok/s row (2026-03-27, 1.11x Ollama 167); loads via `qwen2` builder |
 | MiniMax-M2 229B (CPU) | verified (CPU) | `benchmarks.md` Over-RAM row + `devlog.md` 2026-03-29 |
 | Qwen 3 MoE (e.g. 30B-A3B) | not supported | GGUF declares architecture `qwen3moe`, which has no builder; fails cleanly with "unsupported architecture". Pinned by `TestBuildArchGraph_Qwen3MoEUnsupported`. Must not be claimed |
 | Qwen 3.5 / 3.6 / 3.8 (e.g. Qwen3.8-27B) | not supported | These are real, current Qwen releases, but their GGUFs declare architecture `qwen35` (`model_type: qwen3_5`) — a hybrid 3:1 linear-attention/full-attention model with gated attention output, partial + multimodal RoPE, a native vision tower and an MTP head. Needs new ops; **not** covered by the `qwen3` builder. Must not be claimed |
@@ -137,10 +137,20 @@ it stays `pending` or `arch-unconfirmed` with empty evidence cells.
 
 ## Known documentation discrepancy
 
-`docs/benchmarks.md` cites "Full results: `results/benchmark-2026-03-31.json`"
-for the Throughput-vs-Ollama table, but that file does not exist in `results/`
-(only `benchmark-2026-03-25.json` and `benchmark-2026-03-27.json` are present).
-The tok/s figures above are therefore cited to the `benchmarks.md` rows
-themselves and, for Gemma 3 1B, to the `gemma3-tps.yaml` reproduction manifest —
-**not** to the missing JSON. T136.4 should either restore the referenced results
-file or correct the `benchmarks.md` reference.
+**Resolved 2026-07-28.** `docs/benchmarks.md` previously cited "Full results:
+`results/benchmark-2026-03-31.json`" for the Throughput-vs-Ollama table, and
+that file has never existed in `results/` (only `benchmark-2026-03-25.json` and
+`benchmark-2026-03-27.json` have ever been committed). The dangling citation has
+been removed, and every tok/s figure in the table above is now cited to
+`results/benchmark-2026-03-27.json`, which does exist and is machine-readable.
+
+The figures that depended on the missing file — 241 tok/s / 1.28x for Gemma 3 1B
+— have been withdrawn and replaced with the 235 tok/s / 1.25x values the
+committed result file actually records. See "The 241 tok/s figure" in
+`docs/benchmarks.md` for the full reconstruction of how that number entered the
+documentation.
+
+Still open: the recertification run described in
+`docs/bench/manifests/gemma3-tps.yaml` has not been executed against current
+main, so the 2026-03-27 figures are the most recent evidence available and are
+four months old relative to the current tree.

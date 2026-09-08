@@ -1,8 +1,13 @@
 # Gemma 3 1B Q4_K_M throughput bench pod manifest.
 #
-# Recertifies the published 241 tok/s (+28% vs Ollama 188) Gemma 3 1B Q4_K_M
-# figure in docs/benchmarks.md. Uses cmd/bench_tps — the same binary that
-# originally recorded the 241 tok/s number — with greedy sampling, 128 output
+# Establishes a current Gemma 3 1B Q4_K_M throughput figure for the
+# "Throughput vs Ollama" table in docs/benchmarks.md, whose most recent
+# committed evidence is 235 tok/s (1.25x Ollama 188) from
+# results/benchmark-2026-03-27.json.
+#
+# This manifest also exists to settle the withdrawn 241 tok/s / +28% figure that
+# was published without a result file; see "The 241 tok/s figure" in
+# docs/benchmarks.md. Uses cmd/bench_tps with greedy sampling, 128 output
 # tokens, and CUDA graph capture enabled (default).
 #
 # Submit via scripts/gemma3-spark.sh, which substitutes ${RUN_ID}, ${GGUF_PATH},
