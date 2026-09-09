@@ -1,0 +1,12 @@
+=== RUN   TestClassifierTrainingIris
+    classifier_train_test.go:82: hidden=[] seed=17 steps=1200 correct=29/30 macro_f1=0.9665831244778613 mean_ce=0.10621550401694063
+    classifier_train_test.go:82: hidden=[] seed=42 steps=1200 correct=29/30 macro_f1=0.9665831244778613 mean_ce=0.13228260844581
+    classifier_train_test.go:82: hidden=[] seed=91 steps=1200 correct=29/30 macro_f1=0.9665831244778613 mean_ce=0.11254755432145956
+    classifier_train_test.go:82: hidden=[16] seed=17 steps=1200 correct=29/30 macro_f1=0.9665831244778613 mean_ce=0.20493170868112193
+    classifier_train_test.go:82: hidden=[16] seed=42 steps=1200 correct=28/30 macro_f1=0.9333333333333333 mean_ce=0.25216057071755754
+    classifier_train_test.go:82: hidden=[16] seed=91 steps=1200 correct=28/30 macro_f1=0.9333333333333333 mean_ce=0.24081686338364475
+--- PASS: TestClassifierTrainingIris (0.11s)
+=== RUN   TestClassifierTrainingCancellationAndLimits
+--- PASS: TestClassifierTrainingCancellationAndLimits (0.00s)
+PASS
+ok  	github.com/zerfoo/zerfoo/tabular	0.433s

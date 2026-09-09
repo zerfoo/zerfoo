@@ -1,0 +1,43 @@
+# Render POD_NAME and REF (an exact published commit) before submitting to Spark.
+# This targeted gate does not claim text-model parity, checkpoint recovery or
+# HTTP serving. One GPU pod at a time; 2 GiB is an enforced process-memory cap.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${POD_NAME}
+  labels:
+    app: zerfoo-model-creation
+    type: gpu-validation
+spec:
+  restartPolicy: Never
+  containers:
+    - name: train
+      image: docker.io/library/golang:1.26-bookworm
+      command:
+        - "/bin/bash"
+        - "-c"
+        - "git clone --quiet https://github.com/zerfoo/zerfoo.git /workspace/zerfoo && cd /workspace/zerfoo && git checkout --quiet $REF && exec bash scripts/model-creation-gpu-inpod.sh"
+      env:
+        - name: REF
+          value: "${REF}"
+        - name: LD_LIBRARY_PATH
+          value: "/usr/local/cuda/lib64:/opt/zerfoo/lib"
+      resources:
+        limits:
+          memory: 2Gi
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: zerfoo-lib
+          mountPath: /opt/zerfoo/lib
+          readOnly: true
+        - name: cuda
+          mountPath: /usr/local/cuda
+          readOnly: true
+  volumes:
+    - name: zerfoo-lib
+      hostPath:
+        path: /opt/zerfoo/lib
+    - name: cuda
+      hostPath:
+        path: /usr/local/cuda

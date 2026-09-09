@@ -1,0 +1,71 @@
+{
+  "baseline_revision": "60c8742cccc18ccb06d54ba3ad115e82bc13718e",
+  "go_version": "go1.27.1",
+  "platform": "Darwin/arm64",
+  "module_mode": "GOWORK=off; released ztensor v1.20.0; no production source changes",
+  "runs": {
+    "baseline": {
+      "terminal_test_events_including_parents_and_subtests": {
+        "github.com/zerfoo/zerfoo/tabular": {
+          "pass": 170
+        },
+        "github.com/zerfoo/zerfoo/cmd/cli": {
+          "pass": 454
+        },
+        "github.com/zerfoo/zerfoo/model/gguf": {
+          "pass": 328
+        },
+        "github.com/zerfoo/zerfoo/training/automl": {
+          "pass": 37
+        },
+        "github.com/zerfoo/zerfoo/training/loss": {
+          "pass": 140
+        },
+        "github.com/zerfoo/zerfoo/layers/functional": {
+          "pass": 114
+        },
+        "github.com/zerfoo/zerfoo/training/optimizer": {
+          "pass": 82
+        }
+      },
+      "package_verdicts": {
+        "github.com/zerfoo/zerfoo/tabular": "pass",
+        "github.com/zerfoo/zerfoo/model/gguf": "pass",
+        "github.com/zerfoo/zerfoo/cmd/cli": "pass",
+        "github.com/zerfoo/zerfoo/training/loss": "pass",
+        "github.com/zerfoo/zerfoo/training/automl": "pass",
+        "github.com/zerfoo/zerfoo/layers/functional": "pass",
+        "github.com/zerfoo/zerfoo/training/optimizer": "pass"
+      },
+      "raw_sha256": "f67393d90c2eabaa29b81415dfe3b6dd646b652526ecefb7f33ce1cb9a9a0099"
+    },
+    "tabular-spike": {
+      "terminal_test_events_including_parents_and_subtests": {
+        "github.com/zerfoo/zerfoo/tabular": {
+          "pass": 2
+        }
+      },
+      "package_verdicts": {
+        "github.com/zerfoo/zerfoo/tabular": "pass"
+      },
+      "raw_sha256": "328386d25d5aeb099e81d9acf59308e315275ded345889ecccb64f2b73a02371"
+    },
+    "worker-leakage": {
+      "terminal_test_events_including_parents_and_subtests": {
+        "github.com/zerfoo/zerfoo/cmd/cli": {
+          "pass": 4
+        }
+      },
+      "package_verdicts": {
+        "github.com/zerfoo/zerfoo/cmd/cli": "pass"
+      },
+      "raw_sha256": "ef3282840e9972d103d17ec66eda7b24880766db95da6f2358233311ac92fed1"
+    }
+  },
+  "audit_input_sha256": {
+    "tabular/model_creation_audit_test.go": "c65f66d9da59fffa30c3bdd9c684b5039ff37415b7a620d633c3bc9745ff9a5d",
+    "cmd/cli/model_creation_audit_test.go": "161831234b1d1fd0ce3d774b8b7db4ce8b99e067741cdbf791c91baa28b721e2",
+    "tabular/testdata/model_creation/contracts.json": "7294371a2b7a1baea375992b91bef5a88cf802e9e804dec78314926aff751b3f",
+    "tabular/testdata/model_creation/manifest.json": "a9b22b34544c80a48129077f37e99062e92af7bac3bcd7501e50a1d1619e1562"
+  }
+}

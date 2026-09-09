@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/zerfoo/zerfoo/tabular"
@@ -47,12 +49,14 @@ type trialLog struct {
 
 // bestConfigOutput is the JSON saved for the best configuration.
 type bestConfigOutput struct {
-	TrialID int                `json:"trial_id"`
-	Params  map[string]float64 `json:"params"`
-	Score   float64            `json:"score"`
-	Model   string             `json:"model"`
-	Dataset string             `json:"dataset"`
-	Metric  string             `json:"metric"`
+	TrialID        int                `json:"trial_id"`
+	Params         map[string]float64 `json:"params"`
+	Score          float64            `json:"score"`
+	Model          string             `json:"model"`
+	Dataset        string             `json:"dataset"`
+	Metric         string             `json:"metric"`
+	ArtifactPath   string             `json:"artifact_path,omitempty"`
+	ArtifactSHA256 string             `json:"artifact_sha256,omitempty"`
 }
 
 // NewAutoMLCommand creates a new automl command.
@@ -88,6 +92,10 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 		},
 	}
 
+	if cfg.Model == "tabular" && c.workerFactory == nil {
+		space.Params = []automl.HParam{{Name: "lr", Min: 1e-5, Max: 1e-2, IsLog: true}, {Name: "batch_size", Min: 1, Max: 64}}
+	}
+
 	var strategy automl.Strategy
 	switch cfg.Strategy {
 	case "random":
@@ -97,14 +105,16 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 	}
 
 	var worker automl.Worker
+	var tabularRun *tabularWorker
 	if c.workerFactory != nil {
 		worker = c.workerFactory(cfg)
 	} else if cfg.Model == "tabular" {
-		w, err := newTabularWorker(cfg.Dataset, cfg.Metric)
+		w, err := newTabularWorkerContext(ctx, cfg.Dataset, cfg.Metric, uint64(cfg.Seed))
 		if err != nil {
 			return fmt.Errorf("automl: create tabular worker: %w", err)
 		}
-		worker = w
+		tabularRun = w
+		worker = tabularTrialFunc(func(config automl.Config) (automl.Metric, error) { return w.runTrial(ctx, config) })
 	} else {
 		worker = &placeholderWorker{metric: cfg.Metric}
 	}
@@ -122,17 +132,22 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 	// Run trials, logging each result as NDJSON.
 	enc := json.NewEncoder(c.out)
 	best, runErr := coord.Run()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	for _, r := range coord.Results() {
 		entry := trialLog{
 			TrialID: r.TrialID,
 			Params:  r.Config.Params,
-			Score:   r.Metric.Score,
+			Score:   autoMLDisplayScore(r.Metric.Score, cfg.Metric, tabularRun != nil),
 		}
 		if r.Err != nil {
 			entry.Error = r.Err.Error()
 		}
-		_ = enc.Encode(entry)
+		if err := enc.Encode(entry); err != nil {
+			return fmt.Errorf("automl: write trial result: %w", err)
+		}
 	}
 
 	if runErr != nil {
@@ -144,10 +159,26 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 		out := bestConfigOutput{
 			TrialID: best.TrialID,
 			Params:  best.Config.Params,
-			Score:   best.Metric.Score,
+			Score:   autoMLDisplayScore(best.Metric.Score, cfg.Metric, tabularRun != nil),
 			Model:   cfg.Model,
 			Dataset: cfg.Dataset,
 			Metric:  cfg.Metric,
+		}
+		if tabularRun != nil {
+			key, err := tabularTrialKey(best.Config)
+			if err != nil {
+				return err
+			}
+			winner := tabularRun.models[key]
+			if winner == nil {
+				return fmt.Errorf("automl: winning model was not retained")
+			}
+			out.ArtifactPath = cfg.Output + ".bundle"
+			id, err := tabular.SaveClassifierBundle(ctx, out.ArtifactPath, winner, tabularRun.dataset, filepath.Base(cfg.Output))
+			if err != nil {
+				return fmt.Errorf("automl: save winning model: %w", err)
+			}
+			out.ArtifactSHA256 = id
 		}
 		data, err := json.MarshalIndent(out, "", "  ")
 		if err != nil {
@@ -156,7 +187,13 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 		if err := os.WriteFile(cfg.Output, data, 0600); err != nil {
 			return fmt.Errorf("automl: write best config: %w", err)
 		}
-		fmt.Fprintf(c.out, "Best config saved to %s\n", cfg.Output)
+		if tabularRun != nil {
+			if err := enc.Encode(map[string]any{"version": 1, "type": "result", "report": cfg.Output, "artifact_path": out.ArtifactPath, "artifact_sha256": out.ArtifactSHA256}); err != nil {
+				return fmt.Errorf("automl: write result: %w", err)
+			}
+		} else if _, err := fmt.Fprintf(c.out, "Best config saved to %s\n", cfg.Output); err != nil {
+			return fmt.Errorf("automl: write result: %w", err)
+		}
 	}
 
 	return nil
@@ -305,71 +342,122 @@ func (w *placeholderWorker) RunTrial(config automl.Config) (automl.Metric, error
 // tabularWorker trains a tabular model for each trial configuration and
 // returns the validation metric score.
 type tabularWorker struct {
-	data   [][]float64
-	labels []int
-	metric string
+	dataset        *tabular.Dataset
+	metric         string
+	models         map[string]*tabular.Classifier[float32]
+	lastEvaluation tabular.Evaluation
+	seed           uint64
 }
 
-// newTabularWorker creates a tabularWorker by reading CSV data from the given
-// path. The last column is treated as the integer label; all other columns are
-// numeric features.
+type tabularTrialFunc func(automl.Config) (automl.Metric, error)
+
+func (f tabularTrialFunc) RunTrial(config automl.Config) (automl.Metric, error) { return f(config) }
+
+func autoMLDisplayScore(score float64, metric string, tabularRun bool) float64 {
+	if tabularRun && (metric == "loss" || metric == "cross_entropy") {
+		return -score
+	}
+	return score
+}
+
 func newTabularWorker(datasetPath, metric string) (*tabularWorker, error) {
-	data, labels, err := readTabularCSV(datasetPath)
-	if err != nil {
+	return newTabularWorkerContext(context.Background(), datasetPath, metric, 42)
+}
+
+func newTabularWorkerContext(ctx context.Context, datasetPath, metric string, seed uint64) (*tabularWorker, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return &tabularWorker{data: data, labels: labels, metric: metric}, nil
+	switch metric {
+	case "accuracy", "macro_f1", "loss", "cross_entropy":
+	default:
+		return nil, fmt.Errorf("automl: unsupported metric %q", metric)
+	}
+	file, err := os.Open(datasetPath)
+	if err != nil {
+		return nil, fmt.Errorf("automl: open dataset: %w", err)
+	}
+	header, err := csv.NewReader(file).Read()
+	if err != nil {
+		closeErr := file.Close()
+		return nil, errors.Join(fmt.Errorf("automl: CSV header: %w", err), closeErr)
+	}
+	if len(header) < 2 {
+		closeErr := file.Close()
+		return nil, errors.Join(fmt.Errorf("automl: need features and target column"), closeErr)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		closeErr := file.Close()
+		return nil, errors.Join(err, closeErr)
+	}
+	dataset, err := tabular.InspectCSV(ctx, file, tabular.DatasetOptions{Target: header[len(header)-1], Split: "stratified", Seed: seed})
+	if err := errors.Join(err, file.Close()); err != nil {
+		return nil, err
+	}
+	return &tabularWorker{dataset: dataset, metric: metric, models: make(map[string]*tabular.Classifier[float32]), seed: seed}, nil
 }
 
-// RunTrial trains a tabular model with the hyperparameters from config and
-// returns the validation metric.
-func (w *tabularWorker) RunTrial(config automl.Config) (automl.Metric, error) {
-	tc := tabular.TrainConfig{
-		Epochs:          10,
-		BatchSize:       32,
-		LearningRate:    0.01,
-		WeightDecay:     1e-4,
-		ValidationSplit: 0.2,
-	}
-
-	// Map search space params to training config.
-	if v, ok := config.Params["lr"]; ok {
-		tc.LearningRate = v
-	}
-	if v, ok := config.Params["batch_size"]; ok {
-		tc.BatchSize = int(math.Round(v))
-		if tc.BatchSize < 1 {
-			tc.BatchSize = 1
-		}
-	}
-
-	mc := tabular.ModelConfig{
-		HiddenDims:  []int{64, 32},
-		DropoutRate:  0.0,
-		Activation:   tabular.ActivationReLU,
-	}
-
-	engine := compute.NewCPUEngine(numeric.Float32Ops{})
-	ops := numeric.Float32Ops{}
-
-	model, err := tabular.Train(w.data, w.labels, tc, mc, engine, ops)
+func tabularTrialKey(config automl.Config) (string, error) {
+	raw, err := json.Marshal(config.Params)
 	if err != nil {
-		return automl.Metric{}, fmt.Errorf("tabular worker: train: %w", err)
+		return "", fmt.Errorf("automl: invalid trial parameters: %w", err)
 	}
+	return string(raw), nil
+}
 
-	// Evaluate on the full dataset to compute the metric score.
-	correct := 0
-	for i, row := range w.data {
-		dir, _, err := model.Predict(row)
-		if err != nil {
-			continue
+// RunTrial implements the legacy Worker interface. The public command supplies
+// its request context through runTrial instead of this compatibility wrapper.
+func (w *tabularWorker) RunTrial(config automl.Config) (automl.Metric, error) {
+	return w.runTrial(context.Background(), config)
+}
+
+func (w *tabularWorker) runTrial(ctx context.Context, config automl.Config) (automl.Metric, error) {
+	options := tabular.FitOptions{Epochs: 10, BatchSize: 32, LearningRate: 0.01, WeightDecay: 0.0001, Seed: w.seed}
+	for name, value := range config.Params {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return automl.Metric{}, fmt.Errorf("automl: nonfinite parameter %q", name)
 		}
-		if int(dir) == w.labels[i] {
-			correct++
+		switch name {
+		case "lr":
+			options.LearningRate = value
+		case "batch_size":
+			if value < 1 || value > 64 {
+				return automl.Metric{}, fmt.Errorf("automl: batch_size must be in [1,64]")
+			}
+			options.BatchSize = int(math.Round(value))
+		default:
+			return automl.Metric{}, fmt.Errorf("automl: unsupported parameter %q", name)
 		}
 	}
-	score := float64(correct) / float64(len(w.data))
-
+	manifest := w.dataset.Manifest()
+	modelConfig := tabular.ClassifierConfig{InputDim: len(manifest.Options.Features), ClassCount: len(manifest.Labels), Labels: manifest.Labels, HiddenDims: []int{16}, Seed: w.seed}
+	result, err := tabular.FitClassifier(ctx, w.dataset, modelConfig, options, compute.NewCPUEngine(numeric.Float32Ops{}), nil)
+	if err != nil {
+		return automl.Metric{}, fmt.Errorf("automl: trial training: %w", err)
+	}
+	rows, labels, err := w.dataset.Partition("validation")
+	if err != nil {
+		return automl.Metric{}, err
+	}
+	report, err := result.Model.Evaluate(ctx, rows, labels)
+	if err != nil {
+		return automl.Metric{}, fmt.Errorf("automl: validation: %w", err)
+	}
+	w.lastEvaluation = report
+	key, err := tabularTrialKey(config)
+	if err != nil {
+		return automl.Metric{}, err
+	}
+	w.models[key] = result.Model
+	score := report.Accuracy
+	switch w.metric {
+	case "macro_f1":
+		score = report.MacroF1
+	case "loss", "cross_entropy":
+		score = -report.CrossEntropy
+	}
+	// The existing coordinator maximizes utility. Negate loss internally only;
+	// public trial/config output restores the positive measured loss.
 	return automl.Metric{Score: score}, nil
 }
 
@@ -380,10 +468,10 @@ func readTabularCSV(path string) ([][]float64, []int, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("open dataset: %w", err)
 	}
-	defer f.Close()
 
 	reader := csv.NewReader(f)
 	records, err := reader.ReadAll()
+	err = errors.Join(err, f.Close())
 	if err != nil {
 		return nil, nil, fmt.Errorf("read dataset: %w", err)
 	}

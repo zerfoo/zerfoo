@@ -1,0 +1,371 @@
+cmd/cli/transmla.go:41: 41-94 lines are duplicate of `cmd/cli/transmla_validate.go:41-94` (dupl)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		var eqVal string
+		var hasEq bool
+		if flag, val, ok := splitFlag(arg); ok {
+			arg = flag
+			eqVal = val
+			hasEq = true
+		}
+		nextVal := func(flagName string) (string, error) {
+			if hasEq {
+				return eqVal, nil
+			}
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("%s requires a value", flagName)
+			}
+			i++
+			return args[i], nil
+		}
+		switch arg {
+		case "--input":
+			v, err := nextVal("--input")
+			if err != nil {
+				return err
+			}
+			inputPath = v
+		case "--output":
+			v, err := nextVal("--output")
+			if err != nil {
+				return err
+			}
+			outputPath = v
+		case "--rank":
+			v, err := nextVal("--rank")
+			if err != nil {
+				return err
+			}
+			n := 0
+			for _, ch := range v {
+				if ch < '0' || ch > '9' {
+					return fmt.Errorf("--rank must be a positive integer, got %q", v)
+				}
+				n = n*10 + int(ch-'0')
+			}
+			if n <= 0 {
+				return fmt.Errorf("--rank must be a positive integer, got %q", v)
+			}
+			rank = n
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return fmt.Errorf("unknown flag: %s", arg)
+			}
+		}
+	}
+cmd/cli/transmla_validate.go:41: 41-94 lines are duplicate of `cmd/cli/transmla.go:41-94` (dupl)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		var eqVal string
+		var hasEq bool
+		if flag, val, ok := splitFlag(arg); ok {
+			arg = flag
+			eqVal = val
+			hasEq = true
+		}
+		nextVal := func(flagName string) (string, error) {
+			if hasEq {
+				return eqVal, nil
+			}
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("%s requires a value", flagName)
+			}
+			i++
+			return args[i], nil
+		}
+		switch arg {
+		case "--original":
+			v, err := nextVal("--original")
+			if err != nil {
+				return err
+			}
+			originalPath = v
+		case "--converted":
+			v, err := nextVal("--converted")
+			if err != nil {
+				return err
+			}
+			convertedPath = v
+		case "--max-tokens":
+			v, err := nextVal("--max-tokens")
+			if err != nil {
+				return err
+			}
+			n := 0
+			for _, ch := range v {
+				if ch < '0' || ch > '9' {
+					return fmt.Errorf("--max-tokens must be a positive integer, got %q", v)
+				}
+				n = n*10 + int(ch-'0')
+			}
+			if n <= 0 {
+				return fmt.Errorf("--max-tokens must be positive, got %q", v)
+			}
+			maxTokens = n
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return fmt.Errorf("unknown flag: %s", arg)
+			}
+		}
+	}
+cmd/cli/automl.go:159:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "Best config saved to %s\n", cfg.Output)
+		           ^
+cmd/cli/automl.go:383:15: Error return value of `f.Close` is not checked (errcheck)
+	defer f.Close()
+	             ^
+cmd/cli/eagle_train.go:61:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "eagle-train: output=%s epochs=%d lr=%.1e max-samples=%d batch-size=%d hidden-dim=%d synthetic=%v\n",
+	           ^
+cmd/cli/eagle_train.go:71:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "generated %d synthetic training pairs\n", len(pairs))
+		           ^
+cmd/cli/eagle_train.go:86:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "collected %d training pairs from corpus\n", len(pairs))
+		           ^
+cmd/cli/eagle_train.go:116:15: Error return value of `fmt.Fprintf` is not checked (errcheck)
+			fmt.Fprintf(c.out, "interrupted at epoch %d\n", epoch+1)
+			           ^
+cmd/cli/eagle_train.go:136:16: Error return value of `fmt.Fprintf` is not checked (errcheck)
+				fmt.Fprintf(c.out, "interrupted at epoch %d batch %d\n", epoch+1, numBatches+1)
+				           ^
+cmd/cli/eagle_train.go:203:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "epoch=%d/%d loss=%.6f\n", epoch+1, cfg.epochs, avgLoss)
+		           ^
+cmd/cli/eagle_train.go:210:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "EAGLE head saved to %s\n", cfg.outputPath)
+	           ^
+cmd/cli/eagle_train.go:294:15: Error return value of `f.Close` is not checked (errcheck)
+	defer f.Close()
+	             ^
+cmd/cli/finetune_sentiment.go:82:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Fine-tuning sentiment model\n")
+	           ^
+cmd/cli/finetune_sentiment.go:83:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Model:      %s\n", cfg.modelPath)
+	           ^
+cmd/cli/finetune_sentiment.go:84:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Data:       %s (%d samples)\n", cfg.dataPath, len(data))
+	           ^
+cmd/cli/finetune_sentiment.go:85:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Output:     %s\n", cfg.outputPath)
+	           ^
+cmd/cli/finetune_sentiment.go:86:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Epochs:     %d\n", cfg.epochs)
+	           ^
+cmd/cli/finetune_sentiment.go:87:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  LR:         %g\n", cfg.lr)
+	           ^
+cmd/cli/finetune_sentiment.go:88:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Batch size: %d\n", cfg.batchSize)
+	           ^
+cmd/cli/finetune_sentiment.go:89:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  LoRA rank:  %d\n", cfg.loraRank)
+	           ^
+cmd/cli/finetune_sentiment.go:90:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Val split:  %.1f%%\n", cfg.valSplit*100)
+	           ^
+cmd/cli/finetune_sentiment.go:91:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Device:     %s\n", cfg.device)
+	           ^
+cmd/cli/finetune_sentiment.go:92:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Labels:     %v\n\n", labels)
+	           ^
+cmd/cli/finetune_sentiment.go:102:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Model saved to %s\n", cfg.outputPath)
+	           ^
+cmd/cli/framework.go:709:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Zerfoo CLI - Generic Machine Learning Framework\n\n")
+	           ^
+cmd/cli/framework.go:710:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "USAGE:\n")
+	           ^
+cmd/cli/framework.go:711:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  zerfoo <command> [options]\n\n")
+	           ^
+cmd/cli/framework.go:712:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "AVAILABLE COMMANDS:\n")
+	           ^
+cmd/cli/framework.go:716:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "  %-12s %s\n", name, cmd.Description())
+		           ^
+cmd/cli/framework.go:719:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "\nUse 'zerfoo <command> --help' for more information about a command.\n")
+	           ^
+cmd/cli/framework.go:724:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "USAGE:\n  %s\n", cmd.Usage())
+	           ^
+cmd/cli/framework.go:728:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "\nEXAMPLES:\n")
+		           ^
+cmd/cli/framework.go:730:15: Error return value of `fmt.Fprintf` is not checked (errcheck)
+			fmt.Fprintf(c.out, "  %s\n", ex)
+			           ^
+cmd/cli/guard.go:263:14: Error return value of `fmt.Fprintln` is not checked (errcheck)
+	fmt.Fprintln(c.out, string(data))
+	            ^
+cmd/cli/guard.go:286:14: Error return value of `fmt.Fprintln` is not checked (errcheck)
+	fmt.Fprintln(c.out, string(data))
+	            ^
+cmd/cli/guard.go:291:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Model: %s\n", model)
+	           ^
+cmd/cli/guard.go:292:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Input: %q\n\n", gi.User)
+	           ^
+cmd/cli/guard.go:294:14: Error return value of `fmt.Fprintln` is not checked (errcheck)
+	fmt.Fprintln(c.out, "Risk Assessment:")
+	            ^
+cmd/cli/guard.go:302:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "  %-30s %s (confidence: %.2f)\n", v.Risk+":", label, v.Confidence)
+		           ^
+cmd/cli/guard.go:305:14: Error return value of `fmt.Fprintln` is not checked (errcheck)
+	fmt.Fprintln(c.out)
+	            ^
+cmd/cli/guard.go:307:15: Error return value of `fmt.Fprintln` is not checked (errcheck)
+		fmt.Fprintln(c.out, "Overall: FLAGGED")
+		            ^
+cmd/cli/guard.go:309:15: Error return value of `fmt.Fprintln` is not checked (errcheck)
+		fmt.Fprintln(c.out, "Overall: SAFE")
+		            ^
+cmd/cli/guard.go:315:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Input: %q\n\n", gi.User)
+	           ^
+cmd/cli/guard.go:317:14: Error return value of `fmt.Fprintln` is not checked (errcheck)
+	fmt.Fprintln(c.out, "Risk Assessment (full scan):")
+	            ^
+cmd/cli/guard.go:323:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "  %-30s %s (confidence: %.2f)\n", v.Risk+":", label, v.Confidence)
+		           ^
+cmd/cli/guard.go:326:14: Error return value of `fmt.Fprintln` is not checked (errcheck)
+	fmt.Fprintln(c.out)
+	            ^
+cmd/cli/guard.go:328:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "Overall: FLAGGED (highest risk: %s)\n", result.HighestRisk)
+		           ^
+cmd/cli/guard.go:330:15: Error return value of `fmt.Fprintln` is not checked (errcheck)
+		fmt.Fprintln(c.out, "Overall: SAFE")
+		            ^
+cmd/cli/progress.go:59:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(p.out, "Downloaded %s\n", formatBytes(downloaded))
+		           ^
+cmd/cli/progress.go:77:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(p.out, "\r%s %3d%% %s/%s", bar, pct, formatBytes(downloaded), formatBytes(total))
+		           ^
+cmd/cli/progress.go:79:16: Error return value of `fmt.Fprintln` is not checked (errcheck)
+			fmt.Fprintln(p.out)
+			            ^
+cmd/cli/progress.go:88:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(p.out, "Downloading: %d%% (%s/%s)\n", pct, formatBytes(downloaded), formatBytes(total))
+		           ^
+cmd/cli/sentiment.go:260:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "%s (%.2f)  %q\n", r.Label, r.Score, text)
+		           ^
+cmd/cli/train.go:58:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "train: rank=%d world-size=%d master=%s:%d\n",
+	           ^
+cmd/cli/train.go:60:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  model=%s data=%s output=%s\n", cfg.modelPath, cfg.dataPath, cfg.outputPath)
+	           ^
+cmd/cli/train.go:61:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  epochs=%d batch-size=%d lr=%.1e\n", cfg.epochs, cfg.batchSize, cfg.lr)
+	           ^
+cmd/cli/train.go:289:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "coordinator listening on %s\n", addr)
+	           ^
+cmd/cli/train.go:295:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "worker rank=%d connecting to %s:%d\n", cfg.rank, cfg.masterAddr, cfg.masterPort)
+	           ^
+cmd/cli/train.go:321:16: Error return value of `fmt.Fprintf` is not checked (errcheck)
+				fmt.Fprintf(c.out, "interrupted at epoch=%d step=%d\n", epoch+1, step+1)
+				           ^
+cmd/cli/train.go:363:15: Error return value of `fmt.Fprintf` is not checked (errcheck)
+			fmt.Fprintf(c.out, "epoch=%d step=%d/%d loss=%.6f tok/s=%.1f\n",
+			           ^
+cmd/cli/train.go:372:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "checkpoint saved to %s\n", cfg.outputPath)
+		           ^
+cmd/cli/transcribe.go:124:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Audio: %d samples at %d Hz (%.1fs)\n",
+	           ^
+cmd/cli/transcribe.go:135:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Chunks: %d (30s each)\n", len(chunks))
+	           ^
+cmd/cli/transcribe.go:142:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "Chunk %d: mel shape %v\n", i, mel.Shape())
+		           ^
+cmd/cli/transcribe.go:146:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Loading model: %s\n", modelPath)
+	           ^
+cmd/cli/transcribe.go:151:19: Error return value of `model.Close` is not checked (errcheck)
+	defer model.Close()
+	                 ^
+cmd/cli/transcribe.go:162:14: Error return value of `fmt.Fprintln` is not checked (errcheck)
+	fmt.Fprintln(c.out, text)
+	            ^
+cmd/cli/transmla.go:121:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Converting %s -> %s (rank=%d)\n", inputPath, outputPath, rank)
+	           ^
+cmd/cli/transmla.go:126:15: Error return value of `fmt.Fprintf` is not checked (errcheck)
+			fmt.Fprintf(c.out, "  layer %d/%d decomposed\n", layer+1, total)
+			           ^
+cmd/cli/transmla.go:133:12: Error return value of `os.Remove` is not checked (errcheck)
+		os.Remove(outputPath)
+		         ^
+cmd/cli/transmla.go:145:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Done. %s -> %s (%.2fx compression)\n",
+	           ^
+cmd/cli/transmla_validate.go:111:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "Evaluating perplexity with %d max tokens...\n", maxTokens)
+	           ^
+cmd/cli/transmla_validate.go:114:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "\nLoading original: %s\n", originalPath)
+	           ^
+cmd/cli/transmla_validate.go:119:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Original perplexity: %.4f\n", origPPL)
+	           ^
+cmd/cli/transmla_validate.go:122:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "\nLoading converted: %s\n", convertedPath)
+	           ^
+cmd/cli/transmla_validate.go:127:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "  Converted perplexity: %.4f\n", convPPL)
+	           ^
+cmd/cli/transmla_validate.go:131:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "\nDelta: %.4f (converted - original)\n", delta)
+	           ^
+cmd/cli/transmla_validate.go:134:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "WARNING: perplexity delta %.4f exceeds 0.5 threshold\n", delta)
+		           ^
+cmd/cli/transmla_validate.go:136:14: Error return value of `fmt.Fprintf` is not checked (errcheck)
+		fmt.Fprintf(c.out, "PASS: perplexity delta within acceptable range\n")
+		           ^
+cmd/cli/transmla_validate.go:154:19: Error return value of `model.Close` is not checked (errcheck)
+	defer model.Close()
+	                 ^
+cmd/cli/version.go:40:13: Error return value of `fmt.Fprintf` is not checked (errcheck)
+	fmt.Fprintf(c.out, "zerfoo version %s\n", c.version)
+	           ^
+cmd/cli/serve_test.go:337:35: `cancelled` is a misspelling of `canceled` (misspell)
+	// We expect either nil (context cancelled before TLS error) or a TLS-related error,
+	                                 ^
+cmd/cli/eagle_train.go:82:3: SA4023(related information): the lhs of the comparison is the 2nd return value of this function call (staticcheck)
+		pairs, err = inference.CollectPenultimateFeatures(cfg.modelPath, tokens, cfg.maxSamples)
+		^
+cmd/cli/eagle_train.go:83:6: SA4023: this comparison is always true (staticcheck)
+		if err != nil {
+		   ^
+cmd/cli/guard_test.go:15:6: type fakeGenerator is unused (unused)
+type fakeGenerator struct {
+     ^
+cmd/cli/guard_test.go:19:25: func (*fakeGenerator).Generate is unused (unused)
+func (f *fakeGenerator) Generate(_ context.Context, prompt string, _ ...inference.GenerateOption) (string, error) {
+                        ^
+cmd/cli/guard_test.go:29:6: func newTestEvaluator is unused (unused)
+func newTestEvaluator(responses map[string]string) *guardian.Evaluator {
+     ^
+87 issues:
+* dupl: 2
+* errcheck: 79
+* misspell: 1
+* staticcheck: 2
+* unused: 3

@@ -7,6 +7,19 @@
 
 ---
 
+
+## Model-creation planning extension (2026-09-08)
+
+At the user's request, the [model-creation refinement plan](plan-model-creation-refinement.md)
+and [agent-product roadmap](model-creation-roadmap.md) now define the path to
+“Describe the model you need. Create, train, and deploy it on hardware you control.”
+These are planned work, not completed implementation or a Trust closeout. Existing
+open tasks below retain their status. Refinement R01 reconciles relevant dependencies;
+R12 updates the next active phase plan from measured results, including the relationship
+to T138.1 and the prior Traction scope.
+
+---
+
 ## Trim Note (2026 08 14)
 
 This plan was trimmed on 2026 08 14: completed epics E133 (capture/replay cluster), E134 (gemma4e disposition), E135 (kernel numerics, #847), E137 (darwin fix), and E139-E145 (deep-review 002 security remediation, Objective 6 / D7) were removed along with Waves 1-5 and Sec-1..Sec-5. Their knowledge is preserved as follows:
