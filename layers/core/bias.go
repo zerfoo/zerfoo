@@ -125,7 +125,11 @@ func (b *Bias[T]) Backward(ctx context.Context, mode types.BackwardMode, outputG
 		}
 	}
 
-	b.biases.Gradient = biasesGrad
+	// Shared parameters can receive gradients through multiple graph paths.
+	// Accumulate into the persistent buffer, matching Linear.Backward.
+	if _, err := b.engine.Add(ctx, b.biases.Gradient, biasesGrad, b.biases.Gradient); err != nil {
+		return nil, fmt.Errorf("bias gradient accumulation: %w", err)
+	}
 
 	// Gradient with respect to input is just the output gradient.
 	return []*tensor.TensorNumeric[T]{outputGradient}, nil
