@@ -113,7 +113,7 @@ func TestResearchEligibility(t *testing.T) {
 	if err := os.WriteFile(s.library, []byte(catalog), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cards, err := s.search("")
+	cards, err := s.search(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

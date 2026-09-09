@@ -1,19 +1,23 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/zerfoo/zerfoo/model"
 	"io"
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/zerfoo/zerfoo/model"
 )
 
 // Evidence is data, never executable instructions. Only supported components
 // are eligible; references are retained without claiming paper reproduction.
 type evidenceCard struct {
+	Eligible   bool     `json:"eligible"`
+	SupportGap string   `json:"support_gap,omitempty"`
 	ID         string   `json:"id"`
 	Title      string   `json:"title"`
 	URL        string   `json:"url"`
@@ -23,10 +27,17 @@ type evidenceCard struct {
 	Components []string `json:"components"`
 }
 
-func (s *service) search(query string) ([]evidenceCard, error) {
+func (s *service) search(ctx context.Context, query string) ([]evidenceCard, error) {
 	result := []evidenceCard{}
 	if s.library == "" {
 		return result, nil
+	}
+	info, err := os.Stat(s.library)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return searchPaperLibrary(ctx, s.library, query)
 	}
 	f, err := os.Open(s.library)
 	if err != nil {
@@ -69,6 +80,7 @@ func (s *service) search(query string) ([]evidenceCard, error) {
 				eligible = false
 			}
 		}
+		card.Eligible = eligible
 		if eligible && strings.Contains(strings.ToLower(card.Title+" "+card.Summary), strings.ToLower(query)) {
 			result = append(result, card)
 		}

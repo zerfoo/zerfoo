@@ -135,7 +135,7 @@ func (s *service) call(ctx context.Context, name string, raw json.RawMessage) (a
 		if err := decode(raw, &a); err != nil {
 			return nil, err
 		}
-		return s.search(a.Query)
+		return s.search(ctx, a.Query)
 	case "plan_create":
 		var a struct {
 			Project    string          `json:"project"`
@@ -167,17 +167,17 @@ func (s *service) call(ctx context.Context, name string, raw json.RawMessage) (a
 				return nil, fmt.Errorf("hidden width must be in [1,1024]")
 			}
 		}
-		cards, err := s.search("")
+		cards, err := s.search(ctx, "")
 		if err != nil && len(a.Evidence) > 0 {
 			return nil, err
 		}
 		known := map[string]bool{}
 		for _, card := range cards {
-			known[card.ID] = true
+			known[card.ID] = card.Eligible
 		}
 		for _, id := range a.Evidence {
 			if !known[id] {
-				return nil, fmt.Errorf("unknown evidence %q", id)
+				return nil, fmt.Errorf("unknown or unqualified evidence %q", id)
 			}
 		}
 		id, err := newID()

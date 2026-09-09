@@ -151,3 +151,31 @@ all 12 tools, starts a real plan, retries the start, closes the MCP process,
 waits from fresh CLI processes, and checks the saved model predicts Iris-setosa.
 It verifies artifact identity and reports actual validation metrics. It does
 not substitute a mocked trainer or claim host-specific integration coverage.
+
+### Using the paper-library corpus
+
+`--library` also accepts the root directory of a `paper-library` checkout:
+
+```sh
+./zerfoo-create --library "$HOME/Code/dndungu/paper-library" research_search '{"query":"tabular"}'
+```
+
+The directory adapter reads `papers/*.json` directly, ignoring the manifest and
+hidden fetch-state files. It searches title, abstract and tags for all query
+terms, ranks title matches higher, and returns at most 20 candidates with stable
+ID ordering for ties. This is local lexical search; it does not invoke Python,
+install dependencies, load the vector index or execute retrieved content. The
+paper library's own vector query CLI remains a separate retrieval option.
+
+Each result pins the source record's SHA-256 and identifies the abstract as its
+source section. These records currently contain bibliographic metadata, not
+reviewed Zerfoo component mappings: results have `eligible: false` and an explicit
+`support_gap`. They cannot be cited as executable evidence in `plan_create`.
+To qualify a paper, create a version 1 evidence catalog card with the reviewed
+component identifiers, precise supporting section, source hash/version and
+limitations. The existing registry filter applies to that catalog. A paper's
+presence, tags or linked code repository do not establish Zerfoo support.
+
+Reads are rooted in the selected directory, with regular-file records only,
+1 MiB per record, a 32 MiB corpus budget and a 10,000-record ceiling. The source
+checkout is never modified. Catalog JSON input remains backward compatible.
