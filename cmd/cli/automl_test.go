@@ -346,24 +346,26 @@ func TestAutoMLCommand_TabularModel(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have 2 NDJSON lines.
+	// Three baselines plus two search trials; lifecycle events are separate.
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	ndjsonLines := 0
+	count := 0
 	for _, line := range lines {
-		if strings.HasPrefix(line, "{") {
-			ndjsonLines++
-			var entry trialLog
-			if err := json.Unmarshal([]byte(line), &entry); err != nil {
-				t.Errorf("invalid NDJSON line: %v", err)
-			}
-			if entry.Error != "" {
-				t.Errorf("trial %d had error: %s", entry.TrialID, entry.Error)
-			}
+		var entry experimentTrial
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry.Type != "trial" {
+			continue
+		}
+		count++
+		if entry.Status != "succeeded" {
+			t.Fatalf("trial failed: %+v", entry)
 		}
 	}
-	if ndjsonLines != 2 {
-		t.Errorf("expected 2 NDJSON trial lines, got %d", ndjsonLines)
+	if count != 5 {
+		t.Fatalf("expected 5 trials, got %d", count)
 	}
+
 }
 
 // constantWorker always returns the same score, useful for testing early stopping.
