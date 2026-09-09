@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-09",
+  "scope": "isolated source checkout; before GPU submission",
+  "counts_include_parents_and_subtests": {
+    "github.com/zerfoo/zerfoo/tabular": {
+      "pass": 235,
+      "skip": 1
+    },
+    "github.com/zerfoo/zerfoo/cmd/cli": {
+      "pass": 460
+    },
+    "github.com/zerfoo/zerfoo/tests/architecture": {
+      "pass": 4
+    }
+  },
+  "gpu_skip": "TestClassifierTrainingGPU requires ZERFOO_R_MODEL_GPU=1 in Spark",
+  "input_sha256": {
+    "tabular/classifier_test.go": "3caecfb32953b62848b668514d68ff7737aab933f002bfcb9712d8ac6f9e6dba",
+    "tabular/classifier.go": "b21faeb67e05238c1e722c6d9feee50004db059e9196c09ae25e3c1708df0730",
+    "tabular/bundle.go": "268bf111531e23b6e6f8bbab43305f3dd2c1b821e3b03935251ce14efd056040",
+    "tabular/classifier_gpu_test.go": "2b1741a51f7bdcab681a5a97ef46d5e9e0b024a2088426a21b4d805da3fed231",
+    "tabular/evaluation.go": "c53d0d83d74ce890e94cde26b4ad37e749cd8f5b41f61d71398c3dc7c46edebb",
+    "tabular/classifier_train_test.go": "fd3f2c134d2719f41f9e1cd3fc2c0593085ae5868428cd41a0e536d377e7019e",
+    "tabular/classifier_train.go": "667b54e78bf2008afc81e00bf0f3ccbba335d35d6bf849bbf36b1840973a9dbd",
+    "tabular/dataset_test.go": "a5974220a37e28a32fddd3faeb74a90c0d4713dc75dc6a3c18d84042232467a7",
+    "tabular/dataset.go": "cfcc9282c424fa6624aabf7e43b0d7a2b8b8f9480c4bbca50effe270d5bc0f25",
+    "tabular/migrate.go": "0f349dda51a8fc5e5a3793cc5857facee11bafef2ce662994f464bdea45732ee",
+    "tabular/bundle_test.go": "9407260011953427c27018e28cab889538eaccb49865a9bf9637df623efd56ff",
+    "tabular/evaluation_test.go": "ee7bec8af0cd0c2a7a91c19db897cf6d5732d6eed20a3cb5e88c3a1688a82678",
+    "tabular/testdata/model_creation/manifest.json": "ca44f71d65c360669cadba114d816f00c56ba1f0f26143b87be78808dd6ba38d"
+  }
+}

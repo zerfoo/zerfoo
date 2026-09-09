@@ -1,0 +1,12 @@
+=== RUN   TestTabularWorkerRejectsLeakingDuplicateFixture
+--- PASS: TestTabularWorkerRejectsLeakingDuplicateFixture (0.00s)
+=== RUN   TestTabularWorkerRejectsUnknownMetric
+--- PASS: TestTabularWorkerRejectsUnknownMetric (0.00s)
+=== RUN   TestTabularWorker_RunTrial
+--- PASS: TestTabularWorker_RunTrial (0.00s)
+=== RUN   TestTabularWorker_MissingFile
+--- PASS: TestTabularWorker_MissingFile (0.00s)
+=== RUN   TestAutoMLCommand_TabularModel
+--- PASS: TestAutoMLCommand_TabularModel (0.00s)
+PASS
+ok  	github.com/zerfoo/zerfoo/cmd/cli	0.423s

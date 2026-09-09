@@ -222,7 +222,7 @@ func TestTabularWorker_RunTrial(t *testing.T) {
 		f1 := float64(label) * 0.5
 		f2 := float64(label) * 0.3
 		f3 := float64(label) * 0.7
-		content += fmt.Sprintf("%.1f,%.1f,%.1f,%d\n", f1, f2, f3, label)
+		content += fmt.Sprintf("%.4f,%.4f,%.4f,%d\n", f1+float64(i)*0.001, f2, f3, label)
 	}
 	if err := os.WriteFile(csvFile, []byte(content), 0600); err != nil {
 		t.Fatalf("failed to write test CSV: %v", err)
@@ -325,7 +325,7 @@ func TestAutoMLCommand_TabularModel(t *testing.T) {
 	content := "f1,f2,label\n"
 	for i := 0; i < 30; i++ {
 		label := i % 3
-		content += fmt.Sprintf("%.1f,%.1f,%d\n", float64(label)*0.5, float64(label)*0.3, label)
+		content += fmt.Sprintf("%.4f,%.4f,%d\n", float64(label)*0.5+float64(i)*0.001, float64(label)*0.3, label)
 	}
 	if err := os.WriteFile(csvFile, []byte(content), 0600); err != nil {
 		t.Fatalf("write CSV: %v", err)

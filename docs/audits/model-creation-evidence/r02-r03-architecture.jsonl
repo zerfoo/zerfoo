@@ -1,0 +1,22 @@
+{"Time":"2026-09-08T23:47:29.92157-07:00","Action":"start","Package":"github.com/zerfoo/zerfoo/tests/architecture"}
+{"Time":"2026-09-08T23:47:30.25303-07:00","Action":"run","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestDataAbuse"}
+{"Time":"2026-09-08T23:47:30.253101-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestDataAbuse","Output":"=== RUN   TestDataAbuse\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.516142-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestDataAbuse","Output":"--- PASS: TestDataAbuse (0.26s)\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.516175-07:00","Action":"pass","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestDataAbuse","Elapsed":0.26}
+{"Time":"2026-09-08T23:47:30.516201-07:00","Action":"run","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestMathWithoutLayers"}
+{"Time":"2026-09-08T23:47:30.516205-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestMathWithoutLayers","Output":"=== RUN   TestMathWithoutLayers\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.599691-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestMathWithoutLayers","Output":"--- PASS: TestMathWithoutLayers (0.08s)\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.599719-07:00","Action":"pass","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestMathWithoutLayers","Elapsed":0.08}
+{"Time":"2026-09-08T23:47:30.599729-07:00","Action":"run","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestPrivateLayerReimpl"}
+{"Time":"2026-09-08T23:47:30.599733-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestPrivateLayerReimpl","Output":"=== RUN   TestPrivateLayerReimpl\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.68853-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestPrivateLayerReimpl","Output":"--- PASS: TestPrivateLayerReimpl (0.09s)\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.688562-07:00","Action":"pass","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestPrivateLayerReimpl","Elapsed":0.09}
+{"Time":"2026-09-08T23:47:30.688569-07:00","Action":"run","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestTopLevelAllowlist"}
+{"Time":"2026-09-08T23:47:30.688573-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestTopLevelAllowlist","Output":"=== RUN   TestTopLevelAllowlist\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.688615-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestTopLevelAllowlist","Output":"    toplevel_allowlist_test.go:105: unsanctioned top-level package(s) detected: tmp\n","OutputType":"error"}
+{"Time":"2026-09-08T23:47:30.68863-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestTopLevelAllowlist","Output":"        New top-level Go packages require an ADR slug in the package's doc.go and an entry in allowedTopLevel (see docs/design.md section 2.1 and T124.1.3). Prefer relocating under an existing approved subtree (layers/, training/, serve/, inference/, model/, internal/, tests/).\n","OutputType":"error-continue"}
+{"Time":"2026-09-08T23:47:30.688648-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestTopLevelAllowlist","Output":"--- FAIL: TestTopLevelAllowlist (0.00s)\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.688652-07:00","Action":"fail","Package":"github.com/zerfoo/zerfoo/tests/architecture","Test":"TestTopLevelAllowlist","Elapsed":0}
+{"Time":"2026-09-08T23:47:30.688655-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Output":"FAIL\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.689169-07:00","Action":"output","Package":"github.com/zerfoo/zerfoo/tests/architecture","Output":"FAIL\tgithub.com/zerfoo/zerfoo/tests/architecture\t0.767s\n","OutputType":"frame"}
+{"Time":"2026-09-08T23:47:30.689201-07:00","Action":"fail","Package":"github.com/zerfoo/zerfoo/tests/architecture","Elapsed":0.768}

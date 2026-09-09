@@ -1,0 +1,9 @@
+=== RUN   TestTabularWorkerRejectsLeakingDuplicateFixture
+    automl_isolation_test.go:15: accepted data that cannot form duplicate-isolated held-out splits
+--- FAIL: TestTabularWorkerRejectsLeakingDuplicateFixture (0.00s)
+=== RUN   TestTabularWorkerRejectsUnknownMetric
+    automl_isolation_test.go:25: unknown metric accepted
+--- FAIL: TestTabularWorkerRejectsUnknownMetric (0.00s)
+FAIL
+FAIL	github.com/zerfoo/zerfoo/cmd/cli	0.484s
+FAIL

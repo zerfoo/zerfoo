@@ -163,24 +163,27 @@ func TestTrainCommand_InvalidFlags(t *testing.T) {
 	}
 }
 
-func TestTrainCommand_LocalRun(t *testing.T) {
+func TestTrainCommand_RejectsUnsupportedGeneralTraining(t *testing.T) {
 	var buf bytes.Buffer
 	cmd := NewTrainCommand(&buf)
-	err := cmd.Run(context.Background(), []string{
-		"--config", "model.gguf",
-		"--data", "train.jsonl",
-		"--epochs", "1",
-		"--batch-size", "4",
-	})
+	err := cmd.Run(context.Background(), []string{"--config", "model.gguf", "--data", "train.jsonl"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("expected unsupported error, got %v", err)
+	}
+	if strings.Contains(buf.String(), "checkpoint saved") {
+		t.Fatal("synthetic success exposed")
+	}
+}
+
+func TestTrainingDemo_LocalRun(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := NewTrainCommand(&buf)
+	err := cmd.trainLoop(context.Background(), &trainConfig{worldSize: 1, epochs: 1, batchSize: 4, lr: 0.001, outputPath: t.TempDir() + "/demo.gguf"})
 	if err != nil {
-		t.Fatalf("local run failed: %v", err)
+		t.Fatal(err)
 	}
-	out := buf.String()
-	if !strings.Contains(out, "world-size=1") {
-		t.Error("output should indicate single-process mode")
-	}
-	if !strings.Contains(out, "checkpoint saved") {
-		t.Error("output should indicate checkpoint was saved")
+	if !strings.Contains(buf.String(), "checkpoint saved") {
+		t.Fatal("demo did not produce checkpoint")
 	}
 }
 
