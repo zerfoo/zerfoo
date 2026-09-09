@@ -1,0 +1,46 @@
+{
+  "test_command": "go test -race -json -count=1 ./cmd/zerfoo-create",
+  "counts_include_parents_and_subtests": {
+    "pass": 10
+  },
+  "lint": "golangci-lint run ./cmd/zerfoo-create: 0 issues",
+  "subprocess_lifecycle": {
+    "checks": {
+      "mcp_tool_discovery": 12,
+      "real_training": true,
+      "idempotent_start": true,
+      "training_survives_mcp_exit": true,
+      "fresh_cli_prediction": true
+    },
+    "steps": 120,
+    "validation": {
+      "samples": 30,
+      "accuracy": 0.9333333333333333,
+      "macro_f1": 0.9333333333333333,
+      "cross_entropy": 0.15553126015622618,
+      "confusion_matrix": [
+        [
+          10,
+          0,
+          0
+        ],
+        [
+          0,
+          9,
+          1
+        ],
+        [
+          0,
+          1,
+          9
+        ]
+      ]
+    },
+    "artifact_sha256": "c641619a952c48b59b12ff3abad1e528860fd9bb20cfbc29ee7335110ce6bf53"
+  },
+  "limitations": [
+    "External paper library not connected; versioned JSON adapter implemented",
+    "Named MCP host compatibility not yet tested",
+    "CPU worker only; no HTTP endpoint, automatic crash retry or optimizer resume"
+  ]
+}
