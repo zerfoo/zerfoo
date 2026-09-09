@@ -1,0 +1,22 @@
+293d430ed0f5 reference=3273fa881b1a9a9fd8d7ce0665e4976641b2be9a architecture=aarch64
+293d430ed0f5 go version go1.26.8 linux/arm64
+293d430ed0f5 go: downloading github.com/zerfoo/ztensor v1.20.0
+293d430ed0f5 go: downloading github.com/zerfoo/float16 v0.2.0
+293d430ed0f5 go: downloading github.com/zerfoo/ztoken v0.3.4
+293d430ed0f5 go: downloading github.com/zerfoo/float8 v0.2.0
+293d430ed0f5 go: downloading golang.org/x/text v0.36.0
+293d430ed0f5 {"Time":"2026-09-09T07:35:42.550406067Z","Action":"start","Package":"github.com/zerfoo/zerfoo/tabular"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:43.086804737Z","Action":"run","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:43.086864385Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU","Output":"=== RUN   TestClassifierTrainingGPU\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:43.947166552Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU","Output":"    classifier_gpu_test.go:85: device=0 managed=false hidden=[] seed=17 steps=1200 accuracy=0.9666666666666667 macro_f1=0.9665831244778613 CE=0.10621546489789256 elapsed=514.708369ms artifact=b876e5677f3a74c49fa0ec84f50962325c9f66fb30c837e7ed79d380b022f5bd\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:44.226853735Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU","Output":"    classifier_gpu_test.go:85: device=0 managed=false hidden=[] seed=42 steps=1200 accuracy=0.9666666666666667 macro_f1=0.9665831244778613 CE=0.13228261180371056 elapsed=279.533821ms artifact=e35595654c6c3d931534fbc53508244f65410192a64faef2138dd636008d26b6\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:44.50649095Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU","Output":"    classifier_gpu_test.go:85: device=0 managed=false hidden=[] seed=91 steps=1200 accuracy=0.9666666666666667 macro_f1=0.9665831244778613 CE=0.11254759079855144 elapsed=279.689647ms artifact=e3b1782db25839d3613cd538a44cb0d87fcf398299aaa1f806a6f6d3b79a8f17\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:45.053258283Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU","Output":"    classifier_gpu_test.go:85: device=0 managed=false hidden=[16] seed=17 steps=1200 accuracy=0.9666666666666667 macro_f1=0.9665831244778613 CE=0.20493166819828554 elapsed=546.64802ms artifact=6c27f827cd6f8fb0c2028e82d5a9f474381276443b8b23e7528afc237e7d3ed4\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:45.586512316Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU","Output":"    classifier_gpu_test.go:85: device=0 managed=false hidden=[16] seed=42 steps=1200 accuracy=0.9333333333333333 macro_f1=0.9333333333333333 CE=0.25216047055978597 elapsed=533.315394ms artifact=a91006dd54f932ee7f167f0c89caa98191c66a2053d7c2ebabe77405f8c4edbf\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:46.092235317Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU","Output":"    classifier_gpu_test.go:85: device=0 managed=false hidden=[16] seed=91 steps=1200 accuracy=0.9333333333333333 macro_f1=0.9333333333333333 CE=0.2408168300021261 elapsed=505.607095ms artifact=f748ce3643503c4383c169180daa7f43eacd5ddff4891fd6a6d5b4c4fdd069d2\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:46.126349747Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU","Output":"--- PASS: TestClassifierTrainingGPU (3.04s)\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:46.126374996Z","Action":"pass","Package":"github.com/zerfoo/zerfoo/tabular","Test":"TestClassifierTrainingGPU","Elapsed":3.04}
+293d430ed0f5 {"Time":"2026-09-09T07:35:46.126380468Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Output":"PASS\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:46.278540277Z","Action":"output","Package":"github.com/zerfoo/zerfoo/tabular","Output":"ok  \tgithub.com/zerfoo/zerfoo/tabular\t3.728s\n"}
+293d430ed0f5 {"Time":"2026-09-09T07:35:46.278570918Z","Action":"pass","Package":"github.com/zerfoo/zerfoo/tabular","Elapsed":3.7279999999999998}
+293d430ed0f5 {"gate":"model-creation-gpu-training","completed_trials":6,"exit_code":0}
