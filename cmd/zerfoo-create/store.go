@@ -30,15 +30,16 @@ type datasetRecord struct {
 	Manifest tabular.DatasetManifest `json:"manifest"`
 }
 type plan struct {
-	Version       int                      `json:"version"`
-	EvidenceCards []evidenceCard           `json:"evidence_cards"`
-	ID            string                   `json:"id"`
-	Project       string                   `json:"project"`
-	Dataset       string                   `json:"dataset"`
-	Rationale     string                   `json:"rationale"`
-	Evidence      []string                 `json:"evidence"`
-	Config        tabular.ClassifierConfig `json:"config"`
-	Options       tabular.FitOptions       `json:"options"`
+	DefinitionSHA256 string                   `json:"definition_sha256,omitempty"`
+	Version          int                      `json:"version"`
+	EvidenceCards    []evidenceCard           `json:"evidence_cards"`
+	ID               string                   `json:"id"`
+	Project          string                   `json:"project"`
+	Dataset          string                   `json:"dataset"`
+	Rationale        string                   `json:"rationale"`
+	Evidence         []string                 `json:"evidence"`
+	Config           tabular.ClassifierConfig `json:"config"`
+	Options          tabular.FitOptions       `json:"options"`
 }
 type run struct {
 	ID         string                   `json:"id"`

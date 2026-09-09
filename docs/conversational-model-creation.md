@@ -37,9 +37,10 @@ The agent uses this sequence:
    stratification; seed is an explicit tool argument.
 4. `research_search` retrieves eligible evidence. An empty catalog means no
    retrieved evidence, not permission to invent sources.
-5. `plan_create` submits dataset/project IDs, rationale, evidence IDs, hidden
-   widths, epochs, batch size, learning rate and seed. The service validates
-   the model and stores an immutable version 1 plan with evidence snapshots.
+5. `plan_create` submits dataset/project IDs, rationale, evidence IDs, a `definition` DSL graph, epochs, batch size, learning rate
+   and seed. The service validates the graph and stores an immutable version 2
+   plan with its canonical definition identity and evidence snapshots.
+   `hidden_dims` remains a compatibility adapter that generates a DSL graph.
 6. `run_start` takes the plan ID and an idempotency key. Repeating the same
    request returns the same run; changing the plan under that key fails.
 7. `run_status` reports progress, terminal status, validation metrics and the
@@ -61,12 +62,19 @@ Every tool is also a CLI operation, with exactly one JSON argument:
 
 ## Supported model designs
 
-The first executable capability is numeric classification with linear layers,
-up to four hidden ReLU layers (width 1–1024), softmax, cross-entropy and AdamW.
-The agent chooses topology and supported training parameters; the service does
-not translate arbitrary paper descriptions into new operators. Unsupported
-fields and evidence IDs fail validation. The growing Zerfoo capability set
-must be registered and verified before new architectures become executable.
+Numeric classification now accepts explicit DSL graphs, including residual
+branches and shared parameters. The application requires one dynamic-batch
+feature input and one logits output; the underlying compiler supports multiple
+named inputs and graph outputs. The initial composition set is Linear, Dense,
+ReLU, Add, Mul, Sub, MatMul and Softmax, using existing Zerfoo graph nodes.
+Cross-entropy and AdamW remain the classifier training contract.
+
+`capabilities` derives component metadata from the shared registry and returns
+the definition schema. A listed architecture is not necessarily trainable or
+composable: inspect operation/device/precision/status. Unannotated builders are
+reported as unverified. See [the DSL contract and coverage](model-definition-dsl.md)
+for grammar, limits, examples and the architecture-reference route. Existing
+version 1 plans and legacy classifier bundles remain readable.
 
 Plans allow 1–200 epochs, batch size 1–256 and learning rate in (0,1]. Training
 has a two-minute cooperative time limit and one worker per state directory.

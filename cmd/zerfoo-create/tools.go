@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/zerfoo/zerfoo/inference"
+	"github.com/zerfoo/zerfoo/model"
+	"github.com/zerfoo/zerfoo/model/dsl"
 	"github.com/zerfoo/zerfoo/tabular"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/numeric"
@@ -35,13 +38,9 @@ func (s *service) call(ctx context.Context, name string, raw json.RawMessage) (a
 	}
 	switch name {
 	case "capabilities":
-		return map[string]any{"version": 1,
-				"task": "numeric_classification",
-				"components": []string{"linear",
-					"relu",
-					"softmax",
-					"cross_entropy",
-					"adamw"},
+		return map[string]any{"version": 2,
+				"task":       "numeric_classification",
+				"components": model.ListComponents(), "definition_schema": dsl.DefinitionSchema(),
 				"device":               "cpu",
 				"max_hidden_layers":    4,
 				"max_hidden_width":     1024,
@@ -139,15 +138,16 @@ func (s *service) call(ctx context.Context, name string, raw json.RawMessage) (a
 		return s.search(a.Query)
 	case "plan_create":
 		var a struct {
-			Project   string   `json:"project"`
-			Dataset   string   `json:"dataset"`
-			Rationale string   `json:"rationale"`
-			Evidence  []string `json:"evidence"`
-			Hidden    []int    `json:"hidden_dims"`
-			Epochs    int      `json:"epochs"`
-			Batch     int      `json:"batch_size"`
-			Rate      float64  `json:"learning_rate"`
-			Seed      uint64   `json:"seed"`
+			Project    string          `json:"project"`
+			Dataset    string          `json:"dataset"`
+			Rationale  string          `json:"rationale"`
+			Evidence   []string        `json:"evidence"`
+			Definition *dsl.Definition `json:"definition,omitempty"`
+			Hidden     []int           `json:"hidden_dims"`
+			Epochs     int             `json:"epochs"`
+			Batch      int             `json:"batch_size"`
+			Rate       float64         `json:"learning_rate"`
+			Seed       uint64          `json:"seed"`
 		}
 		if err := decode(raw, &a); err != nil {
 			return nil, err
@@ -184,7 +184,7 @@ func (s *service) call(ctx context.Context, name string, raw json.RawMessage) (a
 		if err != nil {
 			return nil, err
 		}
-		p := plan{Version: 1, ID: id,
+		p := plan{Version: 2, ID: id,
 			Project:   a.Project,
 			Dataset:   a.Dataset,
 			Rationale: a.Rationale,
@@ -200,6 +200,22 @@ func (s *service) call(ctx context.Context, name string, raw json.RawMessage) (a
 				WeightDecay:  0.0001,
 				Seed:         a.Seed,
 				MaxDuration:  120 * time.Second}}
+
+		if a.Definition != nil && len(a.Hidden) > 0 {
+			return nil, fmt.Errorf("provide definition or legacy hidden_dims, not both")
+		}
+		p.Config.Definition = a.Definition
+		definition, err := tabular.ClassifierDefinition(p.Config)
+		if err != nil {
+			return nil, err
+		}
+		p.Config.Definition = &definition
+		p.Config.HiddenDims = nil
+		checked, err := dsl.ValidateExecution(definition, "training", "cpu", "float32", "eager")
+		if err != nil {
+			return nil, err
+		}
+		p.DefinitionSHA256 = checked.ID
 		for _, card := range cards {
 			for _, id := range a.Evidence {
 				if card.ID == id {

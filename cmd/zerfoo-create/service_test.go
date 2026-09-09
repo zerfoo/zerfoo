@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/zerfoo/zerfoo/model/dsl"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,5 +175,32 @@ func TestCreationIdempotencyConflictAndActiveLimit(t *testing.T) {
 	}
 	if _, err := s.call(context.Background(), "run_start", raw); err == nil {
 		t.Fatal("conflicting idempotency accepted")
+	}
+}
+
+func TestCreationPersistsExplicitDSL(t *testing.T) {
+	s, prior := setupPlan(t)
+	definition := *prior.Config.Definition
+	first := definition.Nodes[0]
+	duplicate := first
+	duplicate.Name = "tied"
+	definition.Nodes = append(definition.Nodes, duplicate, dsl.NodeDef{Name: "residual", Operator: "Add", Version: 1, Inputs: map[string]dsl.Reference{"a": {Node: first.Name, Port: "y"}, "b": {Node: "tied", Port: "y"}}})
+	for i := range definition.Nodes {
+		if definition.Nodes[i].Operator == "ReLU" {
+			definition.Nodes[i].Inputs = map[string]dsl.Reference{"x": {Node: "residual", Port: "y"}}
+		}
+	}
+	p := invoke(t, s, "plan_create", map[string]any{"project": prior.Project, "dataset": prior.Dataset, "rationale": "Explicit residual with tied dense parameters", "definition": definition, "epochs": 20, "batch_size": 15, "learning_rate": 0.01, "seed": 42}).(plan)
+	if p.Version != 2 || p.DefinitionSHA256 == "" || p.Config.Definition == nil || len(p.Config.Definition.Nodes) != 5 {
+		t.Fatal("explicit graph was reduced to hidden_dims")
+	}
+	s.launch = func(string) error { return nil }
+	r := invoke(t, s, "run_start", map[string]any{"plan": p.ID, "idempotency_key": "dsl"}).(run)
+	if err := s.work(context.Background(), r.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := invoke(t, s, "run_status", map[string]any{"id": r.ID}).(run)
+	if done.Status != "succeeded" || done.Validation.Accuracy < .8 {
+		t.Fatalf("DSL lifecycle failed: %+v", done)
 	}
 }

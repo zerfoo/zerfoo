@@ -166,6 +166,9 @@ func stopFit[T tensor.Float](result *FitResult[T], err error) (*FitResult[T], er
 // computeGradients composes existing linear/loss layers and engine operations.
 // Gradients are copied into persistent parameter buffers before optimizer Step.
 func (c *Classifier[T]) computeGradients(ctx context.Context, rows [][]float64, targets []int) (float64, error) {
+	if c.compiled != nil {
+		return c.computeDSLGradients(ctx, rows, targets)
+	}
 	input, err := c.inputTensor(ctx, rows)
 	if err != nil {
 		return 0, err

@@ -30,6 +30,9 @@ func (g *ModelGraph) Outputs() []string { return g.outputs }
 // Build instantiates a runnable Model from the graph.
 // inputDim and outputDim specify the dimensions of the model's input and output vectors.
 func (g *ModelGraph) Build(inputDim, outputDim int) (*Model, error) {
+	if err := g.validateLegacyExecution(); err != nil {
+		return nil, err
+	}
 	if inputDim <= 0 {
 		return nil, fmt.Errorf("modeldsl: inputDim must be positive, got %d", inputDim)
 	}
@@ -130,4 +133,17 @@ func toInt(v any) (int, error) {
 	default:
 		return 0, fmt.Errorf("expected numeric, got %T", v)
 	}
+}
+
+// Legacy execution cannot silently discard graph edges or declared outputs.
+func (g *ModelGraph) validateLegacyExecution() error {
+	if len(g.outputs) != 1 {
+		return fmt.Errorf("modeldsl: legacy execution requires one output; use Definition and Compile for named outputs")
+	}
+	for name, parents := range g.parents {
+		if len(parents) > 1 {
+			return fmt.Errorf("modeldsl: legacy layer %s has multiple parents; use Definition and Compile", name)
+		}
+	}
+	return nil
 }

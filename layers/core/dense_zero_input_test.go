@@ -30,12 +30,12 @@ func TestDense_Backward_ZeroOutputGradient(t *testing.T) {
 					ops,
 					inputSize,
 					outputSize,
-					WithBias[float32](engine, ops, 5),
+					WithBias[float32](engine, ops, outputSize),
 				)
 				testutils.AssertNil(t, err, "NewDense should not return an error")
 				testutils.AssertNotNil(t, dense, "Dense layer should not be nil")
 
-				// Create a zero-sized output gradient
+				// Create a zero-valued output gradient
 				outputGradient, err := tensor.New[float32]([]int{batchSize, outputSize}, make([]float32, batchSize*outputSize))
 				testutils.AssertNil(t, err, "New tensor for outputGradient should not return an error")
 				testutils.AssertNotNil(t, outputGradient, "Output gradient tensor should not be nil")

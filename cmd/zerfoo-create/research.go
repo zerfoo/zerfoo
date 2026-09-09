@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zerfoo/zerfoo/model"
 	"io"
 	"net/url"
 	"os"
@@ -48,7 +49,13 @@ func (s *service) search(query string) ([]evidenceCard, error) {
 	if catalog.Version != 1 {
 		return nil, fmt.Errorf("unsupported evidence schema")
 	}
-	supported := map[string]bool{"linear": true, "relu": true, "softmax": true, "cross_entropy": true, "adamw": true}
+	supported := map[string]bool{}
+	for _, descriptor := range model.ListComponents() {
+		_, rule, ok := model.Component(descriptor.Kind, descriptor.ID)
+		if ok && (rule != nil || descriptor.Kind == "loss" || descriptor.Kind == "optimizer") {
+			supported[strings.ToLower(descriptor.ID)] = true
+		}
+	}
 	seen := map[string]bool{}
 	for _, card := range catalog.Cards {
 		u, err := url.Parse(card.URL)
@@ -58,7 +65,7 @@ func (s *service) search(query string) ([]evidenceCard, error) {
 		seen[card.ID] = true
 		eligible := len(card.Components) > 0
 		for _, component := range card.Components {
-			if !supported[component] {
+			if !supported[strings.ToLower(component)] {
 				eligible = false
 			}
 		}
