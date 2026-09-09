@@ -1,0 +1,18 @@
+{
+  "scope": "AutoML experiment persistence and baseline comparison",
+  "counts_include_parent_tests_and_subtests": {
+    "cli": {
+      "pass": 467
+    },
+    "tabular": {
+      "pass": 236,
+      "skip": 1
+    }
+  },
+  "gpu": "not rerun; GPU training path unchanged",
+  "limitations": [
+    "Explicit caller-declared experiment lineage, not global exposure tracking",
+    "Allocation delta is process-wide and is not a memory cap",
+    "Checkpoint/resume remains R06"
+  ]
+}

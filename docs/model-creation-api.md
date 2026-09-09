@@ -3,8 +3,8 @@
 R02/R03 provide inspected datasets and generic classifier construction,
 prediction, and loss. R04 adds real CLI training; GGUF bundle save/load and
 explicit legacy migration are implemented. AutoML now isolates validation and
-retains the selected model when --output is supplied. Baseline-aware search,
-complete recovery, and HTTP prediction remain in progress.
+retains the selected model when --output is supplied. Baseline comparison and trial persistence are implemented;
+complete recovery and HTTP prediction remain in progress.
 The API is alpha; deployment/learning qualification is not yet claimed.
 
 ```go
@@ -114,9 +114,45 @@ migration is rejected instead of silently changing predictions.
 For `automl --model tabular`, the final CSV column is the target. Supported
 metrics are accuracy, macro_f1, loss and cross_entropy. The fixed split is shared
 by all trials. Loss is negated only as an internal maximization utility; reported
-loss remains positive. `--output best.json` additionally stores the exact winner
-at best.json.bundle and records its ID. Complete baseline-aware search, all-trial
-artifact persistence and frozen final-evaluation scheduling are still R05 work.
+loss remains positive. `--output best.json` records the exact winning trial bundle and its ID.
+See the persisted experiment protocol below for baseline comparison and final evaluation.
 
 GPU validation is opt-in through Spark with `ZERFOO_R_MODEL_GPU=1`; unavailable
 GPU dispatch fails that gate. CPU tests and source support are not a GPU verdict.
+
+## Persisted AutoML experiments
+
+The tabular command now runs majority (training class priors), linear and
+MLP [16] baselines, then `--trials` MLP search candidates. All use the same
+training-only preprocessing and validation partition. The trainable recipes
+use ten epochs, AdamW with weight decay 0.0001, and the run seed; baselines
+use learning rate 0.01 and batch size 32. Search varies only learning rate and
+batch size. Strict metric improvement replaces the incumbent, so ties retain
+the earlier, simpler baseline. A majority win is a valid deployable outcome.
+
+With `--output best.json`, a new `best.json.run` directory contains the dataset
+manifest, experiment record, and numbered trial records and GGUF bundles.
+`best.json` points directly to the selected trial bundle; there is no retraining
+or separate `best.json.bundle` copy. Existing output/experiment paths are
+rejected. Without `--output`, a retained temporary experiment directory is
+created and its path is emitted in the first JSON event.
+
+Each trial is recorded as running before dispatch and replaced with its terminal
+status, validation metrics, artifact identity, optimizer steps, elapsed time
+and process allocation delta. The allocation delta is not peak memory or a
+hard cap and includes other process activity. Failed trials retain their error
+and any exportable partial model. A process crash leaves a running record;
+resume/recovery is not implemented. Persistence errors abort the experiment.
+
+After selection, `experiment.json` freezes the winner's artifact identity.
+The command reloads that exact bundle, commits a test-exposure count before
+accessing test rows, and evaluates once under `tabular-heldout-v1`. The test
+result does not affect selection. Reusing an experiment is rejected, including
+an interrupted experiment. For retuning the same dataset manifest, pass
+`--prior-experiment best.json.run` with a new output path to carry prior test
+exposure into the new experiment. This lineage is explicit and local: the
+command cannot discover unrelated experiments or external inspection of data.
+
+Machine output uses version 1 events: experiment, trial and result. Trial scores
+are in the requested metric's natural direction. Cancellation and failures are
+also recorded in the experiment directory; callers must check the command error.

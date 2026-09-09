@@ -149,9 +149,11 @@ separate cleanup phase.
 
 ### R05 — Correct AutoML scoring and retain its winning model
 
-- [ ] R05. Owner: Codex (in progress). Production scoring leak and metric handling
-  corrected with red-to-green evidence; requested output retains exact winning bundle.
-  Majority/linear/MLP comparison, all-trial persistence and final-evaluation protocol remain. Dependencies: R04. Restrict search to parameters actually consumed
+- [x] R05. Owner: Codex. Isolated scoring, majority/linear/MLP comparison,
+  per-trial artifacts/failures/steps/timing/allocation records and frozen final evaluation
+  implemented. Baseline win, metric direction, artifact reload, cancellation and
+  explicit prior-exposure lineage tested. Lineage is local and caller-declared;
+  process allocation is not peak memory or a hard cap. Dependencies: R04. Restrict search to parameters actually consumed
   by each recipe; reject unsupported metrics and honor minimize/maximize.
   Compare majority, linear and MLP candidates on the same validation rows.
   Persist every trial and its artifact, including failures and resource usage.
