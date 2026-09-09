@@ -1,0 +1,55 @@
+tabular/save.go:35:15: Error return value of `f.Close` is not checked (errcheck)
+	defer f.Close()
+	             ^
+tabular/save.go:90:15: Error return value of `f.Close` is not checked (errcheck)
+	defer f.Close()
+	             ^
+tabular/ft_transformer.go:254:3: rangeValCopy: each iteration copies 128 bytes (consider pointers or indexing) (gocritic)
+		for i, layer := range ft.layers {
+		^
+tabular/saint.go:280:2: rangeValCopy: each iteration copies 192 bytes (consider pointers or indexing) (gocritic)
+	for i, l := range s.layers {
+	^
+tabular/saint.go:331:2: rangeValCopy: each iteration copies 192 bytes (consider pointers or indexing) (gocritic)
+	for i, l := range s.layers {
+	^
+tabular/saint.go:716:4: rangeValCopy: each iteration copies 192 bytes (consider pointers or indexing) (gocritic)
+			for i, l := range model.layers {
+			^
+tabular/save.go:61:15: appendAssign: append result not assigned to the same slice (gocritic)
+	allLayers := append(model.layers, model.head)
+	             ^
+tabular/train.go:126:4: importShadow: shadow of imported from 'github.com/zerfoo/zerfoo/training/loss' package 'loss' (gocritic)
+			loss, softmaxOut, err := crossEntropyLoss(ctx, engine, logits, labelData, batchSize, numClasses)
+			^
+tabular/train.go:453:2: importShadow: shadow of imported from 'github.com/zerfoo/zerfoo/training/loss' package 'loss' (gocritic)
+	loss, softmaxOut, err := crossEntropyLoss(ctx, engine, logits, labels, n, numClasses)
+	^
+tabular/save.go:31:12: G304: Potential file inclusion via variable (gosec)
+	f, err := os.Create(path)
+	          ^
+tabular/save.go:86:12: G304: Potential file inclusion via variable (gosec)
+	f, err := os.Open(path)
+	          ^
+tabular/lora.go:106:5: `Initialise` is a misspelling of `Initialize` (misspell)
+	// Initialise LoRA adapters: A with Kaiming, B with zeros (standard LoRA init).
+	   ^
+tabular/pretrain.go:87:33: `initialised` is a misspelling of `initialized` (misspell)
+// FineTune creates a new Model initialised from the BaseModel's pre-trained
+                                ^
+tabular/pretrain.go:163:55: `initialised` is a misspelling of `initialized` (misspell)
+// fineTuneModel runs the training loop on an already-initialised model.
+                                                      ^
+tabular/tabnet.go:303:5: S1009: should omit nil check; len() for nil slices is defined as zero (staticcheck)
+	if t.lastAttentionMasks == nil || len(t.lastAttentionMasks) == 0 {
+	   ^
+tabular/resnet.go:265:6: func initResNetWeights is unused (unused)
+func initResNetWeights(m *TabResNet, seed uint64) {
+     ^
+16 issues:
+* errcheck: 2
+* gocritic: 7
+* gosec: 2
+* misspell: 3
+* staticcheck: 1
+* unused: 1
