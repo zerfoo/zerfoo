@@ -9,7 +9,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"strconv"
 
 	"github.com/zerfoo/zerfoo/tabular"
@@ -29,14 +28,15 @@ type AutoMLCommand struct {
 
 // autoMLRunConfig holds parsed CLI flags for an AutoML run.
 type autoMLRunConfig struct {
-	Model    string
-	Dataset  string
-	Trials   int
-	Metric   string
-	Output   string
-	Strategy string
-	Patience int
-	Seed     int64
+	Model           string
+	Dataset         string
+	Trials          int
+	Metric          string
+	Output          string
+	Strategy        string
+	Patience        int
+	Seed            int64
+	PriorExperiment string
 }
 
 // trialLog is written as NDJSON for each completed trial.
@@ -82,6 +82,10 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 		return err
 	}
 
+	if cfg.Model == "tabular" && c.workerFactory == nil {
+		return c.runTabularExperiment(ctx, cfg)
+	}
+
 	// Default search space: learning rate, LoRA rank, batch size, patch size.
 	space := automl.SearchSpace{
 		Params: []automl.HParam{
@@ -90,10 +94,6 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 			{Name: "batch_size", Min: 1, Max: 64, IsLog: false},
 			{Name: "patch_size", Min: 8, Max: 64, IsLog: false},
 		},
-	}
-
-	if cfg.Model == "tabular" && c.workerFactory == nil {
-		space.Params = []automl.HParam{{Name: "lr", Min: 1e-5, Max: 1e-2, IsLog: true}, {Name: "batch_size", Min: 1, Max: 64}}
 	}
 
 	var strategy automl.Strategy
@@ -105,16 +105,8 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 	}
 
 	var worker automl.Worker
-	var tabularRun *tabularWorker
 	if c.workerFactory != nil {
 		worker = c.workerFactory(cfg)
-	} else if cfg.Model == "tabular" {
-		w, err := newTabularWorkerContext(ctx, cfg.Dataset, cfg.Metric, uint64(cfg.Seed))
-		if err != nil {
-			return fmt.Errorf("automl: create tabular worker: %w", err)
-		}
-		tabularRun = w
-		worker = tabularTrialFunc(func(config automl.Config) (automl.Metric, error) { return w.runTrial(ctx, config) })
 	} else {
 		worker = &placeholderWorker{metric: cfg.Metric}
 	}
@@ -140,7 +132,7 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 		entry := trialLog{
 			TrialID: r.TrialID,
 			Params:  r.Config.Params,
-			Score:   autoMLDisplayScore(r.Metric.Score, cfg.Metric, tabularRun != nil),
+			Score:   r.Metric.Score,
 		}
 		if r.Err != nil {
 			entry.Error = r.Err.Error()
@@ -159,26 +151,10 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 		out := bestConfigOutput{
 			TrialID: best.TrialID,
 			Params:  best.Config.Params,
-			Score:   autoMLDisplayScore(best.Metric.Score, cfg.Metric, tabularRun != nil),
+			Score:   best.Metric.Score,
 			Model:   cfg.Model,
 			Dataset: cfg.Dataset,
 			Metric:  cfg.Metric,
-		}
-		if tabularRun != nil {
-			key, err := tabularTrialKey(best.Config)
-			if err != nil {
-				return err
-			}
-			winner := tabularRun.models[key]
-			if winner == nil {
-				return fmt.Errorf("automl: winning model was not retained")
-			}
-			out.ArtifactPath = cfg.Output + ".bundle"
-			id, err := tabular.SaveClassifierBundle(ctx, out.ArtifactPath, winner, tabularRun.dataset, filepath.Base(cfg.Output))
-			if err != nil {
-				return fmt.Errorf("automl: save winning model: %w", err)
-			}
-			out.ArtifactSHA256 = id
 		}
 		data, err := json.MarshalIndent(out, "", "  ")
 		if err != nil {
@@ -187,13 +163,10 @@ func (c *AutoMLCommand) Run(ctx context.Context, args []string) error {
 		if err := os.WriteFile(cfg.Output, data, 0600); err != nil {
 			return fmt.Errorf("automl: write best config: %w", err)
 		}
-		if tabularRun != nil {
-			if err := enc.Encode(map[string]any{"version": 1, "type": "result", "report": cfg.Output, "artifact_path": out.ArtifactPath, "artifact_sha256": out.ArtifactSHA256}); err != nil {
-				return fmt.Errorf("automl: write result: %w", err)
-			}
-		} else if _, err := fmt.Fprintf(c.out, "Best config saved to %s\n", cfg.Output); err != nil {
+		if _, err := fmt.Fprintf(c.out, "Best config saved to %s\n", cfg.Output); err != nil {
 			return fmt.Errorf("automl: write result: %w", err)
 		}
+
 	}
 
 	return nil
@@ -262,6 +235,12 @@ func (c *AutoMLCommand) parseArgs(args []string) (autoMLRunConfig, error) {
 				return cfg, err
 			}
 			cfg.Output = v
+		case "--prior-experiment":
+			v, err := nextVal("--prior-experiment")
+			if err != nil {
+				return cfg, err
+			}
+			cfg.PriorExperiment = v
 		case "--strategy":
 			v, err := nextVal("--strategy")
 			if err != nil {
@@ -310,11 +289,12 @@ func (c *AutoMLCommand) Usage() string {
 Run automated hyperparameter optimization.
 
 OPTIONS:
-  --model <path>        Path to model file (required)
-  --dataset <path>      Path to dataset in JSONL format (required)
-  --trials <int>        Number of trials to run (default: 50)
+  --model <name>        Use tabular for numeric CSV training (required)
+  --dataset <path>      CSV with target in the final column (required)
+  --trials <int>        Search trials after three baselines (default: 50)
   --metric <name>       Optimization metric (default: loss)
-  --output <path>       Path to save best config JSON
+  --output <path>       New best-config JSON; trials live in <path>.run
+  --prior-experiment <dir>  Link prior test exposure when retuning
   --strategy <name>     Search strategy: bayesian, random (default: bayesian)
   --patience <int>      Early stopping patience (default: 10)
   --seed <int>          Random seed (default: 42)`
@@ -347,17 +327,6 @@ type tabularWorker struct {
 	models         map[string]*tabular.Classifier[float32]
 	lastEvaluation tabular.Evaluation
 	seed           uint64
-}
-
-type tabularTrialFunc func(automl.Config) (automl.Metric, error)
-
-func (f tabularTrialFunc) RunTrial(config automl.Config) (automl.Metric, error) { return f(config) }
-
-func autoMLDisplayScore(score float64, metric string, tabularRun bool) float64 {
-	if tabularRun && (metric == "loss" || metric == "cross_entropy") {
-		return -score
-	}
-	return score
 }
 
 func newTabularWorker(datasetPath, metric string) (*tabularWorker, error) {
