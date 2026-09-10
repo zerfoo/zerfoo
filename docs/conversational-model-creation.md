@@ -37,9 +37,10 @@ The agent uses this sequence:
    stratification; seed is an explicit tool argument.
 4. `research_search` retrieves eligible evidence. An empty catalog means no
    retrieved evidence, not permission to invent sources.
-5. `plan_create` submits dataset/project IDs, rationale, evidence IDs, hidden
-   widths, epochs, batch size, learning rate and seed. The service validates
-   the model and stores an immutable version 1 plan with evidence snapshots.
+5. `plan_create` submits dataset/project IDs, rationale, evidence IDs, a `definition` DSL graph, epochs, batch size, learning rate
+   and seed. The service validates the graph and stores an immutable version 2
+   plan with its canonical definition identity and evidence snapshots.
+   `hidden_dims` remains a compatibility adapter that generates a DSL graph.
 6. `run_start` takes the plan ID and an idempotency key. Repeating the same
    request returns the same run; changing the plan under that key fails.
 7. `run_status` reports progress, terminal status, validation metrics and the
@@ -61,12 +62,19 @@ Every tool is also a CLI operation, with exactly one JSON argument:
 
 ## Supported model designs
 
-The first executable capability is numeric classification with linear layers,
-up to four hidden ReLU layers (width 1–1024), softmax, cross-entropy and AdamW.
-The agent chooses topology and supported training parameters; the service does
-not translate arbitrary paper descriptions into new operators. Unsupported
-fields and evidence IDs fail validation. The growing Zerfoo capability set
-must be registered and verified before new architectures become executable.
+Numeric classification now accepts explicit DSL graphs, including residual
+branches and shared parameters. The application requires one dynamic-batch
+feature input and one logits output; the underlying compiler supports multiple
+named inputs and graph outputs. The initial composition set is Linear, Dense,
+ReLU, Add, Mul, Sub, MatMul and Softmax, using existing Zerfoo graph nodes.
+Cross-entropy and AdamW remain the classifier training contract.
+
+`capabilities` derives component metadata from the shared registry and returns
+the definition schema. A listed architecture is not necessarily trainable or
+composable: inspect operation/device/precision/status. Unannotated builders are
+reported as unverified. See [the DSL contract and coverage](model-definition-dsl.md)
+for grammar, limits, examples and the architecture-reference route. Existing
+version 1 plans and legacy classifier bundles remain readable.
 
 Plans allow 1–200 epochs, batch size 1–256 and learning rate in (0,1]. Training
 has a two-minute cooperative time limit and one worker per state directory.
@@ -143,3 +151,31 @@ all 12 tools, starts a real plan, retries the start, closes the MCP process,
 waits from fresh CLI processes, and checks the saved model predicts Iris-setosa.
 It verifies artifact identity and reports actual validation metrics. It does
 not substitute a mocked trainer or claim host-specific integration coverage.
+
+### Using the paper-library corpus
+
+`--library` also accepts the root directory of a `paper-library` checkout:
+
+```sh
+./zerfoo-create --library "$HOME/Code/dndungu/paper-library" research_search '{"query":"tabular"}'
+```
+
+The directory adapter reads `papers/*.json` directly, ignoring the manifest and
+hidden fetch-state files. It searches title, abstract and tags for all query
+terms, ranks title matches higher, and returns at most 20 candidates with stable
+ID ordering for ties. This is local lexical search; it does not invoke Python,
+install dependencies, load the vector index or execute retrieved content. The
+paper library's own vector query CLI remains a separate retrieval option.
+
+Each result pins the source record's SHA-256 and identifies the abstract as its
+source section. These records currently contain bibliographic metadata, not
+reviewed Zerfoo component mappings: results have `eligible: false` and an explicit
+`support_gap`. They cannot be cited as executable evidence in `plan_create`.
+To qualify a paper, create a version 1 evidence catalog card with the reviewed
+component identifiers, precise supporting section, source hash/version and
+limitations. The existing registry filter applies to that catalog. A paper's
+presence, tags or linked code repository do not establish Zerfoo support.
+
+Reads are rooted in the selected directory, with regular-file records only,
+1 MiB per record, a 32 MiB corpus budget and a 10,000-record ceiling. The source
+checkout is never modified. Catalog JSON input remains backward compatible.

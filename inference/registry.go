@@ -5,9 +5,10 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/zerfoo/zerfoo/model"
+	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
-	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/ztensor/tensor"
 )
 
@@ -45,6 +46,7 @@ func RegisterArchitecture(name string, builder ArchBuilder) {
 		panic(fmt.Sprintf("inference: RegisterArchitecture called twice for %q", name))
 	}
 	archRegistry.builders[name] = builder
+	model.ObserveArchitecture(name)
 }
 
 // GetArchitecture returns the builder registered for the given architecture

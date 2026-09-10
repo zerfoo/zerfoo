@@ -1,0 +1,5 @@
+--- FAIL: TestBiasAccumulatesSharedParameterGradient (0.00s)
+    bias_accumulation_test.go:30: gradient[0]=4 want 8
+FAIL
+FAIL	github.com/zerfoo/zerfoo/layers/core	0.291s
+FAIL

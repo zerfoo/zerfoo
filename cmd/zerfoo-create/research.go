@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,11 +9,15 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/zerfoo/zerfoo/model"
 )
 
 // Evidence is data, never executable instructions. Only supported components
 // are eligible; references are retained without claiming paper reproduction.
 type evidenceCard struct {
+	Eligible   bool     `json:"eligible"`
+	SupportGap string   `json:"support_gap,omitempty"`
 	ID         string   `json:"id"`
 	Title      string   `json:"title"`
 	URL        string   `json:"url"`
@@ -22,10 +27,17 @@ type evidenceCard struct {
 	Components []string `json:"components"`
 }
 
-func (s *service) search(query string) ([]evidenceCard, error) {
+func (s *service) search(ctx context.Context, query string) ([]evidenceCard, error) {
 	result := []evidenceCard{}
 	if s.library == "" {
 		return result, nil
+	}
+	info, err := os.Stat(s.library)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return searchPaperLibrary(ctx, s.library, query)
 	}
 	f, err := os.Open(s.library)
 	if err != nil {
@@ -48,7 +60,13 @@ func (s *service) search(query string) ([]evidenceCard, error) {
 	if catalog.Version != 1 {
 		return nil, fmt.Errorf("unsupported evidence schema")
 	}
-	supported := map[string]bool{"linear": true, "relu": true, "softmax": true, "cross_entropy": true, "adamw": true}
+	supported := map[string]bool{}
+	for _, descriptor := range model.ListComponents() {
+		_, rule, ok := model.Component(descriptor.Kind, descriptor.ID)
+		if ok && (rule != nil || descriptor.Kind == "loss" || descriptor.Kind == "optimizer") {
+			supported[strings.ToLower(descriptor.ID)] = true
+		}
+	}
 	seen := map[string]bool{}
 	for _, card := range catalog.Cards {
 		u, err := url.Parse(card.URL)
@@ -58,10 +76,11 @@ func (s *service) search(query string) ([]evidenceCard, error) {
 		seen[card.ID] = true
 		eligible := len(card.Components) > 0
 		for _, component := range card.Components {
-			if !supported[component] {
+			if !supported[strings.ToLower(component)] {
 				eligible = false
 			}
 		}
+		card.Eligible = eligible
 		if eligible && strings.Contains(strings.ToLower(card.Title+" "+card.Summary), strings.ToLower(query)) {
 			result = append(result, card)
 		}

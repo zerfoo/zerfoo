@@ -1,0 +1,76 @@
+{
+  "date": "2026-09-09",
+  "runtime": "go1.27.1 darwin/arm64",
+  "base": "a58e8f47",
+  "results": {
+    "unified-dsl-tests.jsonl": {
+      "test_events_including_subtests": {
+        "pass": 2303,
+        "skip": 6
+      },
+      "failures": []
+    },
+    "unified-dsl-race.jsonl": {
+      "test_events_including_subtests": {
+        "pass": 2303,
+        "skip": 6,
+        "fail": 1
+      },
+      "failures": [
+        "TestPreTrain_TransferBenefit"
+      ]
+    },
+    "unified-dsl-final-targeted.jsonl": {
+      "test_events_including_subtests": {
+        "pass": 211
+      },
+      "failures": []
+    },
+    "unified-dsl-transfer.jsonl": {
+      "test_events_including_subtests": {
+        "pass": 10
+      },
+      "failures": []
+    },
+    "unified-dsl-transfer-baseline.jsonl": {
+      "test_events_including_subtests": {
+        "pass": 10
+      },
+      "failures": []
+    }
+  },
+  "source_sha256": {
+    "model/capabilities.go": "086e4a2feef8d5d73848a7651f4875440272df6ee4df86009bfe06236ffd1d90",
+    "model/capabilities_test.go": "0a46a8a6fd9c88aaa829b3c64ef0b61279c043b36eabe2b264c8ad71867d5f86",
+    "model/registry.go": "6508bbacc2c7377ad90b103f323acd45776127c18d0ac25258403d702bf214b3",
+    "model/dsl/architecture.go": "912bed7a1a60f3ad92fe00634d2f039da5c3771834b4267ba11beb4e1f69f484",
+    "model/dsl/compile.go": "b4aebf652798b477eca6b876662f030e3bbb5ea7825f37adb3813a509a52d864",
+    "model/dsl/compile_test.go": "5653a070ad0f79ceb96d05826fd82cbd23efe348e6d63acb4cb3d5cb3e643195",
+    "model/dsl/definition.go": "f2f0c0d7ec6491f91f3358d5568c816b7c82b40b5f27647dfc596f1cfd25b8c4",
+    "model/dsl/gguf.go": "f4df83d07f23df896820fff9f867b074e84019333a3142955050195ab30b7791",
+    "model/dsl/gguf_test.go": "4e9da9c8a70c9fe352b2bb3f3a3cba1c04994bfa5841c2f092cb79b963695d05",
+    "model/dsl/schema.go": "a4f6d939700b8cab2a711820c07bf44840782f561908f43e0acf37092499c77c",
+    "model/dsl/graph.go": "17828aaa3bb1d92f6ad425a18398f281b1c28bbb03aca761d3c382ce8b24c143",
+    "model/dsl/train.go": "1a5595c0a1e8f91f9e8b1ade20c22438192c85235ca8266661910ceef641461c",
+    "layers/core/bias.go": "6f937fc32493cc72c1b8187ad380ef4610193304126ed028ae2018ad3ee1a807",
+    "layers/core/bias_accumulation_test.go": "c360fd0dff5c8d472081a76c3fd7e196525f7336e1d739bb053bc2d499201fb4",
+    "layers/registry/composition.go": "563599131419340a5fdf825b5237806701fc5a4444edc278c2ff9b44dcdc0941",
+    "inference/registry.go": "e104c0cc9054382071c9521bac3818b9557132f632dc6a284c211c5684aa245c",
+    "inference/definition.go": "e998a09dbf4df1c2580edb76d8d7d6fc5819e033abdb80c57180381f98c539e9",
+    "inference/definition_test.go": "7d3225138114d350fa0d4a42de043853ecca14a3591ed0b84ca449c30f10f1ea",
+    "tabular/classifier.go": "0cd2cccc53fe53fea83bf452215a7d4fb066da40e3836e646d241cc3b137625a",
+    "tabular/classifier_train.go": "7e10f13096af2d98ae2708e3cd8fd0c663680f1a5e35d946e7079750d63a11d5",
+    "tabular/bundle.go": "883b17ae2ef21ba4a35cae7168f565d43c40aeac010e9c06f3c9a4b2adc26cce",
+    "tabular/dsl.go": "7bedec3375cbd1030643f07bb730e0c8fa3f5aca0d791e627a3ebee895002e03",
+    "tabular/dsl_test.go": "0904711a4091b1fc1c6542787bff2fa4b55e52892955d679738b899039bddc39",
+    "cmd/zerfoo-create/main.go": "542b0188f53fe15c2f18d33bfd51cc057143d8a5d7d9b81000c3de350e0f1a67",
+    "cmd/zerfoo-create/tools.go": "02db1fd5f51b8e8dd4b226e9be941acda52b6d557c201f89f55245c8f2756e47",
+    "cmd/zerfoo-create/store.go": "c906b8e45c9d3d16e6d274e4505005d8b8c398d46c8a988079d38e3000ed3f7a",
+    "cmd/zerfoo-create/research.go": "40c5b843e48ae1da46c3a0dfc59cfadcb290b08d8d23240cea556a68f52b08de",
+    "cmd/zerfoo-create/service_test.go": "a4f2f5f5599fe4aed26e7328a88f4714ceba352547b6641248aef4ab912c7458",
+    "layers/core/dense_zero_input_test.go": "238077be760f6549fdd8b8abc6104f1136eea46c9608950a63f6e4b45a75c7b1",
+    "training/loss/capabilities.go": "dda40d97157505ff9ef410b6d41dd02a3000d9fd5f7db1a1c42ac48a6da064b5",
+    "training/optimizer/capabilities.go": "1ce2fafefa163fd0d24539042ac1266f435a717b74bb6359a0957be5b887b667",
+    "cmd/zerfoo-create/testdata/lifecycle.py": "b32b5c92a5b1d3d8cbbf18a6afd663b4952057f553ed33f38047ee10d1690739"
+  }
+}

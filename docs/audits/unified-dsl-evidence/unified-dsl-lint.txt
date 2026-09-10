@@ -1,0 +1,963 @@
+inference/arch_bert.go:334:3: The copy of the 'for' variable "i" can be deleted (Go 1.22+) (copyloopvar)
+		posID := i
+		^
+inference/moe_async.go:110:3: The copy of the 'for' variable "t" can be deleted (Go 1.22+) (copyloopvar)
+		task := t
+		^
+model/dsl/optimize.go:249:4: The copy of the 'for' variable "child" can be deleted (Go 1.22+) (copyloopvar)
+			actual := child
+			^
+model/dsl/optimize.go:272:4: The copy of the 'for' variable "child" can be deleted (Go 1.22+) (copyloopvar)
+			actual := child
+			^
+model/dsl/optimize.go:357:3: The copy of the 'for' variable "name" can be deleted (Go 1.22+) (copyloopvar)
+		outName := name
+		^
+inference/arch_bert_parity_test.go:7:2: import 'math/rand' is not allowed from list 'main': Use math/rand/v2. (depguard)
+	"math/rand"
+	^
+layers/core/moe_test.go:7:2: import 'math/rand' is not allowed from list 'main': Use math/rand/v2. (depguard)
+	"math/rand"
+	^
+inference/arch_dbrx.go:264: 264-325 lines are duplicate of `inference/arch_kimi.go:214-269` (dupl)
+func buildDBRXMoE(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	proxy *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	builder *graph.Builder[float32],
+	normed graph.Node[float32],
+	layerIdx int,
+	blkPrefix string,
+	numExperts, topK int,
+) (graph.Node[float32], error) {
+	// Load router weight: [numExperts, hiddenSize].
+	routerW, ok := tensors[blkPrefix+"ffn_gate_inp.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_inp.weight")
+	}
+
+	// Load stacked expert weights.
+	gateExpsW, ok := tensors[blkPrefix+"ffn_gate_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_exps.weight")
+	}
+	upExpsW, ok := tensors[blkPrefix+"ffn_up_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_up_exps.weight")
+	}
+	downExpsW, ok := tensors[blkPrefix+"ffn_down_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_down_exps.weight")
+	}
+
+	// Build individual expert FFNs from stacked weights.
+	experts := make([]graph.Node[float32], numExperts)
+	for e := 0; e < numExperts; e++ {
+		expertFFN, err := buildExpertFFN(
+			proxy, ops, gateExpsW, upExpsW, downExpsW,
+			e, numExperts, cfg.HiddenSize, cfg.IntermediateSize,
+			fmt.Sprintf("layer%d_expert%d", layerIdx, e),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("expert %d: %w", e, err)
+		}
+		experts[e] = expertFFN
+	}
+
+	gate := core.NewMoEGate[float32](proxy, ops, topK)
+	moe := core.NewMixtureOfExperts[float32](proxy, ops, gate, experts, numExperts, topK)
+
+	// Reshape [batch, seqLen, hidden] -> [seqLen, hidden] for MoE.
+	reshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: true}
+	flat := builder.AddNode(reshapeNode, normed)
+
+	// Router weight as constant node.
+	routerNode := &deepSeekConstNode[float32]{value: routerW}
+	routerOut := builder.AddNode(routerNode)
+
+	moeOut := builder.AddNode(moe, flat, routerOut)
+
+	// Reshape back to [batch, seqLen, hidden].
+	unreshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: false}
+	return builder.AddNode(unreshapeNode, moeOut, normed), nil
+}
+inference/arch_deepseek.go:354: 354-408 lines are duplicate of `inference/arch_lfm2.go:262-316` (dupl)
+func buildDeepSeekStandardFFN(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	proxy *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	builder *graph.Builder[float32],
+	normed graph.Node[float32],
+	prefix string,
+) (graph.Node[float32], error) {
+	tl := newTensorLookup(tensors)
+
+	gateW, err := tl.Lookup(prefix + "mlp.gate_proj.weight")
+	if err != nil {
+		return nil, err
+	}
+	upW, err := tl.Lookup(prefix + "mlp.up_proj.weight")
+	if err != nil {
+		return nil, err
+	}
+	downW, err := tl.Lookup(prefix + "mlp.down_proj.weight")
+	if err != nil {
+		return nil, err
+	}
+
+	ffn, err := core.NewFFN[float32](
+		prefix+"mlp", proxy, ops,
+		cfg.HiddenSize, cfg.IntermediateSize, cfg.HiddenSize,
+		core.WithSwiGLU[float32](),
+		core.WithFFNNoBias[float32](),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+	gateWT, err := proxy.Transpose(ctx, gateW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	upWT, err := proxy.Transpose(ctx, upW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	downWT, err := proxy.Transpose(ctx, downW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+
+	ffnParams := ffn.Parameters()
+	ffnParams[0].Value = gateWT
+	ffnParams[1].Value = downWT
+	ffnParams[2].Value = upWT
+
+	return builder.AddNode(ffn, normed), nil
+}
+inference/arch_glm.go:258: 258-315 lines are duplicate of `inference/arch_lfm2.go:319-376` (dupl)
+func buildGLM4MoE(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	proxy *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	builder *graph.Builder[float32],
+	normed graph.Node[float32],
+	layerIdx int,
+	blkPrefix string,
+	numExperts, topK int,
+) (graph.Node[float32], error) {
+	tl := newTensorLookup(tensors)
+
+	routerW, err := tl.Lookup(blkPrefix + "ffn_gate_inp.weight")
+	if err != nil {
+		return nil, err
+	}
+
+	gateExpsW, err := tl.Lookup(blkPrefix + "ffn_gate_exps.weight")
+	if err != nil {
+		return nil, err
+	}
+	upExpsW, err := tl.Lookup(blkPrefix + "ffn_up_exps.weight")
+	if err != nil {
+		return nil, err
+	}
+	downExpsW, err := tl.Lookup(blkPrefix + "ffn_down_exps.weight")
+	if err != nil {
+		return nil, err
+	}
+
+	experts := make([]graph.Node[float32], numExperts)
+	for e := 0; e < numExperts; e++ {
+		expertFFN, err := buildExpertFFN(
+			proxy, ops, gateExpsW, upExpsW, downExpsW,
+			e, numExperts, cfg.HiddenSize, cfg.IntermediateSize,
+			fmt.Sprintf("layer%d_expert%d", layerIdx, e),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("expert %d: %w", e, err)
+		}
+		experts[e] = expertFFN
+	}
+
+	gate := core.NewMoEGate[float32](proxy, ops, topK)
+	moe := core.NewMixtureOfExperts[float32](proxy, ops, gate, experts, numExperts, topK)
+
+	reshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: true}
+	flat := builder.AddNode(reshapeNode, normed)
+
+	routerNode := &deepSeekConstNode[float32]{value: routerW}
+	routerOut := builder.AddNode(routerNode)
+
+	moeOut := builder.AddNode(moe, flat, routerOut)
+
+	unreshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: false}
+	return builder.AddNode(unreshapeNode, moeOut, normed), nil
+}
+inference/arch_jamba.go:413: 413-454 lines are duplicate of `inference/arch_mamba.go:247-297` (dupl)
+) error {
+	params := block.Parameters()
+
+	weightNames := []struct {
+		idx       int
+		name      string
+		transpose bool
+	}{
+		{0, prefix + "ssm_in_proj.weight", true},
+		{1, prefix + "ssm_conv1d.weight", false},
+		{2, prefix + "ssm_conv1d.bias", false},
+		{3, prefix + "ssm_x_proj.weight", true},
+		{4, prefix + "ssm_dt_proj.weight", true},
+		{5, prefix + "ssm_A_log", false},
+		{6, prefix + "ssm_D", false},
+		{7, prefix + "ssm_out_proj.weight", true},
+	}
+
+	for _, wn := range weightNames {
+		t, ok := tensors[wn.name]
+		if !ok {
+			// conv1d.bias may not be present in all models; skip gracefully
+			if wn.idx == 2 {
+				continue
+			}
+			return fmt.Errorf("missing tensor %q", wn.name)
+		}
+		if wn.idx < len(params) {
+			if wn.transpose && len(t.Shape()) == 2 {
+				transposed, err := cpuTranspose2D(t)
+				if err != nil {
+					return fmt.Errorf("transpose %s: %w", wn.name, err)
+				}
+				params[wn.idx].Value = transposed
+			} else {
+				params[wn.idx].Value = t
+			}
+		}
+	}
+
+	return nil
+}
+inference/arch_kimi.go:214: 214-269 lines are duplicate of `inference/arch_mixtral.go:273-335` (dupl)
+func buildKimiMoE(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	proxy *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	builder *graph.Builder[float32],
+	normed graph.Node[float32],
+	layerIdx int,
+	blkPrefix string,
+	numExperts, topK int,
+) (graph.Node[float32], error) {
+	routerW, ok := tensors[blkPrefix+"ffn_gate_inp.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_inp.weight")
+	}
+
+	gateExpsW, ok := tensors[blkPrefix+"ffn_gate_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_exps.weight")
+	}
+	upExpsW, ok := tensors[blkPrefix+"ffn_up_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_up_exps.weight")
+	}
+	downExpsW, ok := tensors[blkPrefix+"ffn_down_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_down_exps.weight")
+	}
+
+	experts := make([]graph.Node[float32], numExperts)
+	for e := 0; e < numExperts; e++ {
+		expertFFN, err := buildExpertFFN(
+			proxy, ops, gateExpsW, upExpsW, downExpsW,
+			e, numExperts, cfg.HiddenSize, cfg.IntermediateSize,
+			fmt.Sprintf("layer%d_expert%d", layerIdx, e),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("expert %d: %w", e, err)
+		}
+		experts[e] = expertFFN
+	}
+
+	gate := core.NewMoEGate[float32](proxy, ops, topK)
+	moe := core.NewMixtureOfExperts[float32](proxy, ops, gate, experts, numExperts, topK)
+
+	reshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: true}
+	flat := builder.AddNode(reshapeNode, normed)
+
+	routerNode := &deepSeekConstNode[float32]{value: routerW}
+	routerOut := builder.AddNode(routerNode)
+
+	moeOut := builder.AddNode(moe, flat, routerOut)
+
+	unreshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: false}
+	return builder.AddNode(unreshapeNode, moeOut, normed), nil
+}
+inference/arch_lfm2.go:262: 262-316 lines are duplicate of `inference/arch_deepseek.go:354-408` (dupl)
+func buildLFM2DenseFFN(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	proxy *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	builder *graph.Builder[float32],
+	normed graph.Node[float32],
+	prefix string,
+) (graph.Node[float32], error) {
+	tl := newTensorLookup(tensors)
+
+	gateW, err := tl.Lookup(prefix + "mlp.gate_proj.weight")
+	if err != nil {
+		return nil, err
+	}
+	upW, err := tl.Lookup(prefix + "mlp.up_proj.weight")
+	if err != nil {
+		return nil, err
+	}
+	downW, err := tl.Lookup(prefix + "mlp.down_proj.weight")
+	if err != nil {
+		return nil, err
+	}
+
+	ffn, err := core.NewFFN[float32](
+		prefix+"mlp", proxy, ops,
+		cfg.HiddenSize, cfg.IntermediateSize, cfg.HiddenSize,
+		core.WithSwiGLU[float32](),
+		core.WithFFNNoBias[float32](),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+	gateWT, err := proxy.Transpose(ctx, gateW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	upWT, err := proxy.Transpose(ctx, upW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+	downWT, err := proxy.Transpose(ctx, downW, []int{1, 0})
+	if err != nil {
+		return nil, err
+	}
+
+	ffnParams := ffn.Parameters()
+	ffnParams[0].Value = gateWT
+	ffnParams[1].Value = downWT
+	ffnParams[2].Value = upWT
+
+	return builder.AddNode(ffn, normed), nil
+}
+inference/arch_lfm2.go:319: 319-376 lines are duplicate of `inference/arch_glm.go:258-315` (dupl)
+func buildLFM2MoE(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	proxy *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	builder *graph.Builder[float32],
+	normed graph.Node[float32],
+	layerIdx int,
+	blkPrefix string,
+	numExperts, topK int,
+) (graph.Node[float32], error) {
+	tl := newTensorLookup(tensors)
+
+	routerW, err := tl.Lookup(blkPrefix + "ffn_gate_inp.weight")
+	if err != nil {
+		return nil, err
+	}
+
+	gateExpsW, err := tl.Lookup(blkPrefix + "ffn_gate_exps.weight")
+	if err != nil {
+		return nil, err
+	}
+	upExpsW, err := tl.Lookup(blkPrefix + "ffn_up_exps.weight")
+	if err != nil {
+		return nil, err
+	}
+	downExpsW, err := tl.Lookup(blkPrefix + "ffn_down_exps.weight")
+	if err != nil {
+		return nil, err
+	}
+
+	experts := make([]graph.Node[float32], numExperts)
+	for e := 0; e < numExperts; e++ {
+		expertFFN, err := buildExpertFFN(
+			proxy, ops, gateExpsW, upExpsW, downExpsW,
+			e, numExperts, cfg.HiddenSize, cfg.IntermediateSize,
+			fmt.Sprintf("layer%d_expert%d", layerIdx, e),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("expert %d: %w", e, err)
+		}
+		experts[e] = expertFFN
+	}
+
+	gate := core.NewMoEGate[float32](proxy, ops, topK)
+	moe := core.NewMixtureOfExperts[float32](proxy, ops, gate, experts, numExperts, topK)
+
+	reshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: true}
+	flat := builder.AddNode(reshapeNode, normed)
+
+	routerNode := &deepSeekConstNode[float32]{value: routerW}
+	routerOut := builder.AddNode(routerNode)
+
+	moeOut := builder.AddNode(moe, flat, routerOut)
+
+	unreshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: false}
+	return builder.AddNode(unreshapeNode, moeOut, normed), nil
+}
+inference/arch_llava.go:510: 510-571 lines are duplicate of `inference/arch_whisper.go:133-188` (dupl)
+) error {
+	params := enc.Parameters()
+
+	// Expected order from Parameters():
+	// [0] patch_embed.weight, [1] patch_embed.bias,
+	// [2] class_embedding, [3] position_embedding,
+	// then per block (12 params each):
+	//   [0] ln1.gamma, [1] ln1.beta, [2] q_weight, [3] k_weight,
+	//   [4] v_weight, [5] o_weight, [6] ln2.gamma, [7] ln2.beta,
+	//   [8] ffn1_weight, [9] ffn1_bias, [10] ffn2_weight, [11] ffn2_bias,
+	// then: [0] lnPost.gamma, [1] lnPost.beta.
+
+	expectedCount := 4 + 12*cfg.NumLayers + 2
+	if len(params) != expectedCount {
+		return fmt.Errorf("expected %d parameters, got %d", expectedCount, len(params))
+	}
+
+	ggufOrder := make([]string, 0, expectedCount)
+
+	// Patch embedding.
+	ggufOrder = append(ggufOrder,
+		"vision.patch_embed.weight",
+		"vision.patch_embed.bias",
+		"vision.class_embedding",
+		"vision.position_embedding",
+	)
+
+	// Per-block tensors.
+	for i := 0; i < cfg.NumLayers; i++ {
+		prefix := fmt.Sprintf("vision.blocks.%d.", i)
+		ggufOrder = append(ggufOrder,
+			prefix+"ln1.weight",
+			prefix+"ln1.bias",
+			prefix+"attn.q_proj.weight",
+			prefix+"attn.k_proj.weight",
+			prefix+"attn.v_proj.weight",
+			prefix+"attn.o_proj.weight",
+			prefix+"ln2.weight",
+			prefix+"ln2.bias",
+			prefix+"mlp.fc1.weight",
+			prefix+"mlp.fc1.bias",
+			prefix+"mlp.fc2.weight",
+			prefix+"mlp.fc2.bias",
+		)
+	}
+
+	// Post layer norm.
+	ggufOrder = append(ggufOrder,
+		"vision.ln_post.weight",
+		"vision.ln_post.bias",
+	)
+
+	for i, ggufName := range ggufOrder {
+		t, ok := tensors[ggufName]
+		if !ok {
+			return fmt.Errorf("missing GGUF tensor %q", ggufName)
+		}
+		copy(params[i].Value.Data(), t.Data())
+	}
+
+	return nil
+}
+inference/arch_mamba.go:247: 247-297 lines are duplicate of `inference/arch_jamba.go:413-454` (dupl)
+) error {
+	params := block.Parameters()
+	// MambaBlock.Parameters() returns:
+	//   [0] inProj weight
+	//   [1] conv1d weight
+	//   [2] conv1d bias
+	//   [3] xProj weight
+	//   [4] dtProj weight
+	//   [5] A_log
+	//   [6] D
+	//   [7] outProj weight
+
+	weightNames := []struct {
+		idx       int
+		name      string
+		transpose bool // true for 2D projection weights that need transposing
+	}{
+		{0, prefix + "in_proj.weight", true},
+		{1, prefix + "conv1d.weight", false},
+		{2, prefix + "conv1d.bias", false},
+		{3, prefix + "x_proj.weight", true},
+		{4, prefix + "dt_proj.weight", true},
+		{5, prefix + "A_log", false},
+		{6, prefix + "D", false},
+		{7, prefix + "out_proj.weight", true},
+	}
+
+	for _, wn := range weightNames {
+		t, ok := tensors[wn.name]
+		if !ok {
+			// conv1d.bias may not be present in all models; skip gracefully
+			if wn.idx == 2 {
+				continue
+			}
+			return fmt.Errorf("missing tensor %q", wn.name)
+		}
+		if wn.idx < len(params) {
+			if wn.transpose && len(t.Shape()) == 2 {
+				transposed, err := cpuTranspose2D(t)
+				if err != nil {
+					return fmt.Errorf("transpose %s: %w", wn.name, err)
+				}
+				params[wn.idx].Value = transposed
+			} else {
+				params[wn.idx].Value = t
+			}
+		}
+	}
+
+	return nil
+}
+inference/arch_mixtral.go:273: 273-335 lines are duplicate of `inference/arch_dbrx.go:264-325` (dupl)
+func buildMixtralMoE(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	proxy *compute.EngineProxy[float32],
+	ops numeric.Float32Ops,
+	builder *graph.Builder[float32],
+	normed graph.Node[float32],
+	layerIdx int,
+	blkPrefix string,
+	numExperts, topK int,
+) (graph.Node[float32], error) {
+	// Load router weight: [numExperts, hiddenSize].
+	routerW, ok := tensors[blkPrefix+"ffn_gate_inp.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_inp.weight")
+	}
+
+	// Load stacked expert weights.
+	gateExpsW, ok := tensors[blkPrefix+"ffn_gate_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_gate_exps.weight")
+	}
+	upExpsW, ok := tensors[blkPrefix+"ffn_up_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_up_exps.weight")
+	}
+	downExpsW, ok := tensors[blkPrefix+"ffn_down_exps.weight"]
+	if !ok {
+		return nil, fmt.Errorf("missing tensor %q", blkPrefix+"ffn_down_exps.weight")
+	}
+
+	// Build individual expert FFNs from stacked weights.
+	experts := make([]graph.Node[float32], numExperts)
+	for e := 0; e < numExperts; e++ {
+		expertFFN, err := buildExpertFFN(
+			proxy, ops, gateExpsW, upExpsW, downExpsW,
+			e, numExperts, cfg.HiddenSize, cfg.IntermediateSize,
+			fmt.Sprintf("layer%d_expert%d", layerIdx, e),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("expert %d: %w", e, err)
+		}
+		experts[e] = expertFFN
+	}
+
+	gate := core.NewMoEGate[float32](proxy, ops, topK)
+	// Mixtral has no shared expert.
+	moe := core.NewMixtureOfExperts[float32](proxy, ops, gate, experts, numExperts, topK)
+
+	// Reshape [batch, seqLen, hidden] -> [seqLen, hidden] for MoE.
+	reshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: true}
+	flat := builder.AddNode(reshapeNode, normed)
+
+	// Router weight as constant node.
+	routerNode := &deepSeekConstNode[float32]{value: routerW}
+	routerOut := builder.AddNode(routerNode)
+
+	moeOut := builder.AddNode(moe, flat, routerOut)
+
+	// Reshape back to [batch, seqLen, hidden].
+	unreshapeNode := &deepSeekReshapeNode[float32]{engine: proxy, flatten: false}
+	return builder.AddNode(unreshapeNode, moeOut, normed), nil
+}
+inference/arch_whisper.go:133: 133-188 lines are duplicate of `inference/arch_llava.go:510-571` (dupl)
+) error {
+	params := enc.Parameters()
+
+	// Expected total: 4 (conv) + 12*numLayers (blocks) + 2 (ln_post).
+	expectedCount := 4 + 12*wc.NumLayers + 2
+	if len(params) != expectedCount {
+		return fmt.Errorf("expected %d parameters, got %d", expectedCount, len(params))
+	}
+
+	// Build the GGUF-name-to-position mapping.
+	ggufOrder := make([]string, 0, expectedCount)
+
+	// Conv frontend.
+	ggufOrder = append(ggufOrder,
+		"encoder.conv1.weight",
+		"encoder.conv1.bias",
+		"encoder.conv2.weight",
+		"encoder.conv2.bias",
+	)
+
+	// Per-block tensors.
+	for i := 0; i < wc.NumLayers; i++ {
+		prefix := fmt.Sprintf("encoder.blocks.%d.", i)
+		ggufOrder = append(ggufOrder,
+			prefix+"attn_ln.weight",
+			prefix+"attn_ln.bias",
+			prefix+"attn.query.weight",
+			prefix+"attn.key.weight",
+			prefix+"attn.value.weight",
+			prefix+"attn.out.weight",
+			prefix+"mlp_ln.weight",
+			prefix+"mlp_ln.bias",
+			prefix+"mlp.0.weight",
+			prefix+"mlp.0.bias",
+			prefix+"mlp.2.weight",
+			prefix+"mlp.2.bias",
+		)
+	}
+
+	// Post layer norm.
+	ggufOrder = append(ggufOrder,
+		"encoder.ln_post.weight",
+		"encoder.ln_post.bias",
+	)
+
+	// Copy each GGUF tensor into the corresponding parameter by position.
+	for i, ggufName := range ggufOrder {
+		t, ok := tensors[ggufName]
+		if !ok {
+			return fmt.Errorf("missing GGUF tensor %q", ggufName)
+		}
+		copy(params[i].Value.Data(), t.Data())
+	}
+
+	return nil
+}
+layers/core/ffn.go:398: 398-432 lines are duplicate of `layers/core/variable_selection.go:363-398` (dupl)
+func geluForward[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T], x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	x2, err := engine.Mul(ctx, x, x)
+	if err != nil {
+		return nil, err
+	}
+	x3, err := engine.Mul(ctx, x2, x)
+	if err != nil {
+		return nil, err
+	}
+	cubicTerm, err := engine.MulScalar(ctx, x3, ops.FromFloat64(0.044715))
+	if err != nil {
+		return nil, err
+	}
+	inner, err := engine.Add(ctx, x, cubicTerm)
+	if err != nil {
+		return nil, err
+	}
+	scaled, err := engine.MulScalar(ctx, inner, ops.FromFloat64(math.Sqrt(2/math.Pi)))
+	if err != nil {
+		return nil, err
+	}
+	tanhResult, err := engine.Tanh(ctx, scaled)
+	if err != nil {
+		return nil, err
+	}
+	onePlusTanh, err := engine.AddScalar(ctx, tanhResult, ops.One())
+	if err != nil {
+		return nil, err
+	}
+	xTimesOnePlusTanh, err := engine.Mul(ctx, x, onePlusTanh)
+	if err != nil {
+		return nil, err
+	}
+	return engine.MulScalar(ctx, xTimesOnePlusTanh, ops.FromFloat64(0.5))
+}
+layers/core/variable_selection.go:363: 363-398 lines are duplicate of `layers/core/ffn.go:398-432` (dupl)
+func geluEngine[T tensor.Numeric](ctx context.Context, engine compute.Engine[T], ops numeric.Arithmetic[T],
+	x *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	x2, err := engine.Mul(ctx, x, x)
+	if err != nil {
+		return nil, err
+	}
+	x3, err := engine.Mul(ctx, x2, x)
+	if err != nil {
+		return nil, err
+	}
+	coeff, err := engine.MulScalar(ctx, x3, ops.FromFloat64(0.044715))
+	if err != nil {
+		return nil, err
+	}
+	inner, err := engine.Add(ctx, x, coeff)
+	if err != nil {
+		return nil, err
+	}
+	scaled, err := engine.MulScalar(ctx, inner, ops.FromFloat64(math.Sqrt(2/math.Pi)))
+	if err != nil {
+		return nil, err
+	}
+	th, err := engine.Tanh(ctx, scaled)
+	if err != nil {
+		return nil, err
+	}
+	onePlus, err := engine.AddScalar(ctx, th, ops.One())
+	if err != nil {
+		return nil, err
+	}
+	prod, err := engine.Mul(ctx, x, onePlus)
+	if err != nil {
+		return nil, err
+	}
+	return engine.MulScalar(ctx, prod, ops.FromFloat64(0.5))
+}
+model/dsl/graph.go:32: 32-90 lines are duplicate of `model/dsl/train.go:512-570` (dupl)
+func (g *ModelGraph) Build(inputDim, outputDim int) (*Model, error) {
+	if err := g.validateLegacyExecution(); err != nil {
+		return nil, err
+	}
+	if inputDim <= 0 {
+		return nil, fmt.Errorf("modeldsl: inputDim must be positive, got %d", inputDim)
+	}
+	if outputDim <= 0 {
+		return nil, fmt.Errorf("modeldsl: outputDim must be positive, got %d", outputDim)
+	}
+
+	// Resolve dimensions for each layer by propagating through the graph.
+	dims := make(map[string]int, len(g.layers))
+	for _, name := range g.order {
+		def := g.layers[g.layerIndex[name]]
+		parentNames := g.parents[name]
+
+		var inDim int
+		if len(parentNames) == 0 {
+			inDim = inputDim
+		} else {
+			inDim = dims[parentNames[0]]
+		}
+
+		outDim, err := resolveOutputDim(def, inDim, outputDim, g.children[name])
+		if err != nil {
+			return nil, fmt.Errorf("modeldsl: layer %q: %w", name, err)
+		}
+		dims[name] = outDim
+	}
+
+	// Build executable layers.
+	execLayers := make(map[string]execLayer, len(g.layers))
+	for _, name := range g.order {
+		def := g.layers[g.layerIndex[name]]
+		parentNames := g.parents[name]
+
+		var inDim int
+		if len(parentNames) == 0 {
+			inDim = inputDim
+		} else {
+			inDim = dims[parentNames[0]]
+		}
+
+		layer, err := buildLayer(def, inDim, dims[name])
+		if err != nil {
+			return nil, fmt.Errorf("modeldsl: layer %q: %w", name, err)
+		}
+		execLayers[name] = layer
+	}
+
+	return &Model{
+		graph:      g,
+		execLayers: execLayers,
+		dims:       dims,
+		inputDim:   inputDim,
+		outputDim:  outputDim,
+	}, nil
+}
+model/dsl/train.go:512: 512-570 lines are duplicate of `model/dsl/graph.go:32-90` (dupl)
+func (g *ModelGraph) BuildTrainable(inputDim, outputDim int) (*Model, error) {
+	if err := g.validateLegacyExecution(); err != nil {
+		return nil, err
+	}
+	if inputDim <= 0 {
+		return nil, fmt.Errorf("modeldsl: inputDim must be positive, got %d", inputDim)
+	}
+	if outputDim <= 0 {
+		return nil, fmt.Errorf("modeldsl: outputDim must be positive, got %d", outputDim)
+	}
+
+	// Resolve dimensions for each layer by propagating through the graph.
+	dims := make(map[string]int, len(g.layers))
+	for _, name := range g.order {
+		def := g.layers[g.layerIndex[name]]
+		parentNames := g.parents[name]
+
+		var inDim int
+		if len(parentNames) == 0 {
+			inDim = inputDim
+		} else {
+			inDim = dims[parentNames[0]]
+		}
+
+		outDim, err := resolveOutputDim(def, inDim, outputDim, g.children[name])
+		if err != nil {
+			return nil, fmt.Errorf("modeldsl: layer %q: %w", name, err)
+		}
+		dims[name] = outDim
+	}
+
+	// Build trainable layers.
+	execLayers := make(map[string]execLayer, len(g.layers))
+	for _, name := range g.order {
+		def := g.layers[g.layerIndex[name]]
+		parentNames := g.parents[name]
+
+		var inDim int
+		if len(parentNames) == 0 {
+			inDim = inputDim
+		} else {
+			inDim = dims[parentNames[0]]
+		}
+
+		layer, err := buildTrainableLayer(def, inDim, dims[name])
+		if err != nil {
+			return nil, fmt.Errorf("modeldsl: layer %q: %w", name, err)
+		}
+		execLayers[name] = layer
+	}
+
+	return &Model{
+		graph:      g,
+		execLayers: execLayers,
+		dims:       dims,
+		inputDim:   inputDim,
+		outputDim:  outputDim,
+	}, nil
+}
+inference/pjrt.go:30:15: Error return value of `client.Close` is not checked (errcheck)
+		client.Close()
+		            ^
+tabular/save.go:35:15: Error return value of `f.Close` is not checked (errcheck)
+	defer f.Close()
+	             ^
+tabular/save.go:90:15: Error return value of `f.Close` is not checked (errcheck)
+	defer f.Close()
+	             ^
+model/dsl/model.go:38:2: importShadow: shadow of imported from 'github.com/zerfoo/zerfoo/layers/activations' package 'activations' (gocritic)
+	activations := make(map[string][]float64, len(m.graph.order))
+	^
+tabular/ft_transformer.go:254:3: rangeValCopy: each iteration copies 128 bytes (consider pointers or indexing) (gocritic)
+		for i, layer := range ft.layers {
+		^
+tabular/saint.go:280:2: rangeValCopy: each iteration copies 192 bytes (consider pointers or indexing) (gocritic)
+	for i, l := range s.layers {
+	^
+tabular/saint.go:331:2: rangeValCopy: each iteration copies 192 bytes (consider pointers or indexing) (gocritic)
+	for i, l := range s.layers {
+	^
+tabular/saint.go:716:4: rangeValCopy: each iteration copies 192 bytes (consider pointers or indexing) (gocritic)
+			for i, l := range model.layers {
+			^
+tabular/save.go:61:15: appendAssign: append result not assigned to the same slice (gocritic)
+	allLayers := append(model.layers, model.head)
+	             ^
+tabular/train.go:126:4: importShadow: shadow of imported from 'github.com/zerfoo/zerfoo/training/loss' package 'loss' (gocritic)
+			loss, softmaxOut, err := crossEntropyLoss(ctx, engine, logits, labelData, batchSize, numClasses)
+			^
+tabular/train.go:453:2: importShadow: shadow of imported from 'github.com/zerfoo/zerfoo/training/loss' package 'loss' (gocritic)
+	loss, softmaxOut, err := crossEntropyLoss(ctx, engine, logits, labels, n, numClasses)
+	^
+training/optimizer/adamw_scalar.go:30:3: assignOp: replace `*params[i] = *params[i] - lr*(mHat/(math.Sqrt(vHat)+epsilon)+weightDecay*(*params[i]))` with `*params[i] -= lr*(mHat/(math.Sqrt(vHat)+epsilon)+weightDecay*(*params[i]))` (gocritic)
+		*params[i] = *params[i] - lr*(mHat/(math.Sqrt(vHat)+epsilon)+weightDecay*(*params[i]))
+		^
+tabular/save.go:31:12: G304: Potential file inclusion via variable (gosec)
+	f, err := os.Create(path)
+	          ^
+tabular/save.go:86:12: G304: Potential file inclusion via variable (gosec)
+	f, err := os.Open(path)
+	          ^
+inference/inference.go:831:56: nilness: tautological condition: nil == nil (govet)
+		if err := m.pjrtPlan.Close(); err != nil && firstErr == nil {
+		                                                     ^
+inference/arch_common.go:20:13: `behaviour` is a misspelling of `behavior` (misspell)
+// existing behaviour. "attnres" and "block_attnres" enable attention-weighted
+            ^
+inference/arch_gemma4_test.go:843:35: `initialise` is a misspelling of `initialize` (misspell)
+		t.Fatalf("first Forward did not initialise tokenPLESlices: %v", producer.tokenPLESlices)
+		                                ^
+inference/arch_gemma4_test.go:846:35: `initialise` is a misspelling of `initialize` (misspell)
+		t.Fatalf("first Forward did not initialise modelProjSlices: %v", producer.modelProjSlices)
+		                                ^
+inference/moe_async.go:59:4: `cancelled` is a misspelling of `canceled` (misspell)
+// cancelled, remaining items are skipped.
+   ^
+inference/moe_async.go:69:46: `cancelled` is a misspelling of `canceled` (misspell)
+			d.setError(fmt.Errorf("moe_async: context cancelled before expert %d: %w", item.ExpertID, err))
+			                                          ^
+inference/moe_async.go:80:47: `cancelled` is a misspelling of `canceled` (misspell)
+				d.setError(fmt.Errorf("moe_async: context cancelled during expert %d: %w", item.ExpertID, err))
+				                                          ^
+inference/moe_async_test.go:108:32: `cancelled` is a misspelling of `canceled` (misspell)
+		t.Fatal("expected error from cancelled context, got nil")
+		                             ^
+tabular/lora.go:106:5: `Initialise` is a misspelling of `Initialize` (misspell)
+	// Initialise LoRA adapters: A with Kaiming, B with zeros (standard LoRA init).
+	   ^
+tabular/pretrain.go:87:33: `initialised` is a misspelling of `initialized` (misspell)
+// FineTune creates a new Model initialised from the BaseModel's pre-trained
+                                ^
+tabular/pretrain.go:163:55: `initialised` is a misspelling of `initialized` (misspell)
+// fineTuneModel runs the training loop on an already-initialised model.
+                                                      ^
+layers/core/div.go:1:14: directive `//nolint:dupl // Div follows the same binary-op pattern as Add/Sub/Mul/Pow` is unused for linter "dupl" (nolintlint)
+package core //nolint:dupl // Div follows the same binary-op pattern as Add/Sub/Mul/Pow
+             ^
+layers/core/pow.go:1:14: directive `//nolint:dupl // Pow follows the same binary-op pattern as Add/Sub/Mul/Div` is unused for linter "dupl" (nolintlint)
+package core //nolint:dupl // Pow follows the same binary-op pattern as Add/Sub/Mul/Div
+             ^
+inference/arch_nemotron_h_test.go:155:3: QF1002: could use tagged switch on i (staticcheck)
+		switch {
+		^
+layers/core/moe.go:608:6: S1009: should omit nil check; len() for nil slices is defined as zero (staticcheck)
+		if expertGrads != nil && len(expertGrads) > 0 && expertGrads[0] != nil {
+		   ^
+layers/core/moe.go:674:5: S1009: should omit nil check; len() for nil slices is defined as zero (staticcheck)
+	if gateGrads != nil && len(gateGrads) >= 1 && gateGrads[0] != nil {
+	   ^
+layers/core/moe.go:682:5: S1009: should omit nil check; len() for nil slices is defined as zero (staticcheck)
+	if gateGrads != nil && len(gateGrads) >= 2 {
+	   ^
+layers/core/moe_test.go:755:5: S1009: should omit nil check; len() for nil slices is defined as zero (staticcheck)
+	if grads == nil || len(grads) < 2 {
+	   ^
+tabular/tabnet.go:303:5: S1009: should omit nil check; len() for nil slices is defined as zero (staticcheck)
+	if t.lastAttentionMasks == nil || len(t.lastAttentionMasks) == 0 {
+	   ^
+inference/load_gguf_test.go:34:6: func f32ToBytes is unused (unused)
+func f32ToBytes(data []float32) []byte {
+     ^
+inference/moe_async.go:37:2: field pool is unused (unused)
+	pool    *sync.Pool // reuse WaitGroups
+	^
+tabular/resnet.go:265:6: func initResNetWeights is unused (unused)
+func initResNetWeights(m *TabResNet, seed uint64) {
+     ^
+58 issues:
+* copyloopvar: 5
+* depguard: 2
+* dupl: 15
+* errcheck: 3
+* gocritic: 9
+* gosec: 2
+* govet: 1
+* misspell: 10
+* nolintlint: 2
+* staticcheck: 6
+* unused: 3
