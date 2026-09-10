@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/zerfoo/zerfoo/layers/functional"
+	"github.com/zerfoo/zerfoo/model/dsl"
 	"github.com/zerfoo/zerfoo/training/loss"
 	"github.com/zerfoo/ztensor/compute"
 	"github.com/zerfoo/ztensor/graph"
@@ -20,11 +21,12 @@ import (
 // linear classifier; hidden layers use ReLU. Labels are ordered by class ID.
 // This API is separate from the legacy three-direction Model API.
 type ClassifierConfig struct {
-	InputDim   int      `json:"input_dim"`
-	ClassCount int      `json:"class_count"`
-	Labels     []string `json:"labels"`
-	HiddenDims []int    `json:"hidden_dims,omitempty"`
-	Seed       uint64   `json:"seed"`
+	Definition *dsl.Definition `json:"definition,omitempty"`
+	InputDim   int             `json:"input_dim"`
+	ClassCount int             `json:"class_count"`
+	Labels     []string        `json:"labels"`
+	HiddenDims []int           `json:"hidden_dims,omitempty"`
+	Seed       uint64          `json:"seed"`
 }
 
 // Prediction contains every class probability in the persisted label order.
@@ -36,11 +38,13 @@ type Prediction struct {
 
 // Classifier is a linear or ReLU MLP numeric classifier. Tensor operations use
 // the supplied engine. Model, Train, and Direction retain their legacy API.
-// Concurrent calls require an engine that supports concurrent inference.
+// DSL-backed classifiers require sequential calls. Legacy classifiers require
+// an engine supporting concurrent inference for concurrent calls.
 type Classifier[T tensor.Float] struct {
-	config ClassifierConfig
-	engine compute.Engine[T]
-	params []*graph.Parameter[T] // alternating weights [in,out], biases [1,out]
+	compiled *dsl.Executable
+	config   ClassifierConfig
+	engine   compute.Engine[T]
+	params   []*graph.Parameter[T] // unique DSL parameters, or alternating legacy weights and biases
 }
 
 // maxClassifierParameters bounds allocations from an untrusted configuration.
@@ -57,6 +61,28 @@ func NewClassifier[T tensor.Float](config ClassifierConfig, engine compute.Engin
 		return nil, err
 	}
 	c := &Classifier[T]{config: cloneClassifierConfig(config), engine: engine}
+	if config.Definition != nil {
+		typed, ok := any(engine).(compute.Engine[float32])
+		if !ok {
+			return nil, fmt.Errorf("tabular: DSL execution currently requires float32")
+		}
+		compiled, err := dsl.Compile(context.Background(), *config.Definition, typed, config.Seed)
+		if err != nil {
+			return nil, err
+		}
+		c.compiled = compiled
+		canonical := compiled.Definition()
+		c.config.Definition = &canonical
+		for _, p := range compiled.Parameters() {
+			parameter, ok := any(p).(*graph.Parameter[T])
+			if !ok {
+				return nil, fmt.Errorf("tabular: DSL parameter dtype mismatch")
+			}
+			c.params = append(c.params, parameter)
+		}
+		return c, nil
+	}
+
 	rng := rand.New(rand.NewPCG(config.Seed, config.Seed^0x9e3779b97f4a7c15))
 	dims := append([]int{config.InputDim}, config.HiddenDims...)
 	dims = append(dims, config.ClassCount)
@@ -108,10 +134,17 @@ func validateClassifierConfig(config ClassifierConfig) error {
 		}
 		total += count
 	}
+	if config.Definition != nil {
+		return validateClassifierDefinition(config)
+	}
 	return nil
 }
 
 func cloneClassifierConfig(config ClassifierConfig) ClassifierConfig {
+	if config.Definition != nil {
+		copy := dsl.CloneDefinition(*config.Definition)
+		config.Definition = &copy
+	}
 	config.Labels = slices.Clone(config.Labels)
 	config.HiddenDims = slices.Clone(config.HiddenDims)
 	return config
@@ -165,6 +198,23 @@ func (c *Classifier[T]) inputTensor(ctx context.Context, rows [][]float64) (*ten
 }
 
 func (c *Classifier[T]) forward(ctx context.Context, input *tensor.TensorNumeric[T]) (*tensor.TensorNumeric[T], error) {
+	if c.compiled != nil {
+		definition := c.config.Definition
+		typed, ok := any(input).(*tensor.TensorNumeric[float32])
+		if !ok {
+			return nil, fmt.Errorf("tabular: DSL input dtype mismatch")
+		}
+		outputs, err := c.compiled.Forward(ctx, map[string]*tensor.TensorNumeric[float32]{definition.Inputs[0].Name: typed})
+		if err != nil {
+			return nil, err
+		}
+		output, ok := any(outputs[definition.Outputs[0].Name]).(*tensor.TensorNumeric[T])
+		if !ok {
+			return nil, fmt.Errorf("tabular: DSL output dtype mismatch")
+		}
+		return output, nil
+	}
+
 	x := input
 	for i := 0; i < len(c.params); i += 2 {
 		if err := ctx.Err(); err != nil {

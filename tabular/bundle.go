@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/zerfoo/zerfoo/model/dsl"
 	"github.com/zerfoo/zerfoo/model/gguf"
 	"github.com/zerfoo/ztensor/compute"
 	writer "github.com/zerfoo/ztensor/gguf"
@@ -23,6 +24,7 @@ import (
 // BundleManifest describes an immutable float32 deployment bundle. Identity is
 // the SHA-256 of these exact JSON bytes; weights have their own content hash.
 type BundleManifest struct {
+	DefinitionSHA256    string           `json:"definition_sha256,omitempty"`
 	Version             int              `json:"version"`
 	Architecture        string           `json:"architecture"`
 	Config              ClassifierConfig `json:"config"`
@@ -64,6 +66,9 @@ func SaveClassifierBundle(ctx context.Context, path string, model *Classifier[fl
 	if len(model.config.HiddenDims) > 0 {
 		architecture = "zerfoo.tabular.mlp.v1"
 	}
+	if model.config.Definition != nil {
+		architecture = "zerfoo.dsl.v1"
+	}
 	gw := writer.NewWriter()
 	gw.AddMetadataString("general.architecture", architecture)
 	for _, param := range model.params {
@@ -80,6 +85,9 @@ func SaveClassifierBundle(ctx context.Context, path string, model *Classifier[fl
 		return "", fmt.Errorf("tabular: GGUF export: %w", err)
 	}
 	manifest := BundleManifest{Version: 1, Architecture: architecture, Config: model.Config(), Features: data.Options.Features, Preprocessing: data.Preprocessing, DatasetHash: datasetHash, WeightsSHA256: contentHash(weights.Bytes()), EvaluationReference: evaluation}
+	if model.compiled != nil {
+		manifest.DefinitionSHA256 = model.compiled.ID()
+	}
 	raw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("tabular: bundle manifest: %w", err)
@@ -203,6 +211,21 @@ func LoadClassifierBundle(ctx context.Context, path, expectedID string, engine c
 	if len(manifest.Config.HiddenDims) > 0 {
 		expectedArchitecture = "zerfoo.tabular.mlp.v1"
 	}
+	if manifest.Config.Definition != nil {
+		expectedArchitecture = "zerfoo.dsl.v1"
+	}
+	if manifest.Config.Definition != nil {
+		checked, err := dsl.Validate(*manifest.Config.Definition)
+		if err != nil {
+			return nil, err
+		}
+		if checked.ID != manifest.DefinitionSHA256 {
+			return nil, fmt.Errorf("tabular: DSL definition identity mismatch")
+		}
+	} else if manifest.DefinitionSHA256 != "" {
+		return nil, fmt.Errorf("tabular: unexpected DSL identity")
+	}
+
 	if manifest.Architecture != expectedArchitecture {
 		return nil, fmt.Errorf("tabular: unsupported classifier architecture")
 	}

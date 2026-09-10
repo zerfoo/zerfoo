@@ -510,6 +510,9 @@ func (a *attentionLayerT) params() []*Param {
 // BuildTrainable instantiates a trainable Model from the graph.
 // Unlike Build, the returned Model supports backward pass and parameter updates.
 func (g *ModelGraph) BuildTrainable(inputDim, outputDim int) (*Model, error) {
+	if err := g.validateLegacyExecution(); err != nil {
+		return nil, err
+	}
 	if inputDim <= 0 {
 		return nil, fmt.Errorf("modeldsl: inputDim must be positive, got %d", inputDim)
 	}
