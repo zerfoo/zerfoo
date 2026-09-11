@@ -16,15 +16,16 @@ import (
 // Evidence is data, never executable instructions. Only supported components
 // are eligible; references are retained without claiming paper reproduction.
 type evidenceCard struct {
-	Eligible   bool     `json:"eligible"`
-	SupportGap string   `json:"support_gap,omitempty"`
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	URL        string   `json:"url"`
-	Version    string   `json:"version"`
-	Section    string   `json:"section"`
-	Summary    string   `json:"summary"`
-	Components []string `json:"components"`
+	Distillation json.RawMessage `json:"distillation,omitempty"`
+	Eligible     bool            `json:"eligible"`
+	SupportGap   string          `json:"support_gap,omitempty"`
+	ID           string          `json:"id"`
+	Title        string          `json:"title"`
+	URL          string          `json:"url"`
+	Version      string          `json:"version"`
+	Section      string          `json:"section"`
+	Summary      string          `json:"summary"`
+	Components   []string        `json:"components"`
 }
 
 func (s *service) search(ctx context.Context, query string) ([]evidenceCard, error) {
@@ -37,7 +38,14 @@ func (s *service) search(ctx context.Context, query string) ([]evidenceCard, err
 		return nil, err
 	}
 	if info.IsDir() {
-		return searchPaperLibrary(ctx, s.library, query)
+		cards, err := searchPaperLibrary(ctx, s.library, query)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.attachDistillations(ctx, cards); err != nil {
+			return nil, err
+		}
+		return cards, nil
 	}
 	f, err := os.Open(s.library)
 	if err != nil {

@@ -179,3 +179,50 @@ presence, tags or linked code repository do not establish Zerfoo support.
 Reads are rooted in the selected directory, with regular-file records only,
 1 MiB per record, a 32 MiB corpus budget and a 10,000-record ceiling. The source
 checkout is never modified. Catalog JSON input remains backward compatible.
+
+### Full-paper distillation for model design
+
+Export the real capabilities from the same creation binary used by the agent:
+
+```sh
+zerfoo-create --state ./research-state capabilities '{}' > capabilities.json
+python3 scripts/distill_full_papers.py \
+  --library /path/to/paper-library --env-file .env \
+  --capabilities capabilities.json --output ./full-paper-distillation \
+  --ids 2307.10802 2410.15735 --workers 1
+```
+
+The distiller uses `z-ai/glm-5.3-flash` through OpenRouter's Chat Completions
+gateway and reads `OPENROUTER_API_KEY` from the environment or the specified
+dotenv file.
+One full paper is sent per request together with the actual registry export.
+Without `--ids`, it processes the corpus, prioritizing titles mentioning tabular
+models, residuals, Meta-Transformer or AutoTrain. Two workers are supported.
+
+Each record describes the architecture, training recipe, component mappings,
+missing capabilities, implementation steps, verification steps and source
+anchors. PDF, text, source-record, prompt and registry identities are recorded.
+Already processed records are reused only for matching record/registry/prompt
+identities. Oversized or unextractable papers fail explicitly rather than being
+silently truncated. Responses are checked for paper identity, registry component
+names, required fields and short verbatim source anchors. These checks do not
+prove all paraphrases or implementation suggestions correct.
+
+The original abstract screening outputs remain separate. Full-paper outputs are
+also **review candidates** until their claims, component limitations and proposed
+execution paths receive semantic and numerical checks. They never authorize
+execution by themselves. A current default filename cache is a source snapshot;
+rerunning does not automatically download a newer arXiv revision.
+
+Attach completed notes to the coding agent's research results:
+
+```sh
+zerfoo-create --library /path/to/paper-library \
+  --distillations ./full-paper-distillation research_search '{"query":"tabular"}'
+```
+
+This includes matching full-paper guidance under `distillation`, while keeping
+`eligible: false`. Stale source-record identities and external eligibility
+claims are rejected. The status file records saved/failed counts, actual usage
+and completion tokens divided by total request duration. That last metric is
+end-to-end output throughput, not the provider's decoding-only token rate.

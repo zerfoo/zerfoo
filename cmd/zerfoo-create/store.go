@@ -18,6 +18,7 @@ import (
 
 type service struct {
 	state, data, library string
+	distillations        string
 	launch               func(string) error
 }
 type project struct {
