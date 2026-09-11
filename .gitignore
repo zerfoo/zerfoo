@@ -57,3 +57,6 @@ bench_train
 gemma4_e2e
 graphify-out/
 ajent.social
+
+# Private conversational application data belongs outside the core repository.
+.zerfoo-create/

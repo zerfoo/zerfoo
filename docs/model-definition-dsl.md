@@ -1,9 +1,8 @@
 # Model definitions and executable coverage
 
 ADR 097 introduces `dsl.Definition` version 1 as the composition contract.
-`zerfoo-create plan_create` accepts it as `definition`; the service stores a
-version 2 plan and its `definition_sha256`. The calling agent designs the graph.
-The service validates and compiles it through registered Zerfoo graph builders.
+Definitions are validated and compiled through registered Zerfoo graph builders.
+Conversational product integration is maintained separately from this core framework.
 
 ## Example
 
