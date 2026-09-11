@@ -310,10 +310,9 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - [x] Verify HTTPS 200 at `/`, `/create/`, `/start/`, `/docs/`, a deep docs page,
   `/llms.txt`, sitemap and robots; canonical URLs must point to zer.foo.
 - [ ] Redirect old zerfoo.feza.ai paths permanently to matching zer.foo paths.
-  The `feza.ai` zone is now present but pending because registrar nameservers
-  still point to Namecheap. The exact Cloudflare Worker route is deployed;
-  activate it by delegating the zone to `brynne.ns.cloudflare.com` and
-  `plato.ns.cloudflare.com`, then verify an external HTTP 301.
+  The exact Cloudflare Worker route is deployed, but the active zone currently
+  lacks the former proxied CNAME `zerfoo.feza.ai -> zerfoo.github.io`. Restore
+  that record, then verify an external HTTP 301.
 - [x] Reconcile GitHub Actions so main changes deploy the correct new target.
   Current workflow still builds to GitHub Pages. Either configure official
   Cloudflare deploy CI with private secrets, or document intentional manual
@@ -358,8 +357,8 @@ Complete tasks in order. Update this checklist with evidence after each step.
   plus `429` budget rejection); production secrets and storage were untouched.
 - The legacy browser fallback remains live and verified: `zerfoo.feza.ai/create/`
   lands at `zer.foo/create/` with the same path. A server-side permanent 301
-  Worker is now deployed, but its `feza.ai` route cannot receive traffic until
-  the registrar delegates the pending zone to Cloudflare.
+  Worker is now deployed, and the zone is active; its route cannot receive
+  traffic until the former proxied CNAME is restored in Cloudflare DNS.
 - Kazi handoff converged with the free OpenCode model. Kazi issue #1855 records
   the documented HTTP-probe header crash; the successful retry used a sanitized
   shell reachability probe.
@@ -373,8 +372,7 @@ Complete tasks in order. Update this checklist with evidence after each step.
   the static site was redeployed as `f0ae1632-0ef5-4cae-a7c5-f8daaa2095c6`.
   Remaining gates are the legacy `zerfoo.feza.ai` permanent redirect and
   DNS record-ID rollback inventory; the redirect's remaining activation step is
-  an owner-side nameserver change, and no DNS records have been guessed or
-  deleted.
+  restoring its CNAME, and no DNS records have been guessed or deleted.
 - The session-limit follow-up adds the HttpOnly `zdesign_session` cookie and
   independent eight-request session counter while retaining the twelve-request
   salted-IP counter; unit coverage exercises the session exhaustion path.
@@ -382,14 +380,18 @@ Complete tasks in order. Update this checklist with evidence after each step.
   account and can read the `zer.foo` zone, but both the DNS-record list and
   export endpoints still return API error 10000/403 (Composio returns 9106).
   Public `dig` can confirm proxied IPs but cannot provide rollback record IDs.
-- Cloudflare now contains a pending `feza.ai` zone (`9aa2b7807b221cac25d944042600903d`),
+- Cloudflare now contains an active `feza.ai` zone (`9aa2b7807b221cac25d944042600903d`),
   and the server-side redirect Worker is deployed as
   `zerfoo-legacy-redirect`, version `2032708d-9368-4b0b-a59b-3a613574a2bb`, on
-  route `zerfoo.feza.ai/*`. The zone reports `activation_failure_reason:
-  ns_delegated_from_provider`; public NS still point to Namecheap. The Worker
-  returns a verified path-preserving 301 locally, but live activation requires
-  changing the registrar nameservers to `brynne.ns.cloudflare.com` and
-  `plato.ns.cloudflare.com`.
+  route `zerfoo.feza.ai/*`. The Worker returns a verified path-preserving 301
+  locally; live activation now requires restoring the former proxied CNAME in
+  Cloudflare DNS.
+- The `feza.ai` zone is now active and authoritative at Cloudflare, but its
+  authoritative nameservers return no `zerfoo.feza.ai` record. The old public
+  resolver still shows the former CNAME to `zerfoo.github.io`; recreating that
+  CNAME as proxied is required for the Worker route to receive requests.
+  Composio create/list calls still fail with 9106, so the record has not been
+  guessed or created without working DNS-write credentials.
 
 ## 6. Commands and cautions
 
