@@ -375,6 +375,10 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - The session-limit follow-up adds the HttpOnly `zdesign_session` cookie and
   independent eight-request session counter while retaining the twelve-request
   salted-IP counter; unit coverage exercises the session exhaustion path.
+- A fresh read-only Cloudflare check confirms the OAuth identity is the Sire
+  account and can read the `zer.foo` zone, but both the DNS-record list and
+  export endpoints still return API error 10000/403 (Composio returns 9106).
+  Public `dig` can confirm proxied IPs but cannot provide rollback record IDs.
 
 ## 6. Commands and cautions
 
