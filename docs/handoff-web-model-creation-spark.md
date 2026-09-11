@@ -279,7 +279,7 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - [x] Serve Hugo public locally and exercise widths 320, 390, 1024, 1440.
   Check no horizontal overflow, labeled controls, keyboard focus, readable
   contrast, busy/double-submit handling, keyboard operation and reduced motion.
-- [ ] Mock API only for deterministic UI cases; separately run one live browser
+- [x] Mock API only for deterministic UI cases; separately run one live browser
   conversation against the real API from the authorized origin and save its ZIP.
 - [x] Extract the ACTUAL browser ZIP, inspect filenames/content, train from that
   extraction on Iris, and predict in a fresh process. Compare run artifact hash.
@@ -345,6 +345,9 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - API redeployed as version `1190abaf-e9f4-4734-b408-eab5af4e75c3`; site
   redeployed as version `c84d1b8f-988d-44c3-bff5-2fec3bd87595` using the
   `zer.foo/*` zone route. Required live URLs returned HTTP 200.
+- A live Playwright conversation at `https://zer.foo/create/` returned a ready
+  numeric-classification project and downloaded `zerfoo-project.zip`; the ZIP
+  passed integrity validation.
 - Kazi handoff converged with the free OpenCode model. Kazi issue #1855 records
   the documented HTTP-probe header crash; the successful retry used a sanitized
   shell reachability probe.
