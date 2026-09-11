@@ -310,9 +310,10 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - [x] Verify HTTPS 200 at `/`, `/create/`, `/start/`, `/docs/`, a deep docs page,
   `/llms.txt`, sitemap and robots; canonical URLs must point to zer.foo.
 - [ ] Redirect old zerfoo.feza.ai paths permanently to matching zer.foo paths.
-  Old zone is NOT confirmed accessible. Use actual DNS/route ownership. If it
-  requires owner action, finish new-site deployment and provide the exact old
-  zone redirect rule; do not claim migration fully finished.
+  The `feza.ai` zone is now present but pending because registrar nameservers
+  still point to Namecheap. The exact Cloudflare Worker route is deployed;
+  activate it by delegating the zone to `brynne.ns.cloudflare.com` and
+  `plato.ns.cloudflare.com`, then verify an external HTTP 301.
 - [x] Reconcile GitHub Actions so main changes deploy the correct new target.
   Current workflow still builds to GitHub Pages. Either configure official
   Cloudflare deploy CI with private secrets, or document intentional manual
@@ -355,9 +356,10 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - A local Wrangler Durable Object test with a one-cent test ledger allowed one
   concurrent reservation and rejected the second (`502` fake-provider failure
   plus `429` budget rejection); production secrets and storage were untouched.
-- The legacy browser fallback is live and verified: `zerfoo.feza.ai/create/`
+- The legacy browser fallback remains live and verified: `zerfoo.feza.ai/create/`
   lands at `zer.foo/create/` with the same path. A server-side permanent 301
-  remains open because the legacy CNAME/DNS is outside the Cloudflare zone.
+  Worker is now deployed, but its `feza.ai` route cannot receive traffic until
+  the registrar delegates the pending zone to Cloudflare.
 - Kazi handoff converged with the free OpenCode model. Kazi issue #1855 records
   the documented HTTP-probe header crash; the successful retry used a sanitized
   shell reachability probe.
@@ -370,8 +372,9 @@ Complete tasks in order. Update this checklist with evidence after each step.
   version `46e929de-fbdb-4410-baaa-51be9313a4a8`, and merged in website PR #17;
   the static site was redeployed as `f0ae1632-0ef5-4cae-a7c5-f8daaa2095c6`.
   Remaining gates are the legacy `zerfoo.feza.ai` permanent redirect and
-  DNS record-ID rollback inventory; both require access to the old DNS zone or
-  an owner-side change and have not been guessed or faked.
+  DNS record-ID rollback inventory; the redirect's remaining activation step is
+  an owner-side nameserver change, and no DNS records have been guessed or
+  deleted.
 - The session-limit follow-up adds the HttpOnly `zdesign_session` cookie and
   independent eight-request session counter while retaining the twelve-request
   salted-IP counter; unit coverage exercises the session exhaustion path.
@@ -379,6 +382,14 @@ Complete tasks in order. Update this checklist with evidence after each step.
   account and can read the `zer.foo` zone, but both the DNS-record list and
   export endpoints still return API error 10000/403 (Composio returns 9106).
   Public `dig` can confirm proxied IPs but cannot provide rollback record IDs.
+- Cloudflare now contains a pending `feza.ai` zone (`9aa2b7807b221cac25d944042600903d`),
+  and the server-side redirect Worker is deployed as
+  `zerfoo-legacy-redirect`, version `2032708d-9368-4b0b-a59b-3a613574a2bb`, on
+  route `zerfoo.feza.ai/*`. The zone reports `activation_failure_reason:
+  ns_delegated_from_provider`; public NS still point to Namecheap. The Worker
+  returns a verified path-preserving 301 locally, but live activation requires
+  changing the registrar nameservers to `brynne.ns.cloudflare.com` and
+  `plato.ns.cloudflare.com`.
 
 ## 6. Commands and cautions
 

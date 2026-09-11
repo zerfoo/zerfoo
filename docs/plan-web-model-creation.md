@@ -27,10 +27,10 @@ No visitor training runs on Zerfoo infrastructure or the founder's DGX.
   deploy and verify after checking available Cloudflare configuration.
 
 The launch implementation is complete for the supported numeric-classification
-recipe. Two deployment gates remain outside this repository: inventorying the
-existing apex DNS record IDs for rollback, and replacing the legacy host's
-client-side redirect with a server-side permanent redirect. Both require access
-to the old DNS/hosting owner; no DNS records are guessed or deleted.
+recipe. Two deployment gates remain: inventorying the existing apex DNS record
+IDs for rollback, and activating the deployed legacy redirect Worker. The
+`feza.ai` zone is pending registrar delegation; no DNS records are guessed or
+deleted.
 
 ## Delivery boundaries
 
