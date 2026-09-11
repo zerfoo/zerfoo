@@ -13,18 +13,24 @@ No visitor training runs on Zerfoo infrastructure or the founder's DGX.
 
 ## Work and acceptance
 
-- [ ] Record architecture and replace inference-only website positioning.
-- [ ] Deliver accessible conversation and live project preview, with download
+- [x] Record architecture and replace inference-only website positioning.
+- [x] Deliver accessible conversation and live project preview, with download
   and coding-agent handoff. Unknown tasks remain explicitly unsupported.
-- [ ] Add bounded server-side design API, reviewed research retrieval,
+- [x] Add bounded server-side design API, reviewed research retrieval,
   deterministic recipe validation and portable project packaging.
-- [ ] Enforce request limits, per-session limits and a durable global usage
+- [x] Enforce request limits, per-session limits and a durable global usage
   ceiling before provider dispatch. No provider keys reach the browser.
-- [ ] Provide versioned local-agent instructions and Kazi acceptance workflow;
+- [x] Provide versioned local-agent instructions and Kazi acceptance workflow;
   verify downloaded classifier project trains and predicts on local hardware.
-- [ ] Add automated API/security/packaging tests and browser interaction checks.
-- [ ] Prepare zer.foo canonical domain and path-preserving legacy redirect;
+- [x] Add automated API/security/packaging tests and browser interaction checks.
+- [x] Prepare zer.foo canonical domain and path-preserving legacy redirect;
   deploy and verify after checking available Cloudflare configuration.
+
+The launch implementation is complete for the supported numeric-classification
+recipe. Two deployment gates remain outside this repository: inventorying the
+existing apex DNS record IDs for rollback, and replacing the legacy host's
+client-side redirect with a server-side permanent redirect. Both require access
+to the old DNS/hosting owner; no DNS records are guessed or deleted.
 
 ## Delivery boundaries
 
