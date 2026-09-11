@@ -1,0 +1,13 @@
+{
+  "date": "2026-09-09",
+  "validator_tests_passed": 6,
+  "creation_race_package": "passed",
+  "creation_package_lint": "0 issues",
+  "capability_count": 114,
+  "retrieval_check": {
+    "paper": "2410.15735",
+    "full_paper_note_attached": true,
+    "eligible": false
+  },
+  "remaining_work": "Bulk full-paper generation and semantic/execution review; source-anchor checks do not qualify models."
+}

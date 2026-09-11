@@ -25,6 +25,7 @@ func entry() error {
 	state := flags.String("state", ".zerfoo-create", "persistent project directory")
 	data := flags.String("data-root", ".", "allowed CSV directory; paths are relative to this root")
 	library := flags.String("library", "", "version 1 evidence catalog JSON or paper-library directory")
+	distillations := flags.String("distillations", "", "full-paper distillation output directory")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		return err
 	}
@@ -32,6 +33,7 @@ func entry() error {
 	if err != nil {
 		return err
 	}
+	s.distillations = *distillations
 	s.launch = s.spawn
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
