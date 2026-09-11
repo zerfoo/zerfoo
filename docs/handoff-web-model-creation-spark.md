@@ -262,10 +262,12 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - [x] Preserve user decisions from website into project.json. Add an explicit
   quality target and resource limits instead of silently accepting any accuracy.
   Existing runner has epochs=20 and a 150-second polling deadline with cancel.
-- [ ] Finish group/time split handoff: runner currently rejects non-stratified
-  choices and asks the agent to configure them. The website must ask about
-  group/time relationships or explicitly block a random-split starter where
-  leakage would result. Trading/forecasting must remain a design brief.
+- [x] Finish group/time split handoff: the hosted conversation now asks whether
+  rows are grouped or time-ordered before declaring a numeric design ready, and
+  every generated project carries a split policy requiring the local agent to
+  block or redesign the stratified starter when leakage is possible. The runner
+  still rejects unsupported non-stratified choices; trading/forecasting remain
+  design briefs.
 - [x] Perform one actual coding-agent/Kazi handoff with the exported project,
   using cheap execution per user preference. No Astra subagent delegation.
   If the runtime/harness is unavailable, name that gate unfinished; don't report
@@ -342,8 +344,8 @@ Complete tasks in order. Update this checklist with evidence after each step.
   20 epochs / 120 steps, validation accuracy 0.9333, fresh-process prediction
   `Iris-setosa` with probability 0.997919, artifact SHA-256
   `32d4e7ef96fe9a0d46749887a1b632cb66a7cba811ebc9062d7ed67c245729df`.
-- API redeployed as version `1190abaf-e9f4-4734-b408-eab5af4e75c3`; site
-  redeployed as version `c84d1b8f-988d-44c3-bff5-2fec3bd87595` using the
+- API redeployed as version `00cb35b8-d1ee-42bd-b8b8-4011768fdc85`; site
+  redeployed as version `4dce2a2d-3d6f-4bd6-aa50-93f92f8fea5b` using the
   `zer.foo/*` zone route. Required live URLs returned HTTP 200.
 - A live Playwright conversation at `https://zer.foo/create/` returned a ready
   numeric-classification project and downloaded `zerfoo-project.zip`; the ZIP
@@ -361,8 +363,11 @@ Complete tasks in order. Update this checklist with evidence after each step.
   workflow context only; its reviewed record explicitly disallows runnable
   architecture support. Generated projects now carry `macro_f1 >= 0.8`, a
   20-epoch/150-second resource bound, and local training enforces the target.
-- Remaining gates: legacy `zerfoo.feza.ai` permanent redirect, DNS record-ID rollback
-  inventory, and final website PR/merge.
+- The split-policy follow-up was tested (`npm test`, 8 passing), deployed as
+  API version `00cb35b8-d1ee-42bd-b8b8-4011768fdc85`, and merged in website PR
+  #16. Remaining gates are the legacy `zerfoo.feza.ai` permanent redirect and
+  DNS record-ID rollback inventory; both require access to the old DNS zone or
+  an owner-side change and have not been guessed or faked.
 
 ## 6. Commands and cautions
 
