@@ -216,7 +216,7 @@ Complete tasks in order. Update this checklist with evidence after each step.
   already refuses design_brief; test this refusal in a subprocess.
 - [x] Keep training budgets/config fixed or validated; never accept arbitrary
   LLM code, filenames, URLs to fetch, shell commands or unrestricted DSL operators.
-- [ ] Test actual Durable Object reservations under concurrent calls using
+- [x] Test actual Durable Object reservations under concurrent calls using
   Wrangler local/Miniflare or a distinct TEST deployment/ledger. One-cent cap
   permits exactly one provider dispatch, subsequent requests rejected. Never
   reset the live production ledger. Provider failure must remain charged to
@@ -348,11 +348,13 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - A live Playwright conversation at `https://zer.foo/create/` returned a ready
   numeric-classification project and downloaded `zerfoo-project.zip`; the ZIP
   passed integrity validation.
+- A local Wrangler Durable Object test with a one-cent test ledger allowed one
+  concurrent reservation and rejected the second (`502` fake-provider failure
+  plus `429` budget rejection); production secrets and storage were untouched.
 - Kazi handoff converged with the free OpenCode model. Kazi issue #1855 records
   the documented HTTP-probe header crash; the successful retry used a sanitized
   shell reachability probe.
-- Remaining gates: production live chat call, runtime Durable Object concurrency
-  test, legacy `zerfoo.feza.ai` permanent redirect, DNS record-ID rollback
+- Remaining gates: legacy `zerfoo.feza.ai` permanent redirect, DNS record-ID rollback
   inventory, and final website PR/merge.
 
 ## 6. Commands and cautions
