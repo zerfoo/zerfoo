@@ -321,12 +321,12 @@ Complete tasks in order. Update this checklist with evidence after each step.
 
 ### W07 — Land and report
 
-- [ ] Run unit/security tests, browser tests, Hugo build, git diff --check and
+- [x] Run unit/security tests, browser tests, Hugo build, git diff --check and
   exported-project lifecycle once on final changes. Record actual results.
-- [ ] Push website feature branch, open PR with exact verified behavior and
+- [x] Push website feature branch, open PR with exact verified behavior and
   remaining limits, handle checks/review, merge when authorized gates allow.
   User authorized implementation; don't repeat permission requests unnecessarily.
-- [ ] Commit/update core plan + this handoff separately without unrelated files.
+- [x] Commit/update core plan + this handoff separately without unrelated files.
 - [ ] Final report: live URLs, supported flow, $20 total limit, local compute,
   actual validation/prediction evidence, PRs, any remaining domain/research/Kazi
   gate. Do not label the whole plan complete if any required gate is unfinished.
