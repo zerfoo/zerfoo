@@ -327,7 +327,7 @@ Complete tasks in order. Update this checklist with evidence after each step.
   remaining limits, handle checks/review, merge when authorized gates allow.
   User authorized implementation; don't repeat permission requests unnecessarily.
 - [x] Commit/update core plan + this handoff separately without unrelated files.
-- [ ] Final report: live URLs, supported flow, $20 total limit, local compute,
+- [x] Final report: live URLs, supported flow, $20 total limit, local compute,
   actual validation/prediction evidence, PRs, any remaining domain/research/Kazi
   gate. Do not label the whole plan complete if any required gate is unfinished.
 
