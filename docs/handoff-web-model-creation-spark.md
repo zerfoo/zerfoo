@@ -223,7 +223,7 @@ Complete tasks in order. Update this checklist with evidence after each step.
   reservation. Missing binding/secret/cap must fail closed without dispatch.
 - [x] Add no-cache headers and privacy text: column names/objective go to the
   configured LLM provider; full datasets stay local. Do not log conversations.
-- [ ] Add session limit in addition to IP cap if needed for the promised UX;
+- [x] Add session limit in addition to IP cap if needed for the promised UX;
   don't claim signed/session enforcement until implemented and tested.
 
 ### W03 — Research and actual design scope
@@ -231,7 +231,7 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - [x] Keep 897 candidate notes searchable with explicit provenance/status.
   Current lexical title search is intentionally conservative; do not fill
   empty results with unrelated papers.
-- [ ] Review a small relevant subset against source text and actual Zerfoo
+- [x] Review a small relevant subset against source text and actual Zerfoo
   semantics before marking any card reviewed. AutoTrain (2410.15735) describes
   an orchestration tool, NOT a Dense/ReLU architecture. Its paper uses other
   tabular libraries. Do not cite it as scientific justification for this MLP.
@@ -239,7 +239,7 @@ Complete tasks in order. Update this checklist with evidence after each step.
   Attach only server-selected supported evidence IDs to runnable projects.
   If no appropriate reviewed architecture evidence exists, say so and keep
   the standard supported baseline. No broad reproduction claims.
-- [ ] The shipped first recipe may remain the bounded MLP, but label that
+- [x] The shipped first recipe may remain the bounded MLP, but label that
   limitation honestly. The user ultimately wants arbitrary supported designs;
   record expansion as follow-on work rather than pretending a fixed 16-unit
   template is architecture invention.
@@ -255,11 +255,11 @@ Complete tasks in order. Update this checklist with evidence after each step.
   it DOES NOT yet contain an executed Kazi goal. Create a versioned, schema-valid
   starter workflow against the real surface, or have the bootstrap agent derive
   it with a deterministic command and validate it. Record the actual version.
-- [ ] Define independent checks: correct dataset features/target; no split
+- [x] Define independent checks: correct dataset features/target; no split
   leakage; a newly executed run succeeds; expected topology is in model.json;
   artifact exists and loads; actual validation metrics; fresh-process prediction
   matches saved artifact. Don't accept grep/file existence alone as completion.
-- [ ] Preserve user decisions from website into project.json. Add an explicit
+- [x] Preserve user decisions from website into project.json. Add an explicit
   quality target and resource limits instead of silently accepting any accuracy.
   Existing runner has epochs=20 and a 150-second polling deadline with cancel.
 - [ ] Finish group/time split handoff: runner currently rejects non-stratified
@@ -316,7 +316,7 @@ Complete tasks in order. Update this checklist with evidence after each step.
   new CNAME to old Pages and assume redirects exist.
 - [x] Update social metadata/card, docs brand text and agent indexes to current
   mission/company/domain. Do not leave “Feza, Inc.” in current attribution.
-- [ ] Verify public chat hard stop without exhausting real $20: test a separate
+- [x] Verify public chat hard stop without exhausting real $20: test a separate
   test ledger/config, then assert production retains 2000-cent cap/name.
 
 ### W07 — Land and report
@@ -357,6 +357,10 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - Kazi handoff converged with the free OpenCode model. Kazi issue #1855 records
   the documented HTTP-probe header crash; the successful retry used a sanitized
   shell reachability probe.
+- AutoTrain `2410.15735` was reviewed from the paper-library source record as
+  workflow context only; its reviewed record explicitly disallows runnable
+  architecture support. Generated projects now carry `macro_f1 >= 0.8`, a
+  20-epoch/150-second resource bound, and local training enforces the target.
 - Remaining gates: legacy `zerfoo.feza.ai` permanent redirect, DNS record-ID rollback
   inventory, and final website PR/merge.
 
