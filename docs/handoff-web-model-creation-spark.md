@@ -351,6 +351,9 @@ Complete tasks in order. Update this checklist with evidence after each step.
 - A local Wrangler Durable Object test with a one-cent test ledger allowed one
   concurrent reservation and rejected the second (`502` fake-provider failure
   plus `429` budget rejection); production secrets and storage were untouched.
+- The legacy browser fallback is live and verified: `zerfoo.feza.ai/create/`
+  lands at `zer.foo/create/` with the same path. A server-side permanent 301
+  remains open because the legacy CNAME/DNS is outside the Cloudflare zone.
 - Kazi handoff converged with the free OpenCode model. Kazi issue #1855 records
   the documented HTTP-probe header crash; the successful retry used a sanitized
   shell reachability probe.
