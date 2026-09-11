@@ -223,8 +223,10 @@ Complete tasks in order. Update this checklist with evidence after each step.
   reservation. Missing binding/secret/cap must fail closed without dispatch.
 - [x] Add no-cache headers and privacy text: column names/objective go to the
   configured LLM provider; full datasets stay local. Do not log conversations.
-- [x] Add session limit in addition to IP cap if needed for the promised UX;
-  don't claim signed/session enforcement until implemented and tested.
+- [x] Add a separate opaque browser-session limit in addition to the salted IP
+  cap. The API issues an HttpOnly session cookie, sends both identities to the
+  Durable Object, and the test suite proves the eight-request session limit;
+  the IP cap remains twelve requests and both guards fail closed.
 
 ### W03 — Research and actual design scope
 
@@ -337,15 +339,15 @@ Complete tasks in order. Update this checklist with evidence after each step.
 
 - Website implementation restored from remote preservation commit `98fa479`;
   W01–W05 implementation changes reapplied and verified.
-- `npm test`: 8 tests passed. Hugo 0.166.0 build: 81 pages and 89 static files
+- `npm test`: 9 tests passed. Hugo 0.166.0 build: 81 pages and 90 static files
   (deprecation warnings only). Browser test passed at 320, 390, 1024 and 1440
   pixels, including mocked success, download, clipboard and network failure.
 - Browser-generated ZIP was extracted and trained with pinned `zerfoo-create`:
   20 epochs / 120 steps, validation accuracy 0.9333, fresh-process prediction
   `Iris-setosa` with probability 0.997919, artifact SHA-256
   `32d4e7ef96fe9a0d46749887a1b632cb66a7cba811ebc9062d7ed67c245729df`.
-- API redeployed as version `00cb35b8-d1ee-42bd-b8b8-4011768fdc85`; site
-  redeployed as version `4dce2a2d-3d6f-4bd6-aa50-93f92f8fea5b` using the
+- API redeployed as version `46e929de-fbdb-4410-baaa-51be9313a4a8`; site
+  redeployed as version `f0ae1632-0ef5-4cae-a7c5-f8daaa2095c6` using the
   `zer.foo/*` zone route. Required live URLs returned HTTP 200.
 - A live Playwright conversation at `https://zer.foo/create/` returned a ready
   numeric-classification project and downloaded `zerfoo-project.zip`; the ZIP
@@ -363,11 +365,16 @@ Complete tasks in order. Update this checklist with evidence after each step.
   workflow context only; its reviewed record explicitly disallows runnable
   architecture support. Generated projects now carry `macro_f1 >= 0.8`, a
   20-epoch/150-second resource bound, and local training enforces the target.
-- The split-policy follow-up was tested (`npm test`, 8 passing), deployed as
-  API version `00cb35b8-d1ee-42bd-b8b8-4011768fdc85`, and merged in website PR
-  #16. Remaining gates are the legacy `zerfoo.feza.ai` permanent redirect and
+- The split-policy follow-up was tested and merged in website PR #16. The
+  session-limit follow-up was tested (`npm test`, 9 passing), deployed as API
+  version `46e929de-fbdb-4410-baaa-51be9313a4a8`, and merged in website PR #17;
+  the static site was redeployed as `f0ae1632-0ef5-4cae-a7c5-f8daaa2095c6`.
+  Remaining gates are the legacy `zerfoo.feza.ai` permanent redirect and
   DNS record-ID rollback inventory; both require access to the old DNS zone or
   an owner-side change and have not been guessed or faked.
+- The session-limit follow-up adds the HttpOnly `zdesign_session` cookie and
+  independent eight-request session counter while retaining the twelve-request
+  salted-IP counter; unit coverage exercises the session exhaustion path.
 
 ## 6. Commands and cautions
 
