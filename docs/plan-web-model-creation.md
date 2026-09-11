@@ -1,5 +1,10 @@
 # Web model creation execution plan
 
+**Execution entry point:** [Self-contained Spark takeover](handoff-web-model-creation-spark.md).
+That document contains the current deployment state, exact working paths,
+prescriptive remaining tasks, known defects and acceptance checks. Follow it
+instead of interpreting the unchecked checklist below as a fresh start.
+
 ## Objective
 
 Position Zerfoo as a toolkit for creating, training, evaluating and running AI
