@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.61.0](https://github.com/zerfoo/zerfoo/compare/v1.60.0...v1.61.0) (2026-09-12)
+
+
+### Features
+
+* **automl:** persist baseline comparisons and frozen test evaluation ([a71d1c1](https://github.com/zerfoo/zerfoo/commit/a71d1c19912af48a1dfa71d8c42aff1caccf98e6))
+* **create:** attach full-paper distillations; accept ADR 098 web plan ([e4c6828](https://github.com/zerfoo/zerfoo/commit/e4c6828c3cb2a53894f8f64549e360dbcbb6ec0c))
+* **create:** compile conversational model designs through shared DSL ([2fe2dde](https://github.com/zerfoo/zerfoo/commit/2fe2ddeea0554c98f555ca2ffe6a95b77581eda8))
+* **create:** expose persistent model creation through MCP and CLI ([1e1015a](https://github.com/zerfoo/zerfoo/commit/1e1015a387cd232db720dfb447eb06ce6d65b4c0))
+* **create:** search local paper-library metadata with explicit eligibility ([0e4c295](https://github.com/zerfoo/zerfoo/commit/0e4c295286741f3f75ebf449bdf78835cdfe8bc4))
+* **tabular:** add isolated classifier training and GGUF bundles ([7e73906](https://github.com/zerfoo/zerfoo/commit/7e739061252f1061754bea8596150c48064c4ef5))
+
+
+### Bug Fixes
+
+* **attention:** restore the fused GQA repeat-interleave path ([616845d](https://github.com/zerfoo/zerfoo/commit/616845d780ccae4290030f94b5526801cb8e3e25))
+
+
+### Performance
+
+* **generate:** make traced plan compilation opt-in ([780d3b6](https://github.com/zerfoo/zerfoo/commit/780d3b681474230e29fcadf21e69b7655ce2066f))
+
 ## [1.60.0](https://github.com/zerfoo/zerfoo/compare/v1.59.0...v1.60.0) (2026-08-21)
 
 
