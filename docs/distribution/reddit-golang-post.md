@@ -2,13 +2,13 @@
 
 ## Title
 
-Zerfoo: Production-grade ML inference in pure Go -- zero CGo, 241 tok/s
+Zerfoo: Production-grade ML inference in pure Go -- zero CGo by default, 235 tok/s
 
 ## Body
 
 I've been building an ML inference framework in Go and wanted to share it
 with the community. Zerfoo lets you run transformer models (Llama 3, Gemma 3,
-Mistral, Qwen 2, Phi 3/4, DeepSeek V3) directly from Go code -- no CGo, no
+Mistral, Qwen 2, Phi 3/4, DeepSeek V3) directly from Go code -- zero CGo in the default build, no
 Python, no sidecar processes.
 
 ### Why pure Go matters
@@ -36,11 +36,12 @@ streaming, batching, and speculative decoding.
 
 ### Performance
 
-On Gemma 3 1B Q4_K_M, Zerfoo decodes at **241 tok/s** on a DGX Spark --
-28% faster than Ollama on the same hardware with the same model file.
+On Gemma 3 1B Q4_K_M, Zerfoo decodes at **235 tok/s** on a DGX Spark --
+1.25x Ollama (188 tok/s) on the same hardware with the same model file,
+at parity by 3B.
 CUDA graph capture covers 99.5% of the decode path. The benchmarking
 methodology, including reproduction steps, is documented here:
-https://github.com/zerfoo/zerfoo/blob/main/docs/benchmarking-methodology.md
+https://github.com/zerfoo/zerfoo/blob/main/docs/benchmarks.md
 
 ### Type-safe generics
 
