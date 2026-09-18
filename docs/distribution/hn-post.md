@@ -2,18 +2,20 @@
 
 ## Title
 
-Show HN: Zerfoo -- Run LLMs in Pure Go, 14% Faster Than Ollama
+Show HN: Zerfoo -- Run LLMs in Pure Go, 1.25x Ollama on Gemma 3 1B
 
 ## Suggested Top-Level Comment
 
 Zerfoo is an ML inference framework written entirely in Go. It loads GGUF
 models and runs transformer inference -- Llama 3, Gemma 3, Mistral, Qwen 2,
-Phi 3/4, and DeepSeek V3 -- without CGo, Python, or any external runtime.
+Phi 3/4, and DeepSeek V3 -- zero CGo in the default build, no Python, no
+external runtime.
 GPU acceleration (CUDA, ROCm, OpenCL) is loaded dynamically at runtime via
 purego/dlopen, so `go build` works everywhere with no C compiler required.
 
-On Gemma 3 1B Q4_K_M, Zerfoo decodes at 241 tok/s on a DGX Spark --
-28% faster than Ollama on the same hardware with the same model file.
+On Gemma 3 1B Q4_K_M, Zerfoo decodes at 235 tok/s on a DGX Spark --
+1.25x Ollama (188 tok/s) on the same hardware with the same model file,
+at parity by 3B.
 CUDA graph capture covers 99.5% of the decode path. Full benchmarking
 methodology with reproduction steps is linked below.
 
@@ -30,7 +32,7 @@ generate text.
 
 Repo: https://github.com/zerfoo/zerfoo
 
-Benchmarking methodology: https://github.com/zerfoo/zerfoo/blob/main/docs/benchmarking-methodology.md
+Benchmarks and methodology: https://github.com/zerfoo/zerfoo/blob/main/docs/benchmarks.md
 
 Happy to answer questions about the architecture, GPU binding approach, or
 performance numbers.
