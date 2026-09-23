@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"runtime"
 	"slices"
 	"sort"
 	"time"
@@ -74,6 +75,8 @@ func main() {
 	}
 	defer func() { _ = model.Close() }()
 	loadMillis := time.Since(start).Milliseconds()
+	var loadedMemory runtime.MemStats
+	runtime.ReadMemStats(&loadedMemory)
 	var rows []rowReport
 	var goQueries, goDocs [][]float32
 	var refQueries, refDocs [][]float64
@@ -114,6 +117,9 @@ func main() {
 			refDocs = append(refDocs, item.Vector)
 		}
 	}
+	if len(goQueries) == 0 || len(goDocs) == 0 {
+		fatal(fmt.Errorf("reference requires at least one query and document"))
+	}
 	goRanks := ranks(goQueries, goDocs)
 	refRanks := ranks64(refQueries, refDocs)
 	top1Matches := 0
@@ -142,7 +148,8 @@ func main() {
 		"passed": passed, "model": ref.Model, "device": *device,
 		"base_sha256": baseHash, "adapter_sha256": adapterHash,
 		"reference_sha256": hex.EncodeToString(hashBytes(raw)),
-		"load_millis":      loadMillis, "rows": rows,
+		"load_millis":      loadMillis, "go_heap_alloc_bytes_after_load": loadedMemory.Alloc,
+		"go_heap_sys_bytes_after_load": loadedMemory.Sys, "rows": rows,
 		"go_ranks": goRanks, "reference_ranks": refRanks,
 		"top1_matches": top1Matches, "query_count": len(goQueries),
 	}

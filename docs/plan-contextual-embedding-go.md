@@ -1,6 +1,6 @@
 # Contextual embedding in Zerfoo Go
 
-Status: In progress. This plan implements the owner-directed path from the
+Status: Steps 1–3 implemented and numerically validated; steps 4–5 remain planned. This plan implements the owner-directed path from the
 experimental `zerfoo/skillrouter` adapter to Go-only inference and training.
 Zerfoo APIs remain useful for arbitrary query/document retrieval; the Qwen3
 checkpoint is a pinned validation fixture, not a domain type in the framework.
@@ -78,8 +78,53 @@ checkpoint is a pinned validation fixture, not a domain type in the framework.
 ## Current evidence
 
 - The generic retrieval API and contrastive loss merged in PR #1012.
-- `inference.Model.Embed` still mean-pools token-table rows; it does not run
-  the transformer. The Qwen3 graph currently ends in an LM head.
+- `inference.EmbeddingModel` now runs the Qwen3 decoder through the final
+  normalized hidden state and returns a final-token, L2-normalized vector.
+  `retrieval.ContextualEmbedder` applies caller-defined query and document
+  prefixes while implementing the generic `retrieval.Embedder` contract.
+- `inference.Model.Embed` remains a token-table mean-pooling baseline for
+  existing callers. Use `EmbeddingModel` for contextual vectors.
 - The experimental skillrouter release contains a safetensors adapter and
   description-derived evaluation only. The reference model uses a 768-token
   limit, final-token pooling, and normalized 1024-dimensional vectors.
+- A Go conversion of the released PEFT adapter and the official Qwen F16 GGUF
+  passed CPU parity against 13 frozen BF16 reference examples: exact token IDs,
+  minimum cosine 0.9998455, maximum component error 0.0030001, and 4/4
+  query top-document agreement. The lower ranks differed slightly in two
+  cases. This is numerical parity evidence, not skill-retrieval qualification.
+- The same fixed inputs passed a native Go CUDA run in a DGX Spark pod: exact
+  token IDs, minimum cosine 0.9998456, maximum component error 0.0029999,
+  and 4/4 top-document agreement. The GPU validation pod had one CPU core;
+  its median measured embedding call took about 1.6 seconds and includes
+  scheduling and runtime overhead. This is not a throughput benchmark.
+- A repeat CPU run took 11.5 seconds to load, 7.9 seconds across 13 forward
+  calls, and reported 5.98 GB of Go heap allocated after load. This Go heap
+  figure does not measure GPU allocation or OS page cache; the parity command
+  reports both heap allocation and heap reservation for reproducibility.
+- The pinned base GGUF SHA-256 is
+  `421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340`;
+  converted adapter SHA-256 is
+  `83bcde11f2e38d1c1be9ea60e8ae92a7e90d5d32322370ff5ad92ea7b3422cb7`;
+  and frozen reference SHA-256 is
+  `13ed3b0e81baea9c880a2da915760487fc748c639f33e1c6818df86b064881e2`.
+
+## Go loading example
+
+```go
+model, err := inference.LoadEmbeddingFileWithAdapter(
+    "Qwen3-Embedding-0.6B-f16.gguf", "skillrouter-adapter.gguf",
+    inference.WithMaxSeqLen(768),
+)
+if err != nil { return err }
+defer model.Close()
+
+encoder := &retrieval.ContextualEmbedder{
+    Model: model,
+    QueryPrefix: "Instruct: Given a user task, retrieve the most relevant agent skill\nQuery: ",
+}
+index, err := retrieval.NewIndex(ctx, documents, retrieval.Options{Embedder: encoder})
+```
+
+The example prefix belongs to the consumer; Zerfoo accepts any text records.
+The embedding model performs sequential forwards, so callers should serialize
+access to one instance until concurrent execution is verified.

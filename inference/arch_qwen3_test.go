@@ -137,6 +137,13 @@ func TestBuildQwen3EmbeddingGraph_FinalHiddenState(t *testing.T) {
 		t.Fatalf("hidden state shape %v", shape)
 	}
 	before := append([]float32(nil), first.Data()...)
+	otherIDs, err := tensor.New([]int{1, 2}, []float32{4, 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Forward(context.Background(), otherIDs); err != nil {
+		t.Fatal(err)
+	}
 	second, err := g.Forward(context.Background(), ids)
 	if err != nil {
 		t.Fatal(err)
