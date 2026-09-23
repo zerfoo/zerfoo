@@ -1,5 +1,9 @@
 # Generic embedded retrieval work plan
 
+The [Go contextual embedding plan](plan-contextual-embedding-go.md) details
+the five-step path from the experimental adapter to native inference, parity,
+training, and qualification.
+
 **Owner direction:** Put generic retrieval in Zerfoo so Go systems can embed
 it. Skill and tool-operation search are example consumers. The one-skill agent
 interface, catalog importers, and tool authorization stay in consumer code.
