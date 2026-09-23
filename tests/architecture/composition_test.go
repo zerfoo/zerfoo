@@ -369,6 +369,8 @@ var mathImportAllowlist = map[string]bool{
 	"inference/": true,
 	// training/ uses math for optimizer computations (lr schedules, etc.)
 	"training/": true,
+	// retrieval/ uses math for BM25 weights, vector normalization, and ranking metrics.
+	"retrieval/": true,
 	// distributed/ uses math for gradient aggregation
 	"distributed/": true,
 	// timeseries/ legacy — tracked in E70
