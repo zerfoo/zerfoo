@@ -11,7 +11,7 @@ interface, catalog importers, and tool authorization stay in consumer code.
 | R3 | Contextual inference | Load a pinned encoder checkpoint, expose final token states and configured pooling/prompts, match reference vectors and rankings on CPU and Spark GPU | Planned |
 | R4 | Native contrastive training | In-batch/multi-positive InfoNCE, hard negatives, explicit query/doc formatting, checkpoint/resume, held-out source and API-family results | Engine-based in-batch loss implemented; encoder training and qualification remain planned |
 | R5 | Advanced ranking | Train and benchmark a reranker; test late-interaction token vectors only if R1–R4 errors justify it | Planned |
-| R6 | One-skill open-weights specialization | Train from licensed skill data using the generic pipeline; version checkpoint, model card, provenance, no-skill evaluation, and a Go loading example | Planned |
+| R6 | One-skill open-weights specialization | Train from licensed skill data using the generic pipeline; version checkpoint, model card, provenance, no-skill evaluation, and a Go loading example | Experimental Qwen3 adapter released separately in `zerfoo/skillrouter`; independent queries, no-skill evaluation, and Go loading remain planned |
 | R7 | Consumer integrations | Example one-skill search/fetch adapter and Zatiti integration outside the generic package; end-to-end task success and no-result calibration | Planned, pending consumer contract |
 
 ## Immediate evidence and constraints
@@ -27,6 +27,10 @@ interface, catalog importers, and tool authorization stay in consumer code.
   encoder training pipeline was found.
 - The first consumer can use the R1 API with local BM25 while R2–R5 are built.
   No pretrained-model parity or quality claim follows from that API alone.
+- A DGX Spark run trained the separate `zerfoo/skillrouter` Qwen3 adapter on
+  description-derived pairs. Its early held-out results establish the Python
+  training path only; they do not validate native Zerfoo inference or real
+  task-worded retrieval.
 
 ## Next implementation slice
 

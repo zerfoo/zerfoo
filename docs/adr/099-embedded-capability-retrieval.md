@@ -28,6 +28,10 @@ content. Dataset adapters and agent integrations live outside this core API.
 At 10,000–50,000 documents an exact vector scan is the
 initial dense baseline; add an approximate index only after measured latency
 requires one.
+The exact scan is a CPU ranking utility over supplied vectors, outside the
+trainable tensor graph; its scalar dot products are an explicit exception to
+the engine-only rule for model arithmetic. Benchmark it before relying on it
+at catalog scale.
 
 The encoder interface must remain separate from `Model.Embed` until Zerfoo has
 contextual hidden-state inference with the pooling and query/document prompts
