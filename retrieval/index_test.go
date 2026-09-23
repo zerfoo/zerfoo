@@ -10,12 +10,31 @@ import (
 
 type stubEmbedder struct{ vectors map[string][]float32 }
 
-func (s stubEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+func (s stubEmbedder) EmbedDocuments(_ context.Context, texts []string) ([][]float32, error) {
 	out := make([][]float32, len(texts))
 	for i, text := range texts {
 		out[i] = s.vectors[text]
 	}
 	return out, nil
+}
+
+func (s stubEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
+	return s.vectors[text], nil
+}
+
+type roleEmbedder struct{ documentCalls []int }
+
+func (s *roleEmbedder) EmbedDocuments(_ context.Context, texts []string) ([][]float32, error) {
+	s.documentCalls = append(s.documentCalls, len(texts))
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		out[i] = []float32{1, 0}
+	}
+	return out, nil
+}
+
+func (*roleEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
+	return []float32{0, 1}, nil
 }
 
 type reverseReranker struct{}
@@ -107,5 +126,24 @@ func TestDeterministicTies(t *testing.T) {
 	ids := []string{got[0].Document.ID, got[1].Document.ID}
 	if !reflect.DeepEqual(ids, []string{"a", "b"}) {
 		t.Fatal(ids)
+	}
+}
+
+func TestRoleAwareEmbeddingBatches(t *testing.T) {
+	embed := &roleEmbedder{}
+	docs := []Document{{ID: "a", Text: "alpha"}, {ID: "b", Text: "beta"}, {ID: "c", Text: "gamma"}}
+	idx, err := NewIndex(context.Background(), docs, Options{Embedder: embed, EmbeddingBatchSize: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(embed.documentCalls, []int{2, 1}) {
+		t.Fatalf("document batches: %v", embed.documentCalls)
+	}
+	got, err := idx.Search(context.Background(), "alpha", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Document.ID != "a" || got[0].DenseRank != 0 {
+		t.Fatalf("query embedding should not be confused with document embedding: %+v", got)
 	}
 }

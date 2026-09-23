@@ -12,8 +12,8 @@ import (
 )
 
 // InBatchContrastive trains pairs of query and document vectors with in-batch
-// negatives. Target is a [batch, batch] probability matrix: each row must sum
-// to one and can assign weight to multiple relevant documents. The caller
+// negatives. Target is a [queries, documents] nonnegative weight matrix;
+// rows may contain multiple positives or be all zero. The caller
 // supplies vectors in the same representation used at inference; no implicit
 // pooling or normalization occurs here.
 //
@@ -25,6 +25,7 @@ type InBatchContrastive[T tensor.Numeric] struct {
 	ce          *CrossEntropyLossOneHot[T]
 	query       *tensor.TensorNumeric[T]
 	document    *tensor.TensorNumeric[T]
+	target      *tensor.TensorNumeric[T]
 }
 
 func NewInBatchContrastive[T tensor.Numeric](engine compute.Engine[T], temperature float64) (*InBatchContrastive[T], error) {
@@ -40,8 +41,8 @@ func (c *InBatchContrastive[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	}
 	q, d, target := inputs[0], inputs[1], inputs[2]
 	qs, ds, ts := q.Shape(), d.Shape(), target.Shape()
-	if len(qs) != 2 || len(ds) != 2 || len(ts) != 2 || qs[0] <= 0 || qs[1] <= 0 || qs[0] != ds[0] || qs[1] != ds[1] || ts[0] != qs[0] || ts[1] != qs[0] {
-		return nil, fmt.Errorf("contrastive loss expects query/document [batch, dim] and target [batch, batch], got %v, %v, %v", qs, ds, ts)
+	if len(qs) != 2 || len(ds) != 2 || len(ts) != 2 || qs[0] <= 0 || ds[0] <= 0 || qs[1] <= 0 || qs[1] != ds[1] || ts[0] != qs[0] || ts[1] != ds[0] {
+		return nil, fmt.Errorf("contrastive loss expects query [queries, dim], document [documents, dim], and target [queries, documents], got %v, %v, %v", qs, ds, ts)
 	}
 	dT, err := c.engine.Transpose(ctx, d, []int{1, 0})
 	if err != nil {
@@ -59,19 +60,42 @@ func (c *InBatchContrastive[T]) Forward(ctx context.Context, inputs ...*tensor.T
 	if err != nil {
 		return nil, fmt.Errorf("contrastive cross entropy: %w", err)
 	}
-	c.query, c.document = q, d
+	c.query, c.document, c.target = q, d, target
 	return loss, nil
 }
 
-func (c *InBatchContrastive[T]) Backward(ctx context.Context, mode types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
+func (c *InBatchContrastive[T]) Backward(ctx context.Context, _ types.BackwardMode, dOut *tensor.TensorNumeric[T], _ ...*tensor.TensorNumeric[T]) ([]*tensor.TensorNumeric[T], error) {
 	if c.query == nil || c.document == nil {
 		return nil, fmt.Errorf("contrastive loss backward before forward")
 	}
-	grads, err := c.ce.Backward(ctx, mode, dOut)
+	// For weighted targets, dCE/dlogits = softmax*sum(target row)-target.
+	// The shared CE node assumes each target row sums to one, so derive the
+	// gradient here. An all-zero row then has zero loss and zero gradient.
+	rowSums, err := c.engine.ReduceSum(ctx, c.target, 1, false)
 	if err != nil {
-		return nil, fmt.Errorf("contrastive cross entropy backward: %w", err)
+		return nil, fmt.Errorf("sum contrastive targets: %w", err)
 	}
-	dLogits, err := c.engine.DivScalar(ctx, grads[0], c.engine.Ops().FromFloat64(c.temperature))
+	rowSums, err = c.engine.Reshape(ctx, rowSums, []int{c.query.Shape()[0], 1})
+	if err != nil {
+		return nil, fmt.Errorf("reshape contrastive targets: %w", err)
+	}
+	weighted, err := c.engine.Mul(ctx, c.ce.SoftmaxOutput(), rowSums, nil)
+	if err != nil {
+		return nil, fmt.Errorf("weight contrastive probabilities: %w", err)
+	}
+	grad, err := c.engine.Sub(ctx, weighted, c.target, nil)
+	if err != nil {
+		return nil, fmt.Errorf("subtract contrastive targets: %w", err)
+	}
+	grad, err = c.engine.MulScalar(ctx, grad, c.engine.Ops().FromFloat64(1.0/float64(c.query.Shape()[0])))
+	if err != nil {
+		return nil, fmt.Errorf("average contrastive gradient: %w", err)
+	}
+	grad, err = c.engine.Mul(ctx, grad, dOut, nil)
+	if err != nil {
+		return nil, fmt.Errorf("scale contrastive upstream gradient: %w", err)
+	}
+	dLogits, err := c.engine.DivScalar(ctx, grad, c.engine.Ops().FromFloat64(c.temperature))
 	if err != nil {
 		return nil, fmt.Errorf("scale contrastive gradient: %w", err)
 	}
