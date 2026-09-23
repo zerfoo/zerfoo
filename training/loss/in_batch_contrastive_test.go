@@ -96,3 +96,59 @@ func TestInBatchContrastiveRejectsInvalidShapes(t *testing.T) {
 		t.Fatal("backward accepted missing forward")
 	}
 }
+
+func TestInBatchContrastiveWeightedRectangularGradients(t *testing.T) {
+	ctx := context.Background()
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	loss, err := NewInBatchContrastive[float32](engine, 0.7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	qData := []float32{0.2, 0.7, -0.5, 0.4}
+	dData := []float32{0.3, 0.9, -0.4, 0.6, 0.8, -0.2}
+	target := contrastiveTensor(t, []int{2, 3}, []float32{1, 1, 0, 0, 0, 0})
+	forward := func(qValues, dValues []float32) float64 {
+		t.Helper()
+		value, err := loss.Forward(ctx,
+			contrastiveTensor(t, []int{2, 2}, qValues),
+			contrastiveTensor(t, []int{3, 2}, dValues), target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return float64(value.Data()[0])
+	}
+	forward(qData, dData)
+	grads, err := loss.Backward(ctx, types.BackwardMode(0), contrastiveTensor(t, []int{1}, []float32{1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grads[0].Data()[2] != 0 || grads[0].Data()[3] != 0 {
+		t.Fatalf("all-zero target row changed query: %v", grads[0].Data())
+	}
+	eps := float32(1e-3)
+	for i, analytic := range grads[0].Data() {
+		plus := append([]float32(nil), qData...)
+		minus := append([]float32(nil), qData...)
+		plus[i] += eps
+		minus[i] -= eps
+		want := (forward(plus, dData) - forward(minus, dData)) / (2 * float64(eps))
+		if math.Abs(float64(analytic)-want) > 2e-4 {
+			t.Fatalf("query gradient %d: got %.6f want %.6f", i, analytic, want)
+		}
+	}
+	forward(qData, dData)
+	grads, err = loss.Backward(ctx, types.BackwardMode(0), contrastiveTensor(t, []int{1}, []float32{1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, analytic := range grads[1].Data() {
+		plus := append([]float32(nil), dData...)
+		minus := append([]float32(nil), dData...)
+		plus[i] += eps
+		minus[i] -= eps
+		want := (forward(qData, plus) - forward(qData, minus)) / (2 * float64(eps))
+		if math.Abs(float64(analytic)-want) > 2e-4 {
+			t.Fatalf("document gradient %d: got %.6f want %.6f", i, analytic, want)
+		}
+	}
+}

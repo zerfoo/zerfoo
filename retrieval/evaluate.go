@@ -3,6 +3,7 @@ package retrieval
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 )
 
@@ -35,6 +36,11 @@ func Evaluate(ctx context.Context, index *Index, queries []Query, at int) (Metri
 	for _, query := range queries {
 		if err := ctx.Err(); err != nil {
 			return Metrics{}, err
+		}
+		for _, id := range query.Relevant {
+			if _, ok := index.Get(id); !ok {
+				return Metrics{}, fmt.Errorf("query %q references unknown relevant document %q", query.Text, id)
+			}
 		}
 		results, err := index.Search(ctx, query.Text, at)
 		if err != nil {

@@ -20,10 +20,11 @@ type Document struct {
 	Body string
 }
 
-// Embedder maps text to vectors. An application can supply a pretrained
-// encoder or a future Zerfoo-native retrieval model.
+// Embedder maps queries and documents to vectors. Separate methods let an
+// encoder apply different instructions or pooling to the two roles.
 type Embedder interface {
-	Embed(context.Context, []string) ([][]float32, error)
+	EmbedDocuments(context.Context, []string) ([][]float32, error)
+	EmbedQuery(context.Context, string) ([]float32, error)
 }
 
 // Reranker scores a shortlist against the original query. Higher is better.
@@ -34,8 +35,9 @@ type Reranker interface {
 type Options struct {
 	Embedder           Embedder
 	Reranker           Reranker
-	CandidateLimit     int     // candidates passed to reranking; defaults to 40
-	MinDenseSimilarity float32 // dense-only candidates below this are excluded
+	CandidateLimit     int     // minimum shortlist width before reranking; defaults to 40
+	EmbeddingBatchSize int     // documents per embedding call; defaults to 64
+	MinDenseSimilarity float32 // dense candidates at or below this are excluded; defaults to 0
 }
 
 type Result struct {
@@ -62,11 +64,14 @@ type Index struct {
 
 // NewIndex builds an in-memory BM25 index and, if configured, dense vectors.
 func NewIndex(ctx context.Context, docs []Document, opts Options) (*Index, error) {
-	if opts.CandidateLimit < 0 || math.IsNaN(float64(opts.MinDenseSimilarity)) || opts.MinDenseSimilarity < -1 || opts.MinDenseSimilarity > 1 {
+	if opts.CandidateLimit < 0 || opts.EmbeddingBatchSize < 0 || math.IsNaN(float64(opts.MinDenseSimilarity)) || opts.MinDenseSimilarity < -1 || opts.MinDenseSimilarity > 1 {
 		return nil, errors.New("invalid retrieval options")
 	}
 	if opts.CandidateLimit == 0 {
 		opts.CandidateLimit = 40
+	}
+	if opts.EmbeddingBatchSize == 0 {
+		opts.EmbeddingBatchSize = 64
 	}
 	idx := &Index{docs: append([]Document(nil), docs...), byID: make(map[string]int, len(docs)), terms: make(map[string][]posting), lengths: make([]int, len(docs)), opts: opts}
 	texts := make([]string, len(docs))
@@ -96,26 +101,36 @@ func NewIndex(ctx context.Context, docs []Document, opts Options) (*Index, error
 		idx.avgLength /= float64(len(docs))
 	}
 	if opts.Embedder != nil && len(docs) > 0 {
-		vectors, err := opts.Embedder.Embed(ctx, texts)
-		if err != nil {
-			return nil, fmt.Errorf("embed documents: %w", err)
-		}
-		if len(vectors) != len(docs) {
-			return nil, fmt.Errorf("embed documents: got %d vectors, want %d", len(vectors), len(docs))
-		}
-		idx.vectors = make([][]float32, len(vectors))
-		for i, vector := range vectors {
-			if i == 0 {
-				idx.dimension = len(vector)
+		idx.vectors = make([][]float32, len(docs))
+		for start := 0; start < len(docs); start += opts.EmbeddingBatchSize {
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
-			if idx.dimension == 0 || len(vector) != idx.dimension {
-				return nil, fmt.Errorf("document %d: invalid vector dimension", i)
+			end := start + opts.EmbeddingBatchSize
+			if end > len(docs) {
+				end = len(docs)
 			}
-			normalized, err := normalize(vector)
+			vectors, err := opts.Embedder.EmbedDocuments(ctx, texts[start:end])
 			if err != nil {
-				return nil, fmt.Errorf("document %d: %w", i, err)
+				return nil, fmt.Errorf("embed documents %d-%d: %w", start, end, err)
 			}
-			idx.vectors[i] = normalized
+			if len(vectors) != end-start {
+				return nil, fmt.Errorf("embed documents %d-%d: got %d vectors, want %d", start, end, len(vectors), end-start)
+			}
+			for offset, vector := range vectors {
+				i := start + offset
+				if i == 0 {
+					idx.dimension = len(vector)
+				}
+				if idx.dimension == 0 || len(vector) != idx.dimension {
+					return nil, fmt.Errorf("document %d: invalid vector dimension", i)
+				}
+				normalized, err := normalize(vector)
+				if err != nil {
+					return nil, fmt.Errorf("document %d: %w", i, err)
+				}
+				idx.vectors[i] = normalized
+			}
 		}
 	}
 	return idx, nil
@@ -175,14 +190,14 @@ func (idx *Index) Search(ctx context.Context, query string, limit int) ([]Result
 	denseOrder := make([]int, 0)
 	denseScores := make([]float64, len(idx.docs))
 	if idx.opts.Embedder != nil {
-		vectors, err := idx.opts.Embedder.Embed(ctx, []string{query})
+		vector, err := idx.opts.Embedder.EmbedQuery(ctx, query)
 		if err != nil {
 			return nil, fmt.Errorf("embed query: %w", err)
 		}
-		if len(vectors) != 1 || len(vectors[0]) != idx.dimension {
+		if len(vector) != idx.dimension {
 			return nil, errors.New("query embedding has invalid dimension")
 		}
-		q, err := normalize(vectors[0])
+		q, err := normalize(vector)
 		if err != nil {
 			return nil, fmt.Errorf("query embedding: %w", err)
 		}

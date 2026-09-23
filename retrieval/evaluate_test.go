@@ -3,6 +3,7 @@ package retrieval
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -26,5 +27,16 @@ func TestEvaluateRankingAndNoResult(t *testing.T) {
 	}
 	if m.NDCG <= 0 || m.NDCG >= 1 || m.MRR != 0.5 {
 		t.Fatalf("ranking: %+v", m)
+	}
+}
+
+func TestEvaluateRejectsUnknownRelevantID(t *testing.T) {
+	idx, err := NewIndex(context.Background(), []Document{{ID: "known", Text: "known"}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Evaluate(context.Background(), idx, []Query{{Text: "known", Relevant: []string{"known", "typo"}}}, 2)
+	if err == nil || !strings.Contains(err.Error(), "typo") {
+		t.Fatalf("unknown relevant ID: %v", err)
 	}
 }
