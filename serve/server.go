@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	_ "embed"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,10 +16,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ajent-social/go/servicecred"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/serve/security"
 	"github.com/zerfoo/ztensor/log"
 	"github.com/zerfoo/ztensor/metrics/runtime"
+)
+
+// Default AMSL owner/resource bindings for serve authentication.
+// Product route→scope policy stays in requiredScope; these only bind the credential.
+const (
+	DefaultServiceCredOwner    = "zerfoo"
+	DefaultServiceCredResource = "serve"
 )
 
 //go:embed openapi.yaml
@@ -36,21 +45,24 @@ type Server struct {
 	// delete takes Lock before flipping unloaded and closing the model. This
 	// makes both the use-after-close and the "Add after Wait started" races
 	// structurally impossible (see CONC-H2).
-	modelMu         sync.RWMutex
-	transcriber     Transcriber    // optional; enables /v1/audio/transcriptions
-	classifier      Classifier     // optional; enables /v1/classify
-	guardEvaluator  GuardEvaluator // optional; enables /v1/guard endpoints
-	logger          log.Logger
-	metrics         *ServerMetrics
-	classifyMetrics *ClassifyMetrics
-	guardMetrics    *GuardMetrics
-	collector       runtime.Collector
-	gpus            []int                 // GPU IDs to distribute model across
-	apiKey          string                // optional; enables Bearer token auth
-	keyStore        *security.KeyStore    // optional; enables scope-based authorization
-	rateLimiter     *security.RateLimiter // optional; enables per-IP rate limiting
-	maxTokens       int                   // server-side upper bound for max_tokens (default 8192)
-	adapterCache    *AdapterCacheHandle   // optional; enables per-request LoRA adapter selection
+	modelMu             sync.RWMutex
+	transcriber         Transcriber    // optional; enables /v1/audio/transcriptions
+	classifier          Classifier     // optional; enables /v1/classify
+	guardEvaluator      GuardEvaluator // optional; enables /v1/guard endpoints
+	logger              log.Logger
+	metrics             *ServerMetrics
+	classifyMetrics     *ClassifyMetrics
+	guardMetrics        *GuardMetrics
+	collector           runtime.Collector
+	gpus                []int                // GPU IDs to distribute model across
+	apiKey              string               // optional; enables Bearer token auth
+	keyStore            *security.KeyStore   // optional; enables legacy zf_ scope-based authorization
+	serviceCred         *servicecred.Service // optional; AMSL scoped machine credentials
+	serviceCredOwner    string
+	serviceCredResource string
+	rateLimiter         *security.RateLimiter // optional; enables per-IP rate limiting
+	maxTokens           int                   // server-side upper bound for max_tokens (default 8192)
+	adapterCache        *AdapterCacheHandle   // optional; enables per-request LoRA adapter selection
 }
 
 // ServerOption configures the server.
@@ -137,9 +149,27 @@ func WithTrustedProxies(proxies []string) ServerOption {
 // WithKeyStore enables scope-based authorization using the provided KeyStore.
 // When set, after Bearer token validation the middleware looks up the key in the
 // store and checks that it has a sufficient scope for the endpoint.
+//
+// Prefer [WithServiceCred] for new deployments. Existing zf_ keys are not
+// migrated to AMSL; re-issue amsl1_ credentials instead.
 func WithKeyStore(ks *security.KeyStore) ServerOption {
 	return func(s *Server) {
 		s.keyStore = ks
+	}
+}
+
+// WithServiceCred enables AMSL machine-credential authentication via
+// github.com/ajent-social/go/servicecred (Apache-2.0). The service must be
+// bound to a fixed owner and resource; HTTP route scopes are mapped by
+// [requiredScope] and verified with exact AMSL scope strings.
+//
+// AMSL is a CANDIDATE dependency here — not claimed STABLE. When both
+// WithServiceCred and WithKeyStore are set, ServiceCred takes precedence.
+func WithServiceCred(svc *servicecred.Service, owner, resource string) ServerOption {
+	return func(s *Server) {
+		s.serviceCred = svc
+		s.serviceCredOwner = owner
+		s.serviceCredResource = resource
 	}
 }
 
@@ -210,7 +240,7 @@ func NewServer(m *inference.Model, opts ...ServerOption) *Server {
 // Handler returns the HTTP handler for this server.
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
-	if s.apiKey != "" || s.keyStore != nil {
+	if s.apiKey != "" || s.keyStore != nil || s.serviceCred != nil {
 		h = s.authMiddleware(h)
 	}
 	if s.rateLimiter != nil {
@@ -282,6 +312,17 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		token := auth[len(prefix):]
+		required := requiredScope(r.Method, r.URL.Path)
+
+		// AMSL service credentials take precedence over the legacy KeyStore.
+		if s.serviceCred != nil {
+			if status, msg := s.authorizeServiceCred(r.Context(), token, required); status != 0 {
+				writeError(w, status, msg)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		// When a KeyStore is configured, validate against it and enforce scopes.
 		if s.keyStore != nil {
@@ -294,7 +335,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "invalid API key")
 				return
 			}
-			if required := requiredScope(r.Method, r.URL.Path); required != "" {
+			if required != "" {
 				if !key.HasScope(required) {
 					writeError(w, http.StatusForbidden, "insufficient scope")
 					return
@@ -311,6 +352,65 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// authorizeServiceCred verifies an AMSL bearer token against the fixed
+// owner/resource binding and the product-required scope. Returns (0, "") on
+// success; otherwise an HTTP status and message. ErrDenied is mapped to a
+// generic external denial; insufficient scope is distinguished when the token
+// authorizes under another known product scope.
+func (s *Server) authorizeServiceCred(ctx context.Context, token string, required security.Scope) (int, string) {
+	owner := s.serviceCredOwner
+	resource := s.serviceCredResource
+	if owner == "" {
+		owner = DefaultServiceCredOwner
+	}
+	if resource == "" {
+		resource = DefaultServiceCredResource
+	}
+	scopes := amslScopes(required)
+	_, err := s.serviceCred.Verify(ctx, token, servicecred.Access{
+		Owner:    owner,
+		Resource: resource,
+		Scopes:   scopes,
+	})
+	if err == nil {
+		return 0, ""
+	}
+	if !errors.Is(err, servicecred.ErrDenied) {
+		// Store failures and invalid config: fail closed without leaking detail.
+		return http.StatusUnauthorized, "invalid API key"
+	}
+	if required != "" {
+		for _, sc := range []security.Scope{
+			security.ScopeReadOnly,
+			security.ScopeInference,
+			security.ScopeTraining,
+			security.ScopeAdmin,
+		} {
+			if sc == required {
+				continue
+			}
+			if _, probeErr := s.serviceCred.Verify(ctx, token, servicecred.Access{
+				Owner:    owner,
+				Resource: resource,
+				Scopes:   []string{string(sc)},
+			}); probeErr == nil {
+				return http.StatusForbidden, "insufficient scope"
+			}
+		}
+	}
+	return http.StatusUnauthorized, "invalid API key"
+}
+
+// amslScopes maps a zerfoo product scope to AMSL exact scope strings.
+// Route policy remains in requiredScope; AMSL has no wildcards.
+func amslScopes(required security.Scope) []string {
+	if required == "" {
+		// Non-/v1 authenticated paths: require read_only as the minimum binding.
+		return []string{string(security.ScopeReadOnly)}
+	}
+	return []string{string(required)}
 }
 
 // requiredScope returns the minimum scope required for the given HTTP method and path.

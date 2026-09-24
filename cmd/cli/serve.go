@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ajent-social/go/servicecred"
+	"github.com/ajent-social/go/servicecred/boltstore"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/serve"
 	"github.com/zerfoo/zerfoo/serve/security"
@@ -186,26 +188,26 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 		_, _ = fmt.Fprintf(c.out, "WARN: serve: no API key configured, all endpoints are public\n")
 	}
 
-	// Open the scoped keystore before loading the model so a bad --keystore
-	// path fails fast instead of after the (potentially slow) model load.
-	var keyStore *security.KeyStore
-	var keystoreBackend *security.BboltKeyStoreBackend
+	// Open the AMSL credential store before loading the model so a bad
+	// --keystore path fails fast instead of after the (potentially slow)
+	// model load. Existing zf_ KeyStore databases are not migrated; re-issue
+	// amsl1_ credentials into a fresh AMSL boltstore file.
+	var serviceCred *servicecred.Service
 	if keystorePath != "" {
-		var kerr error
-		keystoreBackend, kerr = security.NewBboltKeyStoreBackend(keystorePath)
+		store, kerr := boltstore.Open(ctx, keystorePath)
 		if kerr != nil {
 			return fmt.Errorf("open --keystore: %w", kerr)
 		}
-		keyStore = security.NewKeyStore(security.WithBackend(keystoreBackend))
+		serviceCred, kerr = servicecred.New(store)
+		if kerr != nil {
+			return fmt.Errorf("open --keystore: %w", kerr)
+		}
 	}
 
 	li := startLoading(c.out)
 	mdl, err := c.loadFn(modelID, loadOpts...)
 	li.stop()
 	if err != nil {
-		if keystoreBackend != nil {
-			_ = keystoreBackend.Close()
-		}
 		return fmt.Errorf("load model: %w", err)
 	}
 
@@ -216,8 +218,12 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 	if apiKey != "" {
 		serverOpts = append(serverOpts, serve.WithAPIKey(apiKey))
 	}
-	if keyStore != nil {
-		serverOpts = append(serverOpts, serve.WithKeyStore(keyStore))
+	if serviceCred != nil {
+		serverOpts = append(serverOpts, serve.WithServiceCred(
+			serviceCred,
+			serve.DefaultServiceCredOwner,
+			serve.DefaultServiceCredResource,
+		))
 	}
 	if rateLimitRPS > 0 {
 		burst := rateLimitBurst
@@ -239,10 +245,7 @@ func (c *ServeCommand) Run(ctx context.Context, args []string) error {
 		// Registered before httpServer so reverse-order Shutdown closes the
 		// listener first (drain in-flight requests), then srv.Close (stops
 		// the rate limiter's cleanup goroutine and batch scheduler, per
-		// T142.3), then finally the keystore's bbolt handle.
-		if keystoreBackend != nil {
-			c.shutdownCoord.Register(bboltCloser{keystoreBackend})
-		}
+		// T142.3). AMSL boltstore opens per-operation and needs no Close.
 		c.shutdownCoord.Register(srv)
 		c.shutdownCoord.Register(shutdownAdapter{httpServer})
 	}
@@ -282,16 +285,6 @@ type shutdownAdapter struct {
 
 func (a shutdownAdapter) Close(ctx context.Context) error {
 	return a.srv.Shutdown(ctx)
-}
-
-// bboltCloser adapts *security.BboltKeyStoreBackend (whose Close takes no
-// context) to the shutdown.Closer interface.
-type bboltCloser struct {
-	backend *security.BboltKeyStoreBackend
-}
-
-func (b bboltCloser) Close(_ context.Context) error {
-	return b.backend.Close()
 }
 
 // parseGPUList parses a comma-separated list of GPU IDs (e.g. "0,1,2,3")
@@ -335,11 +328,17 @@ OPTIONS:
   --cache-dir <dir>        Override model cache directory
   --gpus <ids>             Comma-separated GPU IDs to distribute model across (e.g. 0,1,2,3)
   --api-key <key>          Require Bearer token auth (env: ZERFOO_API_KEY)
-  --keystore <path>        Path to a bbolt-backed scoped API key store. Enables
-                           per-key scope enforcement (read_only/inference/
-                           training/admin) instead of a single static key.
+  --keystore <path>        Path to an AMSL bbolt credential database
+                           (github.com/ajent-social/go/servicecred/boltstore).
+                           Enables scoped amsl1_ credentials bound to
+                           owner=zerfoo resource=serve. Product route scopes
+                           (read_only/inference/training/admin) are verified
+                           as exact AMSL scopes. Parent directory must be
+                           private (mode 0700). Existing zf_ KeyStore files
+                           are not migrated — re-issue credentials. AMSL is
+                           a CANDIDATE dependency, not claimed STABLE.
                            May be combined with --api-key; when both are set,
-                           keystore-backed scope checks take precedence.
+                           AMSL scope checks take precedence.
                            Counts as configured authentication for the
                            no-auth-without-opt-in check below.
   --allow-no-auth          Allow starting without an API key (public endpoints)

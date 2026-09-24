@@ -21,6 +21,9 @@
 //   - [WithDraftModel] enables speculative decoding with a smaller draft model.
 //   - [WithBatchScheduler] routes non-streaming requests through a [BatchScheduler]
 //     for higher throughput.
+//   - [WithServiceCred] enables AMSL scoped machine credentials (CANDIDATE;
+//     not claimed STABLE). Prefer this over the legacy [WithKeyStore] path.
+//   - [WithKeyStore] enables legacy zf_ API-key scope checks (not migrated to AMSL).
 //
 // # Endpoints
 //
