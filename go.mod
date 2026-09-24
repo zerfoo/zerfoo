@@ -3,6 +3,7 @@ module github.com/zerfoo/zerfoo
 go 1.26.0
 
 require (
+	github.com/ajent-social/go v0.0.0-20260924061152-45e0d1920f07
 	github.com/zerfoo/float16 v0.2.0
 	github.com/zerfoo/float8 v0.2.0
 	go.etcd.io/bbolt v1.4.3

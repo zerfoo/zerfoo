@@ -6,11 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ajent-social/go/servicecred"
+	"github.com/ajent-social/go/servicecred/boltstore"
 	"github.com/zerfoo/zerfoo/inference"
 	"github.com/zerfoo/zerfoo/serve"
 	"github.com/zerfoo/zerfoo/serve/security"
@@ -492,28 +495,38 @@ func TestServeCommand_RateLimitWiring(t *testing.T) {
 	}
 }
 
-// TestServeCommand_KeystoreWiring verifies that --keystore opens the given
-// bbolt file and wires it into the server's scope-based auth (T145.1): a
-// pre-provisioned read_only key must authenticate and authorize a GET
-// request, and a request without any credentials must be rejected.
+// TestServeCommand_KeystoreWiring verifies that --keystore opens an AMSL
+// boltstore and wires WithServiceCred: a pre-issued read_only credential
+// authenticates GET /v1/models, and a request without credentials is rejected.
+// Existing zf_ KeyStore files are not supported on this path.
 func TestServeCommand_KeystoreWiring(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "apikeys.db")
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, "credentials.db")
 
-	// Pre-populate the keystore, then close it -- bbolt takes an exclusive
-	// file lock, so the backend must be closed before the CLI opens the
-	// same path.
-	backend, err := security.NewBboltKeyStoreBackend(dbPath)
+	store, err := boltstore.Open(context.Background(), dbPath)
 	if err != nil {
-		t.Fatalf("NewBboltKeyStoreBackend: %v", err)
+		t.Fatalf("boltstore.Open: %v", err)
 	}
-	ks := security.NewKeyStore(security.WithBackend(backend))
-	rawKey, _, err := ks.Create("t145-test-key", []security.Scope{security.ScopeReadOnly}, time.Time{})
+	svc, err := servicecred.New(store)
 	if err != nil {
-		t.Fatalf("Create key: %v", err)
+		t.Fatalf("servicecred.New: %v", err)
 	}
-	if err := backend.Close(); err != nil {
-		t.Fatalf("close backend: %v", err)
+	grant := servicecred.Grant{
+		Access: servicecred.Access{
+			Owner:    serve.DefaultServiceCredOwner,
+			Resource: serve.DefaultServiceCredResource,
+			Scopes:   []string{string(security.ScopeReadOnly)},
+		},
+		ExpiresAt: time.Now().Add(time.Hour),
 	}
+	secret, _, err := svc.Issue(context.Background(), grant, grant)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	rawKey := secret.Reveal()
 
 	mdl := buildCLITestModel(t)
 	var out bytes.Buffer
