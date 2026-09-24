@@ -51,3 +51,11 @@ jobs:
         with:
           format: cyclonedx-json
           artifact-name: sbom-cyclonedx.json
+
+  # Additional AMSL delivery.go-validation consumer. Does not replace the
+  # product test job above (required-check names stay intact).
+  amsl-go-validation:
+    uses: ajent-social/workflows/.github/workflows/go-validation.yml@2377e766f704dfe984a1e589933b91f2bc3c50a1
+    with:
+      go-version-file: go.mod
+      timeout-minutes: 20
