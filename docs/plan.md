@@ -20,6 +20,16 @@ to T138.1 and the prior Traction scope.
 
 ---
 
+## EmbeddingGemma 2 planning extension (2026-10-14)
+
+The owner-requested [EmbeddingGemma 2 delivery plan](plan-embeddinggemma2.md)
+records contextual text/code inference and a gated multimodal outline under
+ADR-099. Its preflight reconciles the existing retrieval/Qwen3 work and scheduling
+against Trust closeout and ADR-093. This planning artifact neither starts that
+work nor changes the phase, completed evidence, or open tasks below.
+
+---
+
 ## Trim Note (2026 08 14)
 
 This plan was trimmed on 2026 08 14: completed epics E133 (capture/replay cluster), E134 (gemma4e disposition), E135 (kernel numerics, #847), E137 (darwin fix), and E139-E145 (deep-review 002 security remediation, Objective 6 / D7) were removed along with Waves 1-5 and Sec-1..Sec-5. Their knowledge is preserved as follows:

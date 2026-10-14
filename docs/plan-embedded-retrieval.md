@@ -42,3 +42,12 @@ or shipping a model. Train the one-skill checkpoint only after the generic
 path works, and release weights only with a reviewable model card and license
 audit. Coordinate the Go call shape and latency target with the
 active Zatiti session through `ajent.social`.
+
+## EmbeddingGemma 2 candidate (2026-10-14)
+
+The [EmbeddingGemma 2 delivery plan](plan-embeddinggemma2.md) adds a text/code
+encoder candidate for R3, followed by a gated multimodal outline. Its preflight
+reconciles open [PR #1013](https://github.com/zerfoo/zerfoo/pull/1013) and reuses
+the contextual loader, role adapter and parity harness where qualified. The
+existing Qwen3 reference and training scope above remain intact. This is planned
+work; it does not mark R3 complete or qualify either model.
