@@ -116,6 +116,45 @@ func TestBuildQwen3Graph_Builds(t *testing.T) {
 	}
 }
 
+func TestBuildQwen3EmbeddingGraph_FinalHiddenState(t *testing.T) {
+	cfg := qwen3TestConfig(1)
+	tensors := makeQwen3TestTensors(cfg)
+	engine := compute.NewCPUEngine[float32](numeric.Float32Ops{})
+	g, _, err := buildQwen3EmbeddingGraph(tensors, cfg, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := tensor.New([]int{1, 3}, []float32{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := g.Forward(context.Background(), ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shape := first.Shape()
+	if len(shape) != 3 || shape[0] != 1 || shape[1] != 3 || shape[2] != cfg.HiddenSize {
+		t.Fatalf("hidden state shape %v", shape)
+	}
+	before := append([]float32(nil), first.Data()...)
+	otherIDs, err := tensor.New([]int{1, 2}, []float32{4, 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Forward(context.Background(), otherIDs); err != nil {
+		t.Fatal(err)
+	}
+	second, err := g.Forward(context.Background(), ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, got := range second.Data() {
+		if math.Abs(float64(got-before[i])) > 1e-6 {
+			t.Fatalf("repeat forward changed hidden state %d: %v vs %v", i, got, before[i])
+		}
+	}
+}
+
 func TestBuildQwen3Graph_ForwardNonNaN(t *testing.T) {
 	cfg := qwen3TestConfig(2)
 	tensors := makeQwen3TestTensors(cfg)

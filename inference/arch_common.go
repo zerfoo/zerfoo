@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zerfoo/ztensor/compute"
-	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/zerfoo/layers/attention"
 	"github.com/zerfoo/zerfoo/layers/core"
 	"github.com/zerfoo/zerfoo/layers/embeddings"
 	"github.com/zerfoo/zerfoo/layers/normalization"
 	"github.com/zerfoo/zerfoo/model/gguf"
+	"github.com/zerfoo/ztensor/compute"
+	"github.com/zerfoo/ztensor/graph"
 	"github.com/zerfoo/ztensor/numeric"
 	"github.com/zerfoo/ztensor/tensor"
 )
@@ -108,6 +108,21 @@ func buildTransformerGraph(
 	embedWeight *tensor.TensorNumeric[float32],
 	lmHeadWeight *tensor.TensorNumeric[float32],
 	opts transformerGraphOpts,
+) (*graph.Graph[float32], error) {
+	return buildTransformerGraphOutput(tensors, cfg, engine, embedWeight, lmHeadWeight, opts, false)
+}
+
+// buildTransformerGraphOutput optionally exposes final normalized token states
+// instead of projecting them through the language-model head. The decoder body
+// is identical in both modes, so generation and embedding share model math.
+func buildTransformerGraphOutput(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	engine compute.Engine[float32],
+	embedWeight *tensor.TensorNumeric[float32],
+	lmHeadWeight *tensor.TensorNumeric[float32],
+	opts transformerGraphOpts,
+	hiddenOutput bool,
 ) (*graph.Graph[float32], error) {
 	ops := numeric.Float32Ops{}
 
@@ -533,6 +548,14 @@ func buildTransformerGraph(
 		return nil, err
 	}
 	normedFinal := builder.AddNode(finalNorm, hidden)
+	if hiddenOutput {
+		g, buildErr := builder.Build(normedFinal)
+		if buildErr != nil {
+			return nil, fmt.Errorf("build hidden-state graph: %w", buildErr)
+		}
+		g.SetEngineProxy(proxy)
+		return g, nil
+	}
 
 	// --- LM Head ---
 	// Convert Q8 lmHead weight to Q4 for fast GEMV on both CPU and GPU.

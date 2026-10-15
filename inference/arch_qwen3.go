@@ -68,3 +68,23 @@ func buildQwen3Graph(
 
 	return g, embedWeight, nil
 }
+
+// buildQwen3EmbeddingGraph runs the same decoder body as buildQwen3Graph but
+// returns final normalized token states before the LM head. Pooling is a
+// separate operation so callers can select the last non-padding token.
+func buildQwen3EmbeddingGraph(
+	tensors map[string]*tensor.TensorNumeric[float32],
+	cfg *gguf.ModelConfig,
+	engine compute.Engine[float32],
+) (*graph.Graph[float32], *tensor.TensorNumeric[float32], error) {
+	embedWeight, err := newTensorLookup(tensors).Lookup("model.embed_tokens.weight")
+	if err != nil {
+		return nil, nil, err
+	}
+	opts := transformerGraphOpts{qkNorm: true, attnBias: false}
+	g, err := buildTransformerGraphOutput(tensors, cfg, engine, embedWeight, nil, opts, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	return g, embedWeight, nil
+}
